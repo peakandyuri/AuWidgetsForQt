@@ -4,6 +4,12 @@
 #include "AgGrid_global.h"
 #include "AgCellEditor.h"
 
+/**
+ * @brief 默认单行编辑器：内部使用 QLineEdit。
+ *
+ * 未通过 AgColumnDef::setCellEditor() 指定编辑器的可编辑列使用该实现。
+ * 直接输入字符触发编辑时，字符注入到行编辑开头。
+ */
 class AGGRID_EXPORT AgDefaultCellEditor : public AgCellEditor
 {
 public:

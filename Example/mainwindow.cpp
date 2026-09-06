@@ -194,6 +194,30 @@ MainWindow::MainWindow(QWidget *parent)
     m_syncGroup->addGrid(m_gridWidgetB);
     m_syncGroup->syncFrom(m_gridWidget);
 
+    // 合并单元格示例（仅左侧表格，便于与右侧对比）
+    // 注意：合并按当前可见行坐标存储，排序/过滤/移动行后会自动清空
+    auto applyDemoSpans = [this]() {
+        m_gridWidget->setSpan(0, 0, 3, 1);   // 纵向合并：A 列前 3 行
+        m_gridWidget->setSpan(0, 2, 1, 2);   // 横向合并：第一行的 C+D 两列
+        m_gridWidget->setSpan(5, 4, 2, 2);   // 2x2 合并：第 5-6 行的 E/F 两列
+    };
+    applyDemoSpans();
+
+    QToolBar *spanBar = addToolBar(QStringLiteral(u"合并"));
+    QPushButton *spanApplyBtn = new QPushButton(QStringLiteral(u"应用合并示例"), spanBar);
+    QPushButton *spanClearBtn = new QPushButton(QStringLiteral(u"清除合并"), spanBar);
+    spanBar->addWidget(spanApplyBtn);
+    spanBar->addWidget(spanClearBtn);
+    connect(spanApplyBtn, &QPushButton::clicked, this, applyDemoSpans);
+    connect(spanClearBtn, &QPushButton::clicked, this, [this]() {
+        m_gridWidget->clearSpans();
+    });
+    connect(spanApplyBtn, &QPushButton::clicked, this, [this]() {
+        qDebug() << "Spans: hasSpans=" << m_gridWidget->hasSpans()
+                 << "rowSpan(0,0)=" << m_gridWidget->rowSpan(0, 0)
+                 << "columnSpan(0,2)=" << m_gridWidget->columnSpan(0, 2);
+    });
+
 
     // 滚动定位测试工具栏
     QToolBar *scrollBar = addToolBar(QStringLiteral(u"定位"));

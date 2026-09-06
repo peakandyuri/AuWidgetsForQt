@@ -152,6 +152,9 @@ void AgGridWidget::setModel(AgGridModel *model)
     m_autoFitWidths.clear();
     m_autoFitDirty.clear();
     m_hiddenFields.clear();
+    // 合并区域随旧模型失效，换模型时整体清除
+    m_spans.clear();
+    m_spanCovered.clear();
     rebuildColumnOffsets();
     invalidateRowHeights();
 
@@ -238,9 +241,16 @@ void AgGridWidget::rebuildRowOffsets() const
         const AgColumnDef def = m_model->columnDefAt(col);
         QSharedPointer<AgCellRenderer> renderer = rendererForColumn(col);
         const int colWidth = columnWidth(col);
-        const QRect measureRect(0, 0, colWidth, globalHeight);
 
         for (int row = 0; row < count; ++row) {
+            // 合并单元格：被覆盖格不参与行高测量；锚点按合并区域总宽测量
+            const CellSpan span = spanAt(row, col);
+            if (span.isValid()) {
+                if (row != span.anchorRow || col != span.anchorColumn)
+                    continue;
+            }
+            const int measureWidth = span.isValid() ? spanWidth(span) : colWidth;
+            const QRect measureRect(0, 0, measureWidth, globalHeight);
             const int pref = renderer->preferredHeight(measureRect,
                                                          m_model->cellValue(row, col),
                                                          def, row, col,
@@ -1148,6 +1158,14 @@ bool AgGridWidget::isRowDragging(int visibleRow) const
     return m_draggingOriginalRows.contains(m_model->originalRowForVisibleRow(visibleRow));
 }
 
+void AgGridWidget::updateHoverVisual()
+{
+    // hover 变化整体重绘 body 区：合并单元格的锚点按整个合并区域填充 hover 背景，
+    // 任何局部行/单元格刷新都会让被覆盖行切片残留旧像素（视觉上逐一出现、与整行高亮不同步）。
+    // 可视行经过虚拟化后数量有限，整体重绘代价可忽略。
+    update(QRect(0, headerHeight(), viewportWidthForColumns(), bodyHeight()));
+}
+
 void AgGridWidget::updateHoverCell(const QPoint &pos)
 {
     const QPoint cell = cellAtPosition(pos);
@@ -1162,13 +1180,10 @@ void AgGridWidget::updateHoverCell(const QPoint &pos)
     // 拖拽手柄列：手型光标
     if (isDragHandleColumn(cell.x())) {
         if (m_hoverRow != cell.y() || m_hoverColumn != cell.x()) {
-            const int oldHoverRow = m_hoverRow;
             notifyRendererLeave(m_hoverRow, m_hoverColumn);
             m_hoverRow = cell.y();
             m_hoverColumn = cell.x();
-            if (oldHoverRow >= 0)
-                update(QRect(0, rowY(oldHoverRow), viewportWidthForColumns(), rowHeight(oldHoverRow)));
-            update(QRect(0, rowY(m_hoverRow), viewportWidthForColumns(), rowHeight(m_hoverRow)));
+            updateHoverVisual();
         }
         setCursor(Qt::OpenHandCursor);
         return;
@@ -1186,8 +1201,6 @@ void AgGridWidget::updateHoverCell(const QPoint &pos)
         return;
     }
 
-    const int oldHoverRow = m_hoverRow;
-
     notifyRendererLeave(m_hoverRow, m_hoverColumn);
 
     m_hoverRow = cell.y();
@@ -1195,10 +1208,7 @@ void AgGridWidget::updateHoverCell(const QPoint &pos)
 
     notifyRendererEnter(m_hoverRow, m_hoverColumn, cellPos);
 
-    const int viewportW = viewportWidthForColumns();
-    if (oldHoverRow >= 0 && oldHoverRow != m_hoverRow)
-        update(QRect(0, rowY(oldHoverRow), viewportW, rowHeight(oldHoverRow)));
-    update(QRect(0, rowY(m_hoverRow), viewportW, rowHeight(m_hoverRow)));
+    updateHoverVisual();
 
     emit cellHovered(m_hoverRow, m_hoverColumn);
     setCursor(renderer->wantsHoverCursor(m_hoverRow, m_hoverColumn, cellPos)
@@ -1211,11 +1221,10 @@ void AgGridWidget::clearHoverCell()
     if (m_hoverRow < 0)
         return;
 
-    const int oldRow = m_hoverRow;
     notifyRendererLeave(m_hoverRow, m_hoverColumn);
     m_hoverRow = -1;
     m_hoverColumn = -1;
-    update(QRect(0, rowY(oldRow), viewportWidthForColumns(), rowHeight(oldRow)));
+    updateHoverVisual();
 }
 
 void AgGridWidget::notifyRendererEnter(int row, int column, const QPoint &cellPos)
@@ -1382,6 +1391,7 @@ void AgGridWidget::connectModel()
             m_checkedOriginalRows.clear();
             m_selectedOriginalRow = -1;
         }
+        pruneSpans();
         invalidateRowHeights();
         if (!m_isRowDragging && !m_isColumnDragging) {
             updateScrollBars();
@@ -1397,6 +1407,7 @@ void AgGridWidget::connectModel()
         if (!m_isColumnDragging) {
             m_autoFitWidths.clear();
             m_autoFitDirty.clear();
+            pruneSpans();
             rebuildColumnOffsets();
             invalidateRowHeights();
             updateScrollBars();
@@ -1407,6 +1418,10 @@ void AgGridWidget::connectModel()
     connect(m_model, &AgGridModel::layoutChanged, this, [this]() {
         if (m_activeEditor)
             closeEditor(false);
+        // 合并区域按可见行坐标存储；排序/过滤/移动行会改变可见行对应的数据，
+        // 原合并位置不再可靠，直接清空（行为与按数据行实现的方案不同，需在文档中说明）
+        if (!m_isRowDragging && !m_isColumnDragging)
+            clearSpans();
         // 行/列拖拽过程中由拖拽逻辑自行维护选择状态，避免在模型移动后立即触发重绘，干扰拖拽动画
         if (!m_isRowDragging && !m_isColumnDragging)
             syncSelectionAfterLayoutChange();
@@ -1795,7 +1810,223 @@ QPoint AgGridWidget::cellAtPosition(const QPoint &pos) const
         }
     }
 
+    // 命中合并单元格的被覆盖区域时，定位到合并锚点（与 QTableView 一致）
+    if (row >= 0 && column >= 0) {
+        const CellSpan span = spanAt(row, column);
+        if (span.isValid()) {
+            row = span.anchorRow;
+            column = span.anchorColumn;
+        }
+    }
+
     return QPoint(column, row);
+}
+
+qint64 AgGridWidget::spanCellKey(int row, int column)
+{
+    return (static_cast<qint64>(row) << 32) | static_cast<quint32>(column);
+}
+
+AgGridWidget::CellSpan AgGridWidget::effectiveSpan(const CellSpan &span) const
+{
+    CellSpan invalid;
+    if (!m_model || !span.isValid())
+        return invalid;
+
+    const int rows = m_model->rowCount();
+    const int cols = m_model->columnCount();
+    CellSpan eff = span;
+    eff.rowCount = qMin(eff.rowCount, rows - eff.anchorRow);
+    eff.columnCount = qMin(eff.columnCount, cols - eff.anchorColumn);
+    if (eff.rowCount < 1 || eff.columnCount < 1)
+        return invalid;
+
+    // 合并区域不跨停靠区域：从锚点向右延伸，遇到与锚点不同区域的可见列即截断；
+    // 隐藏列宽为 0，跳过后继续延伸
+    const ColumnRegion region = columnRegion(eff.anchorColumn);
+    int lastColumn = eff.anchorColumn;
+    for (int c = eff.anchorColumn + 1; c <= eff.rightColumn(); ++c) {
+        if (isColumnHidden(c))
+            continue;
+        if (columnRegion(c) != region)
+            break;
+        lastColumn = c;
+    }
+    eff.columnCount = lastColumn - eff.anchorColumn + 1;
+    return eff;
+}
+
+AgGridWidget::CellSpan AgGridWidget::spanAt(int row, int column) const
+{
+    CellSpan invalid;
+    if (m_spans.isEmpty() || row < 0 || column < 0)
+        return invalid;
+
+    const qint64 key = spanCellKey(row, column);
+    CellSpan raw;
+    const qint64 anchorKey = m_spanCovered.value(key, -1);
+    if (anchorKey >= 0)
+        raw = m_spans.value(anchorKey);
+    else if (m_spans.contains(key))
+        raw = m_spans.value(key);
+    else
+        return invalid;
+
+    // 存储范围可能因行/列裁剪或停靠变化超出有效范围，裁剪后需仍包含该单元格
+    const CellSpan eff = effectiveSpan(raw);
+    if (!eff.isValid() || !eff.contains(row, column))
+        return invalid;
+    return eff;
+}
+
+bool AgGridWidget::isSpanCoveredCell(int row, int column) const
+{
+    const CellSpan span = spanAt(row, column);
+    return span.isValid() && (row != span.anchorRow || column != span.anchorColumn);
+}
+
+int AgGridWidget::spanWidth(const CellSpan &span) const
+{
+    int width = 0;
+    for (int c = span.anchorColumn; c <= span.rightColumn(); ++c)
+        width += columnWidth(c);
+    return width;
+}
+
+QRect AgGridWidget::spanRect(const CellSpan &span) const
+{
+    if (!span.isValid())
+        return QRect();
+    int height = 0;
+    for (int r = span.anchorRow; r <= span.bottomRow(); ++r)
+        height += rowHeight(r);
+    return QRect(columnX(span.anchorColumn), rowY(span.anchorRow), spanWidth(span), height);
+}
+
+void AgGridWidget::removeSpan(qint64 anchorKey)
+{
+    if (m_spans.remove(anchorKey) == 0)
+        return;
+    for (auto it = m_spanCovered.begin(); it != m_spanCovered.end();) {
+        if (it.value() == anchorKey)
+            it = m_spanCovered.erase(it);
+        else
+            ++it;
+    }
+}
+
+void AgGridWidget::removeOverlappingSpans(int topRow, int leftColumn, int bottomRow, int rightColumn)
+{
+    if (m_spans.isEmpty())
+        return;
+
+    QVector<qint64> overlapped;
+    for (auto it = m_spans.cbegin(); it != m_spans.cend(); ++it) {
+        const CellSpan &s = it.value();
+        if (s.anchorRow <= bottomRow && s.bottomRow() >= topRow
+            && s.anchorColumn <= rightColumn && s.rightColumn() >= leftColumn)
+            overlapped.append(it.key());
+    }
+    for (qint64 key : overlapped)
+        removeSpan(key);
+}
+
+void AgGridWidget::pruneSpans()
+{
+    if (m_spans.isEmpty() || !m_model)
+        return;
+
+    const int rows = m_model->rowCount();
+    const int cols = m_model->columnCount();
+
+    QVector<qint64> stale;
+    for (auto it = m_spans.cbegin(); it != m_spans.cend(); ++it) {
+        if (it.value().anchorRow >= rows || it.value().anchorColumn >= cols)
+            stale.append(it.key());
+    }
+    for (qint64 key : stale)
+        removeSpan(key);
+}
+
+void AgGridWidget::setSpan(int row, int column, int rowSpanCount, int columnSpanCount)
+{
+    if (!m_model || row < 0 || column < 0 || rowSpanCount <= 0 || columnSpanCount <= 0)
+        return;
+
+    const int maxRows = m_model->rowCount() - row;
+    const int maxCols = m_model->columnCount() - column;
+    if (maxRows <= 0 || maxCols <= 0)
+        return;
+    rowSpanCount = qMin(rowSpanCount, maxRows);
+    columnSpanCount = qMin(columnSpanCount, maxCols);
+
+    // 新合并替换区域内重叠的旧合并；1x1 等价于清除该处合并
+    removeOverlappingSpans(row, column, row + rowSpanCount - 1, column + columnSpanCount - 1);
+
+    if (rowSpanCount > 1 || columnSpanCount > 1) {
+        CellSpan span;
+        span.anchorRow = row;
+        span.anchorColumn = column;
+        span.rowCount = rowSpanCount;
+        span.columnCount = columnSpanCount;
+        const qint64 anchorKey = spanCellKey(row, column);
+        m_spans.insert(anchorKey, span);
+        for (int r = row; r < row + rowSpanCount; ++r) {
+            for (int c = column; c < column + columnSpanCount; ++c) {
+                if (r == row && c == column)
+                    continue;
+                m_spanCovered.insert(spanCellKey(r, c), anchorKey);
+            }
+        }
+    }
+
+    invalidateRowHeights();
+    updateScrollBars();
+    update();
+}
+
+void AgGridWidget::clearSpan(int row, int column)
+{
+    if (m_spans.isEmpty() || row < 0 || column < 0)
+        return;
+
+    const CellSpan span = spanAt(row, column);
+    if (!span.isValid())
+        return;
+
+    removeSpan(spanCellKey(span.anchorRow, span.anchorColumn));
+    invalidateRowHeights();
+    updateScrollBars();
+    update();
+}
+
+void AgGridWidget::clearSpans()
+{
+    if (m_spans.isEmpty())
+        return;
+
+    m_spans.clear();
+    m_spanCovered.clear();
+    invalidateRowHeights();
+    updateScrollBars();
+    update();
+}
+
+int AgGridWidget::rowSpan(int row, int column) const
+{
+    const CellSpan span = spanAt(row, column);
+    return span.isValid() ? span.rowCount : 1;
+}
+
+int AgGridWidget::columnSpan(int row, int column) const
+{
+    const CellSpan span = spanAt(row, column);
+    return span.isValid() ? span.columnCount : 1;
+}
+
+bool AgGridWidget::hasSpans() const
+{
+    return !m_spans.isEmpty();
 }
 
 int AgGridWidget::specialColumnPadding() const
@@ -1977,6 +2208,10 @@ QRect AgGridWidget::cellRect(int row, int column) const
         return dragHandleCellRect(row);
     if (m_columnOffsets.isEmpty() || column < 0 || column >= m_model->columnCount())
         return QRect();
+    // 合并单元格（锚点或被覆盖单元格）返回整个合并区域的矩形
+    const CellSpan span = spanAt(row, column);
+    if (span.isValid())
+        return spanRect(span);
     return QRect(columnX(column), rowY(row),
                  m_columnOffsets.at(column + 1) - m_columnOffsets.at(column), rowHeight(row));
 }
@@ -2254,6 +2489,10 @@ int AgGridWidget::measureAutoFitWidth(int column)
     // 可视行单元格宽度
     const QPair<int, int> rowRange = visibleRowRange();
     for (int row = rowRange.first; row <= rowRange.second; ++row) {
+        // 被合并覆盖的单元格数据不显示，不参与列宽测量
+        const CellSpan span = spanAt(row, column);
+        if (span.isValid() && (row != span.anchorRow || column != span.anchorColumn))
+            continue;
         const QString text = m_model->cellValue(row, column).toString();
         // 使用与渲染一致的行内字体和内边距，避免按默认字体测量导致大字体行被截断
         const QFont cellFont = m_style->font(m_model, row, column);
@@ -2904,17 +3143,39 @@ void AgGridWidget::drawRows(QPainter *painter, int firstRow, int lastRow, int fi
     const QColor alternateColor = m_style->color(AgGridStyle::AlternateRowBackgroundColor, m_model);
     const QColor hoverColor = m_style->color(AgGridStyle::HoverRowBackgroundColor, m_model);
 
-    for (int row = firstRow; row <= lastRow; ++row) {
+    // 合并单元格锚点可能在可视范围外（区域被部分滚动出），把锚点并入绘制范围
+    int paintFirstRow = firstRow;
+    int paintFirstColumn = firstColumn;
+    if (!m_spans.isEmpty()) {
+        for (const CellSpan &s : m_spans) {
+            const CellSpan e = effectiveSpan(s);
+            if (!e.isValid() || columnRegion(e.anchorColumn) != region)
+                continue;
+            if (e.bottomRow() < firstRow || e.anchorRow > lastRow)
+                continue;
+            if (e.rightColumn() < firstColumn || e.anchorColumn > lastColumn)
+                continue;
+            paintFirstRow = qMin(paintFirstRow, e.anchorRow);
+            paintFirstColumn = qMin(paintFirstColumn, e.anchorColumn);
+        }
+    }
+
+    for (int row = paintFirstRow; row <= lastRow; ++row) {
         const int y = rowY(row);
         const int h = rowHeight(row);
 
-        for (int col = firstColumn; col <= lastColumn; ++col) {
+        for (int col = paintFirstColumn; col <= lastColumn; ++col) {
             if (columnRegion(col) != region)
                 continue;
 
+            // 被合并覆盖的单元格不绘制任何内容
+            const CellSpan span = spanAt(row, col);
+            if (span.isValid() && (row != span.anchorRow || col != span.anchorColumn))
+                continue;
+
             const AgColumnDef def = m_model->columnDefAt(col);
-            const int colWidth = m_columnOffsets.at(col + 1) - m_columnOffsets.at(col);
-            const QRect rect(columnX(col), y, colWidth, h);
+            const QRect rect = span.isValid() ? spanRect(span)
+                : QRect(columnX(col), y, m_columnOffsets.at(col + 1) - m_columnOffsets.at(col), h);
             const QVariant value = m_model->cellValue(row, col);
 
             const qreal opacity = columnOpacity(col);
@@ -2924,7 +3185,8 @@ void AgGridWidget::drawRows(QPainter *painter, int firstRow, int lastRow, int fi
                 painter->setOpacity(opacity);
             }
 
-            if (isPinnedRegion) {
+            // 停靠列逐格铺背景；body 区合并单元格也需铺锚点行背景，避免露出斑马纹
+            if (isPinnedRegion || span.isValid()) {
                 QColor bg;
                 if (row == m_selectedRow && selectedColor.isValid())
                     bg = selectedColor;
@@ -2988,14 +3250,49 @@ void AgGridWidget::drawGridLines(QPainter *painter, int firstColumn, int lastCol
     if (m_rowOffsetsDirty)
         rebuildRowOffsets();
 
+    // 合并单元格锚点可能在可视范围外（区域被部分滚动出），把锚点并入绘制范围
+    int paintFirstRow = firstRow;
+    int paintFirstColumn = firstColumn;
+    if (!m_spans.isEmpty()) {
+        for (const CellSpan &s : m_spans) {
+            const CellSpan e = effectiveSpan(s);
+            if (!e.isValid() || columnRegion(e.anchorColumn) != region)
+                continue;
+            if (e.bottomRow() < firstRow || e.anchorRow > lastRow)
+                continue;
+            if (e.rightColumn() < firstColumn || e.anchorColumn > lastColumn)
+                continue;
+            paintFirstRow = qMin(paintFirstRow, e.anchorRow);
+            paintFirstColumn = qMin(paintFirstColumn, e.anchorColumn);
+        }
+    }
+
     // 每个单元格绘制完整边框；相邻单元格共享边界线，视觉上保持 1px，
     // 动画中每个单元格自带完整边框，避免掉线。
-    for (int row = firstRow; row <= lastRow; ++row) {
+    for (int row = paintFirstRow; row <= lastRow; ++row) {
         const int y = rowY(row);
         const int h = rowHeight(row);
-        for (int col = firstColumn; col <= lastColumn; ++col) {
+        for (int col = paintFirstColumn; col <= lastColumn; ++col) {
             if (columnRegion(col) != region)
                 continue;
+
+            // 合并单元格：被覆盖格不画内框，锚点画整个合并区域的外框
+            const CellSpan span = spanAt(row, col);
+            if (span.isValid()) {
+                if (row != span.anchorRow || col != span.anchorColumn)
+                    continue;
+                const QRect spanArea = spanRect(span);
+                const qreal spanOpacity = columnOpacity(col);
+                if (spanOpacity < 1.0) {
+                    painter->save();
+                    painter->setOpacity(spanOpacity);
+                }
+                painter->drawRect(spanArea);
+                if (spanOpacity < 1.0)
+                    painter->restore();
+                continue;
+            }
+
             const int x = columnX(col);
             const int w = columnWidth(col);
             const qreal opacity = columnOpacity(col);
@@ -3041,6 +3338,16 @@ void AgGridWidget::drawCellFocus(QPainter *painter)
     painter->save();
     painter->setClipRect(clipRect, Qt::IntersectClip);
 
+    // body 单元格（含合并区域）滚动到停靠列下方时，边框不能画到固定列/停靠列上；
+    // 边界与 drawRegionSeparators 的分隔线一致（仅统计实际发生 sticky 位移的停靠列）。
+    // 停靠列单元格位置固定，不会滑入其他区域，无需收缩。
+    if (columnRegion(m_selectedColumn) == ColumnRegion::Body) {
+        QRect drawClip = clipRect;
+        drawClip.setLeft(qMax(drawClip.left(), stickyLeftBoundaryX()));
+        drawClip.setRight(qMin(drawClip.right(), stickyRightBoundaryX() - 1));
+        painter->setClipRect(drawClip, Qt::IntersectClip);
+    }
+
     QPen pen(borderColor);
     pen.setWidth(borderWidth);
     painter->setPen(pen);
@@ -3048,6 +3355,33 @@ void AgGridWidget::drawCellFocus(QPainter *painter)
     painter->drawRect(rect.adjusted(borderWidth / 2, borderWidth / 2, -borderWidth / 2, -borderWidth / 2));
 
     painter->restore();
+}
+
+int AgGridWidget::stickyLeftBoundaryX() const
+{
+    // 左侧 sticky 区域的右边界：固定列与实际发生 sticky 位移的左停靠列中最大右边缘
+    int boundary = fixedColumnsWidth();
+    for (int col : m_leftPinnedColumns) {
+        const int stickyX = columnX(col);
+        const int naturalX = m_columnOffsets.at(col) - m_xOffset;
+        if (stickyX > naturalX)
+            boundary = qMax(boundary, stickyX + columnWidth(col));
+    }
+    return boundary;
+}
+
+int AgGridWidget::stickyRightBoundaryX() const
+{
+    // 右侧 sticky 区域的左边界：实际发生 sticky 位移的右停靠列中最小左边缘
+    const int viewportW = viewportWidthForColumns();
+    int boundary = viewportW;
+    for (int col : m_rightPinnedColumns) {
+        const int stickyX = columnX(col);
+        const int naturalX = m_columnOffsets.at(col) - m_xOffset;
+        if (stickyX < naturalX)
+            boundary = qMin(boundary, stickyX);
+    }
+    return boundary;
 }
 
 void AgGridWidget::drawRegionSeparators(QPainter *painter)
@@ -3068,25 +3402,11 @@ void AgGridWidget::drawRegionSeparators(QPainter *painter)
     pen.setWidth(1);
     painter->setPen(pen);
 
-    // 左侧：找到最右侧的 sticky 左停靠列的右边缘（包含行号列、复选框列与拖拽手柄列）
-    int leftSeparatorX = fixedColumnsWidth() > 0 ? fixedColumnsWidth() : -1;
-    for (int col : m_leftPinnedColumns) {
-        const int stickyX = columnX(col);
-        const int naturalX = m_columnOffsets.at(col) - m_xOffset;
-        if (stickyX > naturalX)
-            leftSeparatorX = qMax(leftSeparatorX, stickyX + columnWidth(col));
-    }
+    const int leftSeparatorX = fixedColumnsWidth() > 0 ? stickyLeftBoundaryX() : -1;
     if (leftSeparatorX > 0)
         painter->drawLine(leftSeparatorX, 0, leftSeparatorX, bodyBottom);
 
-    // 右侧：找到最左侧的 sticky 右停靠列的左边缘
-    int rightSeparatorX = viewportW;
-    for (int col : m_rightPinnedColumns) {
-        const int stickyX = columnX(col);
-        const int naturalX = m_columnOffsets.at(col) - m_xOffset;
-        if (stickyX < naturalX)
-            rightSeparatorX = qMin(rightSeparatorX, stickyX);
-    }
+    const int rightSeparatorX = stickyRightBoundaryX();
     if (rightSeparatorX < viewportW)
         painter->drawLine(rightSeparatorX, 0, rightSeparatorX, bodyBottom);
 }
@@ -3101,6 +3421,13 @@ bool AgGridWidget::editCell(int row, int column, const QString &initialText)
     if (!m_model || row < 0 || row >= m_model->rowCount()
         || column < 0 || column >= m_model->columnCount())
         return false;
+
+    // 编辑合并单元格时始终编辑锚点数据
+    const CellSpan span = spanAt(row, column);
+    if (span.isValid()) {
+        row = span.anchorRow;
+        column = span.anchorColumn;
+    }
 
     if (!isCellEditable(row, column))
         return false;
@@ -3349,14 +3676,27 @@ void AgGridWidget::updateEditorGeometry()
             rect.setTop(bodyTop);
         if (rect.bottom() > bodyBottom)
             rect.setBottom(bodyBottom);
-        if (rect.left() < 0)
-            rect.setLeft(0);
-        if (rect.right() > viewportW)
-            rect.setRight(viewportW);
 
-        m_activeEditor->setGeometry(rect);
-        if (!m_activeEditor->isVisible())
-            m_activeEditor->show();
+        // body 单元格（含合并区域）不能覆盖到固定列/停靠列上
+        if (columnRegion(m_editColumn) == ColumnRegion::Body) {
+            if (rect.left() < stickyLeftBoundaryX())
+                rect.setLeft(stickyLeftBoundaryX());
+            if (rect.right() > stickyRightBoundaryX() - 1)
+                rect.setRight(stickyRightBoundaryX() - 1);
+        } else {
+            if (rect.left() < 0)
+                rect.setLeft(0);
+            if (rect.right() > viewportW)
+                rect.setRight(viewportW);
+        }
+
+        if (rect.width() > 0 && rect.height() > 0) {
+            m_activeEditor->setGeometry(rect);
+            if (!m_activeEditor->isVisible())
+                m_activeEditor->show();
+        } else if (m_activeEditor->isVisible()) {
+            m_activeEditor->hide();
+        }
     } else {
         if (m_activeEditor->isVisible())
             m_activeEditor->hide();
@@ -3376,7 +3716,8 @@ bool AgGridWidget::findNextEditableCell(int &row, int &column, int dColumn) cons
 
     while (r >= 0 && r < rowCount) {
         while (c >= 0 && c < colCount) {
-            if (!isColumnHidden(c) && isCellEditable(r, c) && !m_model->columnDefAt(c).isCheckbox()) {
+            if (!isColumnHidden(c) && !isSpanCoveredCell(r, c)
+                && isCellEditable(r, c) && !m_model->columnDefAt(c).isCheckbox()) {
                 row = r;
                 column = c;
                 return true;
@@ -3409,6 +3750,18 @@ void AgGridWidget::moveSelection(int dRow, int dColumn)
             return;
     }
 
+    // 与隐藏列同样处理：导航不落入被合并覆盖的单元格（锚点本身可选）
+    if (dRow != 0) {
+        while (row >= 0 && row < m_model->rowCount() && isSpanCoveredCell(row, column))
+            row += dRow;
+    }
+    if (dColumn != 0) {
+        while (column >= 0 && column < m_model->columnCount() && isSpanCoveredCell(row, column))
+            column += dColumn;
+    }
+    if (row < 0 || row >= m_model->rowCount() || column < 0 || column >= m_model->columnCount())
+        return;
+
     if (row == m_selectedRow && column == m_selectedColumn)
         return;
 
@@ -3425,7 +3778,7 @@ void AgGridWidget::ensureCellVisible(int row, int column)
     scrollToCell(row, column, ScrollHint::EnsureVisible);
 }
 
-int AgGridWidget::targetVerticalOffset(int row, ScrollHint hint) const
+int AgGridWidget::targetVerticalOffset(int row, ScrollHint hint, int spanBottomRow) const
 {
     if (!m_model || row < 0 || row >= m_model->rowCount())
         return m_vScrollBar->value();
@@ -3433,8 +3786,13 @@ int AgGridWidget::targetVerticalOffset(int row, ScrollHint hint) const
     const int contentHeight = totalContentHeight();
     const int bodyH = bodyHeight();
     const int maxOffset = qMax(0, contentHeight - bodyH);
+    if (m_rowOffsetsDirty)
+        rebuildRowOffsets();
+    // 合并单元格按整个区域计算可视范围
+    const int lastRow = (spanBottomRow > row) ? spanBottomRow : row;
     const int rowTop = m_rowOffsets.at(row);
-    const int rowBottom = rowTop + rowHeight(row);
+    const int rowBottom = rowTop + (m_rowOffsets.at(lastRow + 1) - m_rowOffsets.at(row));
+    const int rowH = rowBottom - rowTop;
     const int current = m_vScrollBar->value();
 
     int target = current;
@@ -3449,7 +3807,7 @@ int AgGridWidget::targetVerticalOffset(int row, ScrollHint hint) const
         target = rowTop;
         break;
     case ScrollHint::PositionCenter:
-        target = rowTop - (bodyH - rowHeight(row)) / 2;
+        target = rowTop - (bodyH - rowH) / 2;
         break;
     case ScrollHint::PositionBottom:
         target = rowBottom - bodyH;
@@ -3459,7 +3817,7 @@ int AgGridWidget::targetVerticalOffset(int row, ScrollHint hint) const
     return qBound(0, target, maxOffset);
 }
 
-int AgGridWidget::targetHorizontalOffset(int column, ScrollHint hint) const
+int AgGridWidget::targetHorizontalOffset(int column, ScrollHint hint, int spanRightColumn) const
 {
     if (!m_model || m_columnOffsets.isEmpty() || column < 0 || column >= m_model->columnCount())
         return m_hScrollBar->value();
@@ -3469,8 +3827,10 @@ int AgGridWidget::targetHorizontalOffset(int column, ScrollHint hint) const
     const int fixedWidth = fixedColumnsWidth() + m_leftPinnedWidth + m_rightPinnedWidth;
     const int bodyViewportW = qMax(0, viewportW - fixedWidth);
     const int maxOffset = qMax(0, contentWidth - bodyViewportW);
+    // 合并单元格按整个区域计算可视范围
+    const int rightColumn = (spanRightColumn > column) ? spanRightColumn : column;
     const int colLeft = m_columnOffsets.at(column);
-    const int colRight = m_columnOffsets.at(column + 1);
+    const int colRight = m_columnOffsets.at(rightColumn + 1);
     const int colWidth = colRight - colLeft;
     const int current = m_hScrollBar->value();
 
@@ -3522,12 +3882,21 @@ void AgGridWidget::scrollToCell(int row, int column, ScrollHint hint)
         || column < 0 || column >= m_model->columnCount())
         return;
 
+    // 合并单元格按整个合并区域滚动定位
+    const CellSpan span = spanAt(row, column);
+    if (span.isValid()) {
+        row = span.anchorRow;
+        column = span.anchorColumn;
+    }
+    const int spanBottom = span.isValid() ? span.bottomRow() : -1;
+    const int spanRight = span.isValid() ? span.rightColumn() : -1;
+
     // 先处理水平方向，让滚动条显隐稳定
-    m_hScrollBar->setValue(targetHorizontalOffset(column, hint));
+    m_hScrollBar->setValue(targetHorizontalOffset(column, hint, spanRight));
     updateScrollBars();
 
     // 水平滚动条显隐会改变 bodyHeight，因此重新计算垂直方向
-    m_vScrollBar->setValue(targetVerticalOffset(row, hint));
+    m_vScrollBar->setValue(targetVerticalOffset(row, hint, spanBottom));
     updateScrollBars();
     update();
 }
@@ -3579,6 +3948,13 @@ void AgGridWidget::selectCell(int row, int column)
     if (!m_model || row < 0 || row >= m_model->rowCount()
         || column < 0 || column >= m_model->columnCount())
         return;
+
+    // 选中合并单元格的被覆盖格时，落到合并锚点上
+    const CellSpan span = spanAt(row, column);
+    if (span.isValid()) {
+        row = span.anchorRow;
+        column = span.anchorColumn;
+    }
 
     setFocus();
 
