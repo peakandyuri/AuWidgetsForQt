@@ -145,6 +145,17 @@ QVariant AgGridStyle::defaultValue(StyleRole role) const
         return false;
     case RowNumberForegroundColor:
         return QColor(120, 120, 120);
+
+    case LoadingOverlayColor:
+        return QColor(255, 255, 255, 160);
+    case LoadingSpinnerColor:
+        return QColor(0, 120, 215);
+    case LoadingSpinnerSize:
+        return large ? 32 : (medium ? 28 : 24);
+    case LoadingTextColor:
+        return QColor(80, 80, 80);
+    case LoadingText:
+        return QStringLiteral("加载中…");
     }
 
     return QVariant();

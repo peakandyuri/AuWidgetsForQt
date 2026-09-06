@@ -95,6 +95,11 @@ AgGridWidget::AgGridWidget(QWidget *parent)
     , m_columnVisHiding(false)
     , m_columnVisProgress(0.0)
     , m_columnVisAnimation(nullptr)
+    , m_loading(false)
+    , m_loadingOpacity(0.0)
+    , m_loadingSpinnerAngle(0)
+    , m_loadingTimer(nullptr)
+    , m_loadingAnimation(nullptr)
 {
     AgGridStyle::registerGlobalStyleObserver(this);
 
@@ -106,6 +111,27 @@ AgGridWidget::AgGridWidget(QWidget *parent)
     m_autoScrollTimer = new QTimer(this);
     m_autoScrollTimer->setInterval(50);
     connect(m_autoScrollTimer, &QTimer::timeout, this, &AgGridWidget::onAutoScrollTimeout);
+
+    // 加载遮罩：圆环旋转定时器（仅遮罩可见期间运行）+ 淡入/淡出动画
+    m_loadingTimer = new QTimer(this);
+    m_loadingTimer->setInterval(16);
+    connect(m_loadingTimer, &QTimer::timeout, this, [this]() {
+        m_loadingSpinnerAngle = (m_loadingSpinnerAngle + 360 - 6) % 360;
+        update();
+    });
+
+    m_loadingAnimation = new QVariantAnimation(this);
+    connect(m_loadingAnimation, &QVariantAnimation::valueChanged, this, [this](const QVariant &value) {
+        const qreal opacity = qBound(0.0, value.toReal(), 1.0);
+        m_loadingOpacity = opacity;
+        if (opacity > 0.0 && !m_loadingTimer->isActive())
+            m_loadingTimer->start();
+        else if (opacity <= 0.0 && m_loadingTimer->isActive())
+            m_loadingTimer->stop();
+        if (opacity <= 0.0)
+            updateScrollBars();   // 淡出结束：按内容恢复滚动条显隐
+        update();
+    });
 
     m_hScrollBar->hide();
     m_vScrollBar->hide();
@@ -781,10 +807,82 @@ void AgGridWidget::paintEvent(QPaintEvent * /*event*/)
             painter.drawRect(panel.adjusted(0, 0, -1, -1));
         painter.restore();
     }
+
+    // 5. 加载遮罩：最后绘制，盖住表格内容（滚动条/编辑器等子控件由 setLoading 负责隐藏）
+    if (m_loadingOpacity > 0.0)
+        drawLoadingOverlay(&painter);
+}
+
+void AgGridWidget::drawLoadingOverlay(QPainter *painter)
+{
+    if (m_loadingOpacity <= 0.0 || !m_style)
+        return;
+
+    const QRect panel = contentPanelRect();
+
+    painter->save();
+    painter->setRenderHint(QPainter::Antialiasing, true);
+    painter->setClipPath(roundedClipPath(), Qt::ReplaceClip);
+    painter->setOpacity(m_loadingOpacity);
+
+    // 半透明蒙层（覆盖表头与全部内容区）
+    const QColor overlayColor = m_style->color(AgGridStyle::LoadingOverlayColor, m_model);
+    if (overlayColor.isValid()) {
+        painter->setPen(Qt::NoPen);
+        painter->setBrush(overlayColor);
+        painter->drawRect(panel);
+    }
+
+    // 圆环 + 文案整体在面板内居中
+    QString text = m_loadingText;
+    if (text.isNull())
+        text = m_style->value(AgGridStyle::LoadingText, m_model).toString();
+
+    const QColor spinnerColor = m_style->color(AgGridStyle::LoadingSpinnerColor, m_model);
+    const QColor textColor = m_style->color(AgGridStyle::LoadingTextColor, m_model);
+    const int spinnerSize = qMax(12, m_style->integer(AgGridStyle::LoadingSpinnerSize, m_model));
+    const QFont textFont = m_style->font(m_model);
+    const QFontMetrics fm(textFont);
+    const int textGap = 12;
+
+    qreal blockHeight = spinnerSize;
+    if (!text.isEmpty())
+        blockHeight += textGap + fm.height();
+    const qreal blockTop = panel.center().y() - blockHeight / 2.0;
+
+    if (spinnerColor.isValid()) {
+        const qreal penWidth = qMax(2.0, spinnerSize / 7.0);
+        QRectF spinnerRect(panel.center().x() - spinnerSize / 2.0, blockTop, spinnerSize, spinnerSize);
+        // 内缩半个线宽，避免圆弧溢出圆环外接矩形
+        spinnerRect.adjust(penWidth / 2.0, penWidth / 2.0, -penWidth / 2.0, -penWidth / 2.0);
+
+        QPen pen(spinnerColor);
+        pen.setWidthF(penWidth);
+        pen.setCapStyle(Qt::RoundCap);
+        painter->setPen(pen);
+        painter->setBrush(Qt::NoBrush);
+        painter->drawArc(spinnerRect, m_loadingSpinnerAngle * 16, 100 * 16);
+    }
+
+    if (!text.isEmpty()) {
+        painter->setFont(textFont);
+        painter->setPen(textColor.isValid() ? textColor : QColor(80, 80, 80));
+        const QRectF textRect(panel.left(), blockTop + spinnerSize + textGap,
+                              panel.width(), fm.height());
+        painter->drawText(textRect, Qt::AlignHCenter | Qt::AlignTop, text);
+    }
+
+    painter->restore();
 }
 
 void AgGridWidget::mousePressEvent(QMouseEvent *event)
 {
+    // 加载遮罩显示期间屏蔽交互
+    if (m_loading) {
+        event->accept();
+        return;
+    }
+
     if (!isInsideRoundedRect(event->pos())) {
         QWidget::mousePressEvent(event);
         return;
@@ -917,6 +1015,16 @@ void AgGridWidget::mousePressEvent(QMouseEvent *event)
 
 void AgGridWidget::mouseMoveEvent(QMouseEvent *event)
 {
+    // 加载遮罩显示期间屏蔽交互：清除悬停高亮与光标，避免透过半透明蒙层显现
+    if (m_loading) {
+        if (!m_isResizing)
+            setCursor(Qt::ArrowCursor);
+        clearHoverCell();
+        clearHeaderHover();
+        event->accept();
+        return;
+    }
+
     if (m_isRowDragging) {
         updateRowDrag(event->globalPos());
         return;
@@ -1255,6 +1363,12 @@ void AgGridWidget::focusOutEvent(QFocusEvent *event)
 
 void AgGridWidget::contextMenuEvent(QContextMenuEvent *event)
 {
+    // 加载遮罩显示期间屏蔽交互
+    if (m_loading) {
+        event->accept();
+        return;
+    }
+
     if (!m_model) {
         QWidget::contextMenuEvent(event);
         return;
@@ -1280,6 +1394,12 @@ void AgGridWidget::contextMenuEvent(QContextMenuEvent *event)
 
 void AgGridWidget::mouseDoubleClickEvent(QMouseEvent *event)
 {
+    // 加载遮罩显示期间屏蔽交互
+    if (m_loading) {
+        event->accept();
+        return;
+    }
+
     if (!isInsideRoundedRect(event->pos())) {
         QWidget::mouseDoubleClickEvent(event);
         return;
@@ -1320,6 +1440,12 @@ void AgGridWidget::resizeEvent(QResizeEvent * /*event*/)
 
 void AgGridWidget::wheelEvent(QWheelEvent *event)
 {
+    // 加载遮罩显示期间屏蔽交互
+    if (m_loading) {
+        event->accept();
+        return;
+    }
+
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     if (!isInsideRoundedRect(event->position().toPoint())) {
 #else
@@ -1454,6 +1580,15 @@ void AgGridWidget::updateScrollRange()
 void AgGridWidget::updateScrollBars()
 {
     if (!m_model) {
+        m_hScrollBar->hide();
+        m_vScrollBar->hide();
+        m_hScrollBarVisible = false;
+        m_vScrollBarVisible = false;
+        return;
+    }
+
+    // 加载遮罩显示期间强制隐藏滚动条（子控件会盖在蒙层上），结束后由动画回调恢复
+    if (m_loading) {
         m_hScrollBar->hide();
         m_vScrollBar->hide();
         m_hScrollBarVisible = false;
@@ -4271,8 +4406,59 @@ void AgGridWidget::setDragPreviewTextCallback(const std::function<QString(const 
     m_dragPreviewTextCallback = callback;
 }
 
+void AgGridWidget::setLoading(bool loading)
+{
+    if (m_loading == loading)
+        return;
+    m_loading = loading;
+
+    if (loading) {
+        // 蒙层盖不住子控件，先收掉：编辑器（数据即将刷新，放弃未提交修改）、
+        // 进行中的拖拽与滚动条
+        if (isEditing())
+            closeEditor(false);
+        cancelRowDrag();
+        cancelColumnDrag();
+        clearHoverCell();
+        clearHeaderHover();
+        updateScrollBars();
+    }
+
+    m_loadingAnimation->stop();
+    m_loadingAnimation->setDuration(loading ? 200 : 160);
+    m_loadingAnimation->setStartValue(m_loadingOpacity);
+    m_loadingAnimation->setEndValue(loading ? 1.0 : 0.0);
+    m_loadingAnimation->start();
+    update();
+}
+
+bool AgGridWidget::isLoading() const
+{
+    return m_loading;
+}
+
+void AgGridWidget::setLoadingText(const QString &text)
+{
+    if (m_loadingText == text)
+        return;
+    m_loadingText = text;
+    if (m_loadingOpacity > 0.0)
+        update();
+}
+
+QString AgGridWidget::loadingText() const
+{
+    return m_loadingText;
+}
+
 void AgGridWidget::keyPressEvent(QKeyEvent *event)
 {
+    // 加载遮罩显示期间屏蔽交互
+    if (m_loading) {
+        event->accept();
+        return;
+    }
+
     if (!m_model) {
         QWidget::keyPressEvent(event);
         return;

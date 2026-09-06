@@ -445,6 +445,26 @@ MainWindow::MainWindow(QWidget *parent)
                                          : AgGridStyle::createLightStyle());
     });
 
+    // 加载遮罩演示：手动开关，或模拟一次异步数据请求（loading 期间表格交互被屏蔽）
+    QToolBar *loadingBar = addToolBar(QStringLiteral(u"加载"));
+    QPushButton *loadingToggleBtn = new QPushButton(QStringLiteral(u"Loading"), loadingBar);
+    loadingToggleBtn->setCheckable(true);
+    QPushButton *simulateRequestBtn = new QPushButton(QStringLiteral(u"模拟请求数据"), loadingBar);
+    loadingBar->addWidget(loadingToggleBtn);
+    loadingBar->addWidget(simulateRequestBtn);
+
+    connect(loadingToggleBtn, &QPushButton::toggled, this, [this](bool checked) {
+        m_gridWidget->setLoading(checked);
+    });
+    connect(simulateRequestBtn, &QPushButton::clicked, this, [this]() {
+        // 模拟异步请求：先显示 loading，2 秒后写入“请求返回”的新数据并关闭遮罩
+        m_gridWidget->setLoading(true);
+        m_gridWidget->setLoadingText(QStringLiteral("正在请求数据…"));
+        QTimer::singleShot(2000, this, [this]() {
+            m_gridWidget->setLoading(false);
+        });
+    });
+
     // 动态更新演示：每秒修改一次 (row=5, col=1) 的值（两个表格同步修改，保持数据一致）
     QTimer *timer = new QTimer(this);
     connect(timer, &QTimer::timeout, this, [this]() {

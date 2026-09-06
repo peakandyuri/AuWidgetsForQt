@@ -70,6 +70,13 @@ QVariant AgDarkGridStyle::value(StyleRole role, const AgGridModel *model, int ro
     case RowNumberForegroundColor:
         return QColor(150, 150, 155);
 
+    case LoadingOverlayColor:
+        return QColor(0, 0, 0, 130);
+    case LoadingSpinnerColor:
+        return QColor(0, 150, 255);
+    case LoadingTextColor:
+        return QColor(200, 200, 200);
+
     case CellForegroundColor:
         return QColor(220, 220, 220);
 

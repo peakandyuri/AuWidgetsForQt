@@ -112,7 +112,14 @@ public:
 
         // 行号列
         RowNumberFontBold,          ///< 行号是否加粗
-        RowNumberForegroundColor    ///< 行号文字颜色
+        RowNumberForegroundColor,   ///< 行号文字颜色
+
+        // 加载遮罩
+        LoadingOverlayColor,        ///< 加载遮罩背景色（通常带透明度；无效色 = 不绘制蒙层）
+        LoadingSpinnerColor,        ///< 加载圆环颜色
+        LoadingSpinnerSize,         ///< 加载圆环直径（像素）
+        LoadingTextColor,           ///< 加载文字颜色
+        LoadingText                 ///< 默认加载文字（setLoadingText 未设置或传空时生效；样式置空 = 只显示圆环）
     };
 
     AgGridStyle();

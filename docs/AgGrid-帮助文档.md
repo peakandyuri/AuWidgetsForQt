@@ -37,6 +37,7 @@
 - **行拖拽排序**：拖动手柄整行拖动重排，带动画与自动滚动
 - **列拖拽排序 / 显隐动画**：任意层级的列可拖动重排，列显隐带位移动画
 - **多表格同步**：多个表格的滚动与列宽可互相同步（数据对比场景）
+- **加载遮罩**：`setLoading()` 由调用方控制显隐，半透明蒙层 + 旋转圆环 + 文案，带淡入淡出（数据请求等异步场景）
 - **样式系统**：全局样式 / 独立样式、浅色与暗色主题、小中大三种尺寸模式、支持按行列上下文自定义样式值
 - **自定义渲染**：单元格 / 表头渲染器、编辑器均为接口 + 注册表设计，可任意扩展
 
@@ -487,6 +488,33 @@ bool hasSpans() const;
 | `int selectedRow() / selectedColumn()` | 当前选中格 |
 | `bool hasSpans()` 等 | 见合并专题 |
 
+### 7.16 加载遮罩（Loading）
+
+由调用方完全控制显隐时机（框架不会自动触发），典型场景是异步请求数据：发起请求前 `setLoading(true)`，数据写入模型后 `setLoading(false)`。
+
+| 函数 | 说明 |
+|---|---|
+| `void setLoading(bool loading)` | 显示 / 隐藏加载遮罩（半透明蒙层 + 旋转圆环 + 文案，带淡入 / 淡出） |
+| `bool isLoading() const` | 遮罩是否处于显示状态（淡出过渡中已返回 false） |
+| `void setLoadingText(const QString &text)` | 设置加载文字；传空字符串只显示圆环；从不设置时使用样式键 `LoadingText`（默认"加载中…"） |
+| `QString loadingText() const` | 当前加载文字（null 表示跟随样式键） |
+
+```cpp
+// 模拟异步请求
+grid->setLoading(true);
+QTimer::singleShot(2000, this, [this]() {
+    model->setRowData(freshRows);   // 数据返回后写入模型
+    grid->setLoading(false);
+});
+```
+
+遮罩显示期间的行为：
+
+- 覆盖表格整个面板（含表头），鼠标点击 / 双击 / 滚轮 / 键盘 / 右键菜单均被屏蔽，悬停高亮与手型光标反馈一并清除；
+- 滚动条隐藏，淡出结束后按内容自动恢复；
+- 打开中的编辑器自动关闭（**不提交**）；进行中的行 / 列拖拽自动取消；
+- 蒙层颜色、圆环颜色 / 直径、文字颜色 / 默认文字由样式键控制，见第 16 节"加载遮罩"。
+
 ---
 
 ## 8. 单元格合并（Span）专题
@@ -894,6 +922,16 @@ sync->syncFrom(gridA);      // 初始对齐
 |---|---|---|
 | `RowNumberFontBold` | bool | 行号加粗 |
 | `RowNumberForegroundColor` | QColor | 行号文字颜色 |
+
+### 加载遮罩
+
+| 键 | 类型 | 说明 |
+|---|---|---|
+| `LoadingOverlayColor` | QColor | 遮罩蒙层背景色（通常带透明度；无效色不绘制蒙层） |
+| `LoadingSpinnerColor` | QColor | 旋转圆环颜色（无效色不绘制圆环） |
+| `LoadingSpinnerSize` | int | 圆环直径 |
+| `LoadingTextColor` | QColor | 加载文字颜色 |
+| `LoadingText` | QString | 默认加载文字（`setLoadingText` 未设置或传 null 时生效；置空 = 只显示圆环） |
 
 ---
 

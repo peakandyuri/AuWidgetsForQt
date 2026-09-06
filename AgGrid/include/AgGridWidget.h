@@ -33,6 +33,7 @@ class QTimer;
  *  - 单元格合并（setSpan，语义参考 QTableView::setSpan）；
  *  - 内置行号列、复选框列、行拖拽手柄列，支持行拖拽重排；
  *  - 多表格滚动 / 列宽同步（配合 AgGridSyncGroup）；
+ *  - 内置加载遮罩（setLoading）：数据请求等异步场景的蒙层 + 旋转圆环 + 文案，淡入淡出；
  *  - 样式系统（全局样式 / 独立样式 / 按行列上下文，小中大三种尺寸模式）。
  *
  * 坐标体系（重要）：
@@ -252,6 +253,20 @@ public:
     /// 自定义拖动时浮动提示文字（默认显示“共 N 行”）。
     void setDragPreviewTextCallback(const std::function<QString(const AgGridModel *, const QVector<int> &)> &callback);
 
+    // 加载遮罩
+    /// 显示 / 隐藏加载遮罩（半透明蒙层 + 旋转圆环 + 文案，带淡入淡出）。
+    /// 用于数据请求等异步场景，由调用方控制时机：发起请求前 setLoading(true)，
+    /// 数据返回后 setLoading(false)。
+    /// 显示期间鼠标 / 键盘交互被屏蔽、滚动条隐藏、打开中的编辑器自动关闭（不提交）。
+    void setLoading(bool loading);
+    /// 加载遮罩是否处于显示状态（setLoading 设置的状态；淡出过渡中已返回 false）。
+    bool isLoading() const;
+    /// 设置加载文字（显示在圆环下方）。传空字符串只显示圆环；
+    /// 从未设置时使用样式键 LoadingText（默认“加载中…”）。
+    void setLoadingText(const QString &text);
+    /// 当前加载文字；null 表示跟随样式键 LoadingText。
+    QString loadingText() const;
+
 signals:
     /// 单元格被左键单击（row 可能为内置辅助列编号；合并格返回锚点坐标）。
     void cellClicked(int row, int column);
@@ -299,7 +314,7 @@ signals:
 
 protected:
     /// 绘制流程：背景 → 圆角面板 → 表头 → 行背景 → 各区域行/网格线 →
-    /// 辅助列 → 拖拽覆盖层 → 焦点框 → 区域分隔线 → 底部收尾线 → 外边框。
+    /// 辅助列 → 拖拽覆盖层 → 焦点框 → 区域分隔线 → 底部收尾线 → 外边框 → 加载遮罩。
     void paintEvent(QPaintEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
@@ -412,6 +427,8 @@ private:
     void drawCellFocus(QPainter *painter);
     /// 左右停靠区域与固定列区的分隔竖线。
     void drawRegionSeparators(QPainter *painter);
+    /// 加载遮罩：半透明蒙层 + 旋转圆环 + 文案，按不透明度 m_loadingOpacity 绘制。
+    void drawLoadingOverlay(QPainter *painter);
     /// 左侧 sticky 区域右边界（固定列与实际发生位移的左停靠列的最大右边缘）。
     /// 与 drawRegionSeparators 的分隔线一致；body 内容/焦点框/编辑器需在此边界右侧。
     int stickyLeftBoundaryX() const;
@@ -696,6 +713,14 @@ private:
     qreal m_columnVisProgress;               ///< 动画进度 0~1
     QVector<ColumnDragAnimationEntry> m_columnVisShiftEntries;  ///< 右侧列位移插值条目
     QVariantAnimation *m_columnVisAnimation; ///< 显隐动画驱动
+
+    // 加载遮罩
+    bool m_loading;                          ///< 加载遮罩请求状态（setLoading 设置）
+    qreal m_loadingOpacity;                  ///< 遮罩当前不透明度 0~1（淡入/淡出动画驱动）
+    QString m_loadingText;                   ///< 加载文字（null = 跟随样式键 LoadingText）
+    int m_loadingSpinnerAngle;               ///< 圆环旋转角（度）
+    QTimer *m_loadingTimer;                  ///< 圆环旋转动画定时器
+    QVariantAnimation *m_loadingAnimation;   ///< 遮罩淡入/淡出动画驱动
 
     static constexpr int kResizeHandleTolerance = 4;  ///< 列宽调整热区容差（像素）
 };
