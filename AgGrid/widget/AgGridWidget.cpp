@@ -17,6 +17,7 @@
 #include <QLabel>
 #include <QTimer>
 #include <QCursor>
+#include <QDebug>
 #include <QVariantAnimation>
 #include <algorithm>
 
@@ -31,6 +32,7 @@ AgGridWidget::AgGridWidget(QWidget *parent)
     , m_selectedColumn(-1)
     , m_hoverRow(-1)
     , m_hoverColumn(-1)
+    , m_hoverPos(-1, -1)
     , m_hoverHeaderColumn(-1)
     , m_hoverHeaderLevel(0)
     , m_headerRenderClickPending(false)
@@ -277,10 +279,21 @@ void AgGridWidget::rebuildRowOffsets() const
             }
             const int measureWidth = span.isValid() ? spanWidth(span) : colWidth;
             const QRect measureRect(0, 0, measureWidth, globalHeight);
+
+            // 树形首列：测量时扣减缩进 + 箭头占位（与绘制一致）
+            AgCellRendererContext measureCtx;
+            if (m_model->isTreeMode() && col == treeColumn()) {
+                const int originalRow = m_model->originalRowForVisibleRow(row);
+                if (originalRow >= 0) {
+                    measureCtx.treeRow = true;
+                    measureCtx.treeDepth = m_model->rowDepth(originalRow);
+                }
+            }
+
             const int pref = renderer->preferredHeight(measureRect,
                                                          m_model->cellValue(row, col),
                                                          def, row, col,
-                                                         m_model, m_style);
+                                                         m_model, m_style, measureCtx);
             if (pref > m_rowHeights.at(row))
                 m_rowHeights[row] = pref;
         }
@@ -957,6 +970,16 @@ void AgGridWidget::mousePressEvent(QMouseEvent *event)
         return;
     }
 
+    // 树形展开箭头：点击切换展开态（不改选中、不触发 cellClicked）
+    if (event->button() == Qt::LeftButton && isTreeMode() && cell.x() == treeColumn()) {
+        const QRect expanderRect = treeExpanderRect(cell.y());
+        if (expanderRect.isValid() && expanderRect.contains(event->pos())) {
+            toggleRowExpanded(cell.y());
+            event->accept();
+            return;
+        }
+    }
+
     // 复选框列：切换勾选状态并选中该行
     if (isCheckboxColumn(cell.x())) {
         toggleCheckboxCell(cell.y());
@@ -1276,6 +1299,8 @@ void AgGridWidget::updateHoverVisual()
 
 void AgGridWidget::updateHoverCell(const QPoint &pos)
 {
+    m_hoverPos = pos;
+
     const QPoint cell = cellAtPosition(pos);
     const bool valid = cell.y() >= 0 && (cell.x() >= 0 || isCheckboxColumn(cell.x()) || isDragHandleColumn(cell.x()));
 
@@ -1306,6 +1331,7 @@ void AgGridWidget::updateHoverCell(const QPoint &pos)
         setCursor(renderer->wantsHoverCursor(cell.y(), cell.x(), cellPos)
                   ? Qt::PointingHandCursor
                   : Qt::ArrowCursor);
+        applyTreeExpanderCursor(cell.x(), cell.y(), pos);
         return;
     }
 
@@ -1322,6 +1348,17 @@ void AgGridWidget::updateHoverCell(const QPoint &pos)
     setCursor(renderer->wantsHoverCursor(m_hoverRow, m_hoverColumn, cellPos)
               ? Qt::PointingHandCursor
               : Qt::ArrowCursor);
+    applyTreeExpanderCursor(cell.x(), cell.y(), pos);
+}
+
+/// 树形展开箭头热区：手型光标（优先于渲染器的光标判定）。
+void AgGridWidget::applyTreeExpanderCursor(int column, int row, const QPoint &pos)
+{
+    if (!isTreeMode() || column != treeColumn())
+        return;
+    const QRect expanderRect = treeExpanderRect(row);
+    if (expanderRect.isValid() && expanderRect.contains(pos))
+        setCursor(Qt::PointingHandCursor);
 }
 
 void AgGridWidget::clearHoverCell()
@@ -1332,6 +1369,7 @@ void AgGridWidget::clearHoverCell()
     notifyRendererLeave(m_hoverRow, m_hoverColumn);
     m_hoverRow = -1;
     m_hoverColumn = -1;
+    m_hoverPos = QPoint(-1, -1);
     updateHoverVisual();
 }
 
@@ -1425,6 +1463,16 @@ void AgGridWidget::mouseDoubleClickEvent(QMouseEvent *event)
         && m_model->columnDefAt(cell.x()).isCheckbox())
         return;
 
+    // 树形首列双击：切换展开 / 折叠（不进入编辑）
+    if (isTreeMode() && cell.x() == treeColumn()) {
+        const int originalRow = m_model->originalRowForVisibleRow(cell.y());
+        if (originalRow >= 0 && m_model->rowHasChildren(originalRow)) {
+            toggleRowExpanded(cell.y());
+            event->accept();
+            return;
+        }
+    }
+
     if (m_activeEditor && !tryFinishCurrentEdit())
         return;
 
@@ -1515,6 +1563,7 @@ void AgGridWidget::connectModel()
         // 行/列拖拽过程中由拖拽逻辑自行维护勾选与选择状态，不要清空；也避免自动重绘干扰拖拽动画
         if (!m_isRowDragging && !m_isColumnDragging) {
             m_checkedOriginalRows.clear();
+            m_partialOriginalRows.clear();
             m_selectedOriginalRow = -1;
         }
         pruneSpans();
@@ -1540,7 +1589,14 @@ void AgGridWidget::connectModel()
             update();
         }
     });
-    connect(m_model, &AgGridModel::columnWidthsChanged, this, [this]() { rebuildColumnOffsets(); invalidateRowHeights(); updateScrollBars(); update(); emit columnWidthsChanged(); });
+    connect(m_model, &AgGridModel::columnWidthsChanged, this, [this]() {
+        rebuildColumnOffsets();
+        invalidateRowHeights();
+        updateEditorGeometry();   // 列宽变化时打开中的编辑器跟随单元格移动
+        updateScrollBars();
+        update();
+        emit columnWidthsChanged();
+    });
     connect(m_model, &AgGridModel::layoutChanged, this, [this]() {
         if (m_activeEditor)
             closeEditor(false);
@@ -1564,6 +1620,11 @@ void AgGridWidget::connectModel()
         }
     });
     connect(m_model, &AgGridModel::filterChanged, this, [this]() { emit filterChanged(); });
+    // 树形展开态变化：转发为可见行号信号（折叠后行可能不可见，返回 -1）
+    connect(m_model, &AgGridModel::rowExpandedChanged, this, [this](int originalRow, bool expanded) {
+        const int visibleRow = m_model->visibleRowForOriginalRow(originalRow);
+        emit rowExpandedChanged(visibleRow, expanded);
+    });
 }
 
 void AgGridWidget::disconnectModel()
@@ -1625,8 +1686,11 @@ void AgGridWidget::updateScrollBarsCompute()
     const int viewportHeight = qMax(0, height() - headerHeight());
     const int contentWidth = totalContentWidth();
     const int contentHeight = totalContentHeight();
+    // 横向滚动只作用于 body 区列：偏移表含左 / 右停靠列的全局偏移，
+    // 量程需扣除停靠列宽，否则会过量滚动、在末尾露出一条空白列
+    const int bodyContentWidth = qMax(0, contentWidth - m_leftPinnedWidth - m_rightPinnedWidth);
 
-    const bool needHorizontal = contentWidth > qMax(0, viewportWidth - fixedWidth);
+    const bool needHorizontal = bodyContentWidth > qMax(0, viewportWidth - fixedWidth);
     const bool needVertical = contentHeight > viewportHeight;
 
     const int hBarHeight = needHorizontal ? scrollBarExtent : 0;
@@ -1637,7 +1701,7 @@ void AgGridWidget::updateScrollBarsCompute()
     const int bodyVisibleWidth = qMax(0, availableWidth - fixedWidth);
 
     // 重新判断，减去滚动条占用的空间后是否仍然需要另一个滚动条
-    const bool finalNeedHorizontal = contentWidth > bodyVisibleWidth;
+    const bool finalNeedHorizontal = bodyContentWidth > bodyVisibleWidth;
     const bool finalNeedVertical = contentHeight > availableHeight;
 
     const int finalHBarHeight = finalNeedHorizontal ? scrollBarExtent : 0;
@@ -1654,7 +1718,7 @@ void AgGridWidget::updateScrollBarsCompute()
     const int vBarHeight = qMax(0, height() - headerHeight() - finalHBarHeight);
 
     if (finalNeedHorizontal) {
-        m_hScrollBar->setRange(0, contentWidth - finalBodyVisibleWidth);
+        m_hScrollBar->setRange(0, bodyContentWidth - finalBodyVisibleWidth);
         m_hScrollBar->setPageStep(finalBodyVisibleWidth);
         m_hScrollBar->setSingleStep(rowHeight());
         m_hScrollBar->setGeometry(hBarX, hBarY, hBarWidth, finalHBarHeight);
@@ -2472,11 +2536,14 @@ QPair<int, int> AgGridWidget::visibleColumnRange() const
                                          - fixedColumnsWidth()
                                          - m_leftPinnedWidth
                                          - m_rightPinnedWidth);
-    const int viewRight = m_xOffset + bodyVisibleWidth;
+    // body 列的全局偏移从左停靠列宽之后开始（停靠列占据偏移表前段），
+    // 可视窗口需整体右移 m_leftPinnedWidth，否则尾列会被误判为不可见
+    const int viewLeft = m_leftPinnedWidth + m_xOffset;
+    const int viewRight = viewLeft + bodyVisibleWidth;
 
     for (int i = 0; i < m_bodyColumns.size(); ++i) {
         const int col = m_bodyColumns.at(i);
-        if (m_columnOffsets.at(col + 1) > m_xOffset) {
+        if (m_columnOffsets.at(col + 1) > viewLeft) {
             firstBodyIdx = i;
             break;
         }
@@ -2622,6 +2689,7 @@ int AgGridWidget::measureAutoFitWidth(int column)
     maxWidth = qMax(maxWidth, headerWidth);
 
     // 可视行单元格宽度
+    const bool treeFirst = m_model->isTreeMode() && column == treeColumn();
     const QPair<int, int> rowRange = visibleRowRange();
     for (int row = rowRange.first; row <= rowRange.second; ++row) {
         // 被合并覆盖的单元格数据不显示，不参与列宽测量
@@ -2633,7 +2701,14 @@ int AgGridWidget::measureAutoFitWidth(int column)
         const QFont cellFont = m_style->font(m_model, row, column);
         const QFontMetrics cellFm(cellFont);
         const int hPadding = m_style->integer(AgGridStyle::CellHorizontalPadding, m_model, row, column);
-        const int cellWidth = cellFm.horizontalAdvance(text) + 2 * hPadding + 2; // +2 补偿加粗字体笔画悬出与 1px 边框
+        // 树形首列：文本前还有缩进 + 箭头占位
+        int treeLeading = 0;
+        if (treeFirst) {
+            const int originalRow = m_model->originalRowForVisibleRow(row);
+            if (originalRow >= 0)
+                treeLeading = treeLeadingWidth(m_model->rowDepth(originalRow));
+        }
+        const int cellWidth = cellFm.horizontalAdvance(text) + 2 * hPadding + 2 + treeLeading; // +2 补偿加粗字体笔画悬出与 1px 边框
         maxWidth = qMax(maxWidth, cellWidth);
     }
 
@@ -2843,10 +2918,19 @@ void AgGridWidget::drawCheckboxHeader(QPainter *painter)
     const int x = rect.left() + padding;
     const int y = rect.top() + (rect.height() - size) / 2;
 
-    const int checkableCount = checkableRowCount();
-    const int visibleCheckedCount = checkedRows().size();
-    const bool allChecked = checkableCount > 0 && visibleCheckedCount == checkableCount;
-    const bool partial = !allChecked && visibleCheckedCount > 0;
+    // 树形模式：表头三态按原始行全集聚合（折叠不可见的行也计入；
+    // 聚合勾选可能包含不可勾选的祖先行，统计时需按可勾选行过滤）
+    int checkableCount;
+    int checkedCount;
+    if (m_model && m_model->isTreeMode()) {
+        checkableCount = checkableOriginalRowCount();
+        checkedCount = checkedCheckableOriginalCount();
+    } else {
+        checkableCount = checkableRowCount();
+        checkedCount = checkedRows().size();
+    }
+    const bool allChecked = checkableCount > 0 && checkedCount == checkableCount;
+    const bool partial = !allChecked && checkedCount > 0;
     drawCheckbox(painter, QRect(x, y, size, size), allChecked, partial);
 }
 
@@ -2862,13 +2946,25 @@ void AgGridWidget::drawCheckboxCell(QPainter *painter, int row)
     const int y = rect.top() + (rect.height() - size) / 2;
 
     const bool enabled = isRowCheckable(row);
-    drawCheckbox(painter, QRect(x, y, size, size), isRowChecked(row), false, enabled);
+    drawCheckbox(painter, QRect(x, y, size, size), isRowChecked(row), isRowPartiallyChecked(row), enabled);
 }
 
 void AgGridWidget::toggleCheckboxHeader()
 {
     if (!m_model)
         return;
+
+    // 树形模式：按原始行全集判断全选 / 清空
+    if (m_model->isTreeMode()) {
+        const int checkableCount = checkableOriginalRowCount();
+        if (checkableCount == 0)
+            return;
+        if (checkedCheckableOriginalCount() == checkableCount)
+            clearAllCheckedRows();
+        else
+            selectAllRows();
+        return;
+    }
 
     const int checkableCount = checkableRowCount();
     if (checkableCount == 0)
@@ -3277,6 +3373,7 @@ void AgGridWidget::drawRows(QPainter *painter, int firstRow, int lastRow, int fi
     const QColor selectedColor = m_style->color(AgGridStyle::SelectedRowBackgroundColor, m_model);
     const QColor alternateColor = m_style->color(AgGridStyle::AlternateRowBackgroundColor, m_model);
     const QColor hoverColor = m_style->color(AgGridStyle::HoverRowBackgroundColor, m_model);
+    const int treeCol = isTreeMode() ? treeColumn() : -1;
 
     // 合并单元格锚点可能在可视范围外（区域被部分滚动出），把锚点并入绘制范围
     int paintFirstRow = firstRow;
@@ -3348,6 +3445,21 @@ void AgGridWidget::drawRows(QPainter *painter, int firstRow, int lastRow, int fi
             const QVariant alignVar = m_style->value(AgGridStyle::CellTextAlignment, m_model, row, col);
             if (alignVar.isValid() && alignVar.toInt() != 0)
                 ctx.alignment = static_cast<Qt::Alignment>(alignVar.toInt()) | Qt::AlignVCenter;
+
+            // 树形首列：层级缩进 + 展开箭头上下文
+            if (col == treeCol) {
+                const int originalRow = m_model->originalRowForVisibleRow(row);
+                if (originalRow >= 0) {
+                    ctx.treeRow = true;
+                    ctx.treeDepth = m_model->rowDepth(originalRow);
+                    ctx.treeHasChildren = m_model->rowHasChildren(originalRow);
+                    ctx.treeExpanded = m_model->isRowExpanded(originalRow);
+                    ctx.treeExpanderHovered = ctx.treeHasChildren
+                        && row == m_hoverRow && col == m_hoverColumn
+                        && treeExpanderRect(row).contains(m_hoverPos);
+                }
+            }
+
             renderer->paint(painter, rect, value, def, row, col, m_model, m_style, defaultTextColor, ctx);
 
             if (fade)
@@ -3961,11 +4073,14 @@ int AgGridWidget::targetHorizontalOffset(int column, ScrollHint hint, int spanRi
     const int viewportW = viewportWidthForColumns();
     const int fixedWidth = fixedColumnsWidth() + m_leftPinnedWidth + m_rightPinnedWidth;
     const int bodyViewportW = qMax(0, viewportW - fixedWidth);
-    const int maxOffset = qMax(0, contentWidth - bodyViewportW);
+    // 与滚动量程一致：body 区内容宽 = 全部列宽 - 停靠列宽
+    const int bodyContentWidth = qMax(0, contentWidth - m_leftPinnedWidth - m_rightPinnedWidth);
+    const int maxOffset = qMax(0, bodyContentWidth - bodyViewportW);
     // 合并单元格按整个区域计算可视范围
     const int rightColumn = (spanRightColumn > column) ? spanRightColumn : column;
-    const int colLeft = m_columnOffsets.at(column);
-    const int colRight = m_columnOffsets.at(rightColumn + 1);
+    // body 列的滚动偏移相对 body 区起点（全局偏移需扣除其前面的左停靠列宽）
+    const int colLeft = m_columnOffsets.at(column) - m_leftPinnedWidth;
+    const int colRight = m_columnOffsets.at(rightColumn + 1) - m_leftPinnedWidth;
     const int colWidth = colRight - colLeft;
     const int current = m_hScrollBar->value();
 
@@ -4159,8 +4274,10 @@ void AgGridWidget::setCheckboxColumnVisible(bool visible)
         return;
 
     m_showCheckboxColumn = visible;
-    if (!visible)
+    if (!visible) {
         m_checkedOriginalRows.clear();
+        m_partialOriginalRows.clear();
+    }
 
     rebuildColumnOffsets();
     updateScrollBars();
@@ -4192,6 +4309,20 @@ void AgGridWidget::setRowChecked(int row, bool checked)
     if (originalRow < 0)
         return;
 
+    // 树形模式：勾选父行级联全部子行，祖先按子行聚合出三态
+    if (m_model->isTreeMode()) {
+        const Qt::CheckState state = rowCheckStateOriginal(originalRow);
+        if (state == Qt::Checked && checked)
+            return;
+        if (state == Qt::Unchecked && !checked)
+            return;
+        cascadeRowCheck(originalRow, checked);
+        update();
+        emit rowCheckedChanged(row, checked);
+        emit checkedStateChanged();
+        return;
+    }
+
     const bool already = m_checkedOriginalRows.contains(originalRow);
     if (already == checked)
         return;
@@ -4204,6 +4335,14 @@ void AgGridWidget::setRowChecked(int row, bool checked)
     update();
     emit rowCheckedChanged(row, checked);
     emit checkedStateChanged();
+}
+
+bool AgGridWidget::isRowPartiallyChecked(int row) const
+{
+    if (row < 0 || !m_model || !m_model->isTreeMode() || row >= m_model->rowCount())
+        return false;
+    const int originalRow = m_model->originalRowForVisibleRow(row);
+    return originalRow >= 0 && m_partialOriginalRows.contains(originalRow);
 }
 
 bool AgGridWidget::isRowCheckable(int row) const
@@ -4220,20 +4359,29 @@ void AgGridWidget::setRowCheckableCallback(const std::function<bool(const AgGrid
     m_rowCheckableCallback = callback;
 
     QSet<int> removedOriginal;
-    for (int row = 0; row < m_model->rowCount(); ++row) {
-        if (!isRowCheckable(row)) {
-            const int originalRow = m_model->originalRowForVisibleRow(row);
-            if (originalRow >= 0 && m_checkedOriginalRows.remove(originalRow))
-                removedOriginal.insert(originalRow);
+    if (m_model && m_model->isTreeMode()) {
+        // 树形模式按原始行全量裁决（折叠不可见的行也参与）
+        for (int originalRow = 0; originalRow < m_model->originalRowCount(); ++originalRow) {
+            if (!isRowCheckableOriginal(originalRow)) {
+                if (m_checkedOriginalRows.remove(originalRow))
+                    removedOriginal.insert(originalRow);
+                m_partialOriginalRows.remove(originalRow);
+            }
+        }
+        recomputeAllCheckStates();
+    } else {
+        for (int row = 0; row < m_model->rowCount(); ++row) {
+            if (!isRowCheckable(row)) {
+                const int originalRow = m_model->originalRowForVisibleRow(row);
+                if (originalRow >= 0 && m_checkedOriginalRows.remove(originalRow))
+                    removedOriginal.insert(originalRow);
+            }
         }
     }
 
-    if (!removedOriginal.isEmpty()) {
-        update();
-        emit checkedStateChanged();
-    }
-
     update();
+    if (!removedOriginal.isEmpty())
+        emit checkedStateChanged();
 }
 
 int AgGridWidget::checkableRowCount() const
@@ -4257,6 +4405,23 @@ void AgGridWidget::selectAllRows()
     if (!m_model)
         return;
 
+    // 树形模式：按原始行全量勾选（折叠不可见的行同样勾选）
+    if (m_model->isTreeMode()) {
+        const int total = m_model->originalRowCount();
+        const int checkableCount = checkableOriginalRowCount();
+        if (total == 0 || checkableCount == 0 || m_checkedOriginalRows.size() == checkableCount)
+            return;
+        m_checkedOriginalRows.clear();
+        m_partialOriginalRows.clear();
+        for (int i = 0; i < total; ++i) {
+            if (isRowCheckableOriginal(i))
+                m_checkedOriginalRows.insert(i);
+        }
+        update();
+        emit checkedStateChanged();
+        return;
+    }
+
     const int count = m_model->rowCount();
     const int checkableCount = checkableRowCount();
     if (count == 0 || checkableCount == 0 || checkedRows().size() == checkableCount)
@@ -4277,10 +4442,11 @@ void AgGridWidget::selectAllRows()
 
 void AgGridWidget::clearAllCheckedRows()
 {
-    if (m_checkedOriginalRows.isEmpty())
+    if (m_checkedOriginalRows.isEmpty() && m_partialOriginalRows.isEmpty())
         return;
 
     m_checkedOriginalRows.clear();
+    m_partialOriginalRows.clear();
     update();
     emit checkedStateChanged();
 }
@@ -4303,6 +4469,276 @@ QSet<int> AgGridWidget::checkedRows() const
 QSet<int> AgGridWidget::checkedOriginalRows() const
 {
     return m_checkedOriginalRows;
+}
+
+// ---- 树形表格 ----
+
+bool AgGridWidget::isTreeMode() const
+{
+    return m_model && m_model->isTreeMode();
+}
+
+int AgGridWidget::treeColumn() const
+{
+    if (!m_model || !m_model->isTreeMode())
+        return -1;
+    const int count = m_model->columnCount();
+    for (int col = 0; col < count; ++col) {
+        if (!isColumnHidden(col))
+            return col;
+    }
+    return -1;
+}
+
+int AgGridWidget::treeLeadingWidth(int depth) const
+{
+    const int indentWidth = m_style->integer(AgGridStyle::TreeIndentWidth, m_model);
+    const int expanderSize = m_style->integer(AgGridStyle::TreeExpanderSize, m_model);
+    // 与 AgDefaultCellRenderer::paint 的占位公式保持一致
+    return depth * indentWidth + expanderSize + qMax(4, expanderSize / 4);
+}
+
+QRect AgGridWidget::treeExpanderRect(int row) const
+{
+    if (!isTreeMode() || row < 0 || !m_model || row >= m_model->rowCount())
+        return QRect();
+
+    const int col = treeColumn();
+    if (col < 0)
+        return QRect();
+
+    const int originalRow = m_model->originalRowForVisibleRow(row);
+    if (originalRow < 0 || !m_model->rowHasChildren(originalRow))
+        return QRect();
+
+    const QRect crect = cellRect(row, col);
+    if (!crect.isValid())
+        return QRect();
+
+    // 箭头盒几何与 AgDefaultCellRenderer::paint 保持一致：
+    // x = 格左 + 水平内边距 + depth * 缩进宽，垂直居中，边长 TreeExpanderSize
+    const int hPadding = m_style->integer(AgGridStyle::CellHorizontalPadding, m_model, row, col);
+    const int indentWidth = m_style->integer(AgGridStyle::TreeIndentWidth, m_model, row, col);
+    const int expanderSize = m_style->integer(AgGridStyle::TreeExpanderSize, m_model, row, col);
+    const int depth = m_model->rowDepth(originalRow);
+    const int x = crect.left() + hPadding + depth * indentWidth;
+    const int y = crect.center().y() - expanderSize / 2;
+    return QRect(x, y, expanderSize, expanderSize);
+}
+
+void AgGridWidget::toggleRowExpanded(int row)
+{
+    if (!m_model || !m_model->isTreeMode() || row < 0 || row >= m_model->rowCount())
+        return;
+    const int originalRow = m_model->originalRowForVisibleRow(row);
+    if (originalRow < 0 || !m_model->rowHasChildren(originalRow))
+        return;
+    m_model->setRowExpanded(originalRow, !m_model->isRowExpanded(originalRow));
+}
+
+void AgGridWidget::setRowExpanded(int row, bool expanded)
+{
+    if (!m_model || !m_model->isTreeMode() || row < 0 || row >= m_model->rowCount())
+        return;
+    const int originalRow = m_model->originalRowForVisibleRow(row);
+    if (originalRow >= 0)
+        m_model->setRowExpanded(originalRow, expanded);
+}
+
+bool AgGridWidget::isRowExpanded(int row) const
+{
+    if (!m_model || !m_model->isTreeMode() || row < 0 || row >= m_model->rowCount())
+        return false;
+    const int originalRow = m_model->originalRowForVisibleRow(row);
+    return originalRow >= 0 && m_model->isRowExpanded(originalRow);
+}
+
+bool AgGridWidget::rowHasChildren(int row) const
+{
+    if (!m_model || !m_model->isTreeMode() || row < 0 || row >= m_model->rowCount())
+        return false;
+    const int originalRow = m_model->originalRowForVisibleRow(row);
+    return originalRow >= 0 && m_model->rowHasChildren(originalRow);
+}
+
+int AgGridWidget::rowDepth(int row) const
+{
+    if (!m_model || row < 0 || row >= m_model->rowCount())
+        return 0;
+    const int originalRow = m_model->originalRowForVisibleRow(row);
+    return originalRow >= 0 ? m_model->rowDepth(originalRow) : 0;
+}
+
+void AgGridWidget::expandAll()
+{
+    if (m_model)
+        m_model->expandAll();
+}
+
+void AgGridWidget::collapseAll()
+{
+    if (m_model)
+        m_model->collapseAll();
+}
+
+void AgGridWidget::expandToDepth(int depth)
+{
+    if (m_model)
+        m_model->expandToDepth(depth);
+}
+
+void AgGridWidget::collapseToDepth(int depth)
+{
+    if (m_model)
+        m_model->collapseToDepth(depth);
+}
+
+// ---- 复选框列（树形级联三态） ----
+
+QVector<int> AgGridWidget::subtreeRows(int originalRow) const
+{
+    QVector<int> result;
+    if (!m_model || !m_model->isTreeMode()
+        || originalRow < 0 || originalRow >= m_model->originalRowCount())
+        return result;
+
+    QVector<int> stack;
+    stack.append(originalRow);
+    while (!stack.isEmpty()) {
+        const int current = stack.takeLast();
+        result.append(current);
+        const QVector<int> children = m_model->rowChildren(current);
+        for (int child : children)
+            stack.append(child);
+    }
+    return result;
+}
+
+bool AgGridWidget::isRowCheckableOriginal(int originalRow) const
+{
+    if (!m_model || originalRow < 0 || originalRow >= m_model->originalRowCount())
+        return false;
+    if (!m_rowCheckableCallback)
+        return true;
+    // 树形模式回调接收原始行号：级联需要覆盖折叠不可见的行
+    return m_rowCheckableCallback(m_model, originalRow);
+}
+
+int AgGridWidget::checkableOriginalRowCount() const
+{
+    if (!m_model || !m_model->isTreeMode())
+        return 0;
+    int count = 0;
+    const int total = m_model->originalRowCount();
+    for (int i = 0; i < total; ++i) {
+        if (isRowCheckableOriginal(i))
+            ++count;
+    }
+    return count;
+}
+
+int AgGridWidget::checkedCheckableOriginalCount() const
+{
+    if (!m_model || !m_model->isTreeMode())
+        return 0;
+    int count = 0;
+    for (int originalRow : m_checkedOriginalRows) {
+        if (isRowCheckableOriginal(originalRow))
+            ++count;
+    }
+    return count;
+}
+
+Qt::CheckState AgGridWidget::rowCheckStateOriginal(int originalRow) const
+{
+    if (m_checkedOriginalRows.contains(originalRow))
+        return Qt::Checked;
+    if (m_partialOriginalRows.contains(originalRow))
+        return Qt::PartiallyChecked;
+    return Qt::Unchecked;
+}
+
+void AgGridWidget::cascadeRowCheck(int originalRow, bool checked)
+{
+    const QVector<int> rows = subtreeRows(originalRow);
+    for (int r : rows) {
+        if (!isRowCheckableOriginal(r))
+            continue;
+        if (checked)
+            m_checkedOriginalRows.insert(r);
+        else
+            m_checkedOriginalRows.remove(r);
+        m_partialOriginalRows.remove(r);
+    }
+    recomputeAncestorCheckStates(originalRow);
+}
+
+void AgGridWidget::recomputeAncestorCheckStates(int originalRow)
+{
+    if (!m_model || !m_model->isTreeMode())
+        return;
+
+    // 自底向上聚合祖先链：有可勾选后代时祖先状态完全由后代聚合决定
+    // （全勾 = Checked / 混合 = PartiallyChecked / 全不勾 = Unchecked）
+    int current = m_model->rowParent(originalRow);
+    while (current >= 0) {
+        int checkedCount = 0;
+        int checkableCount = 0;
+        const QVector<int> rows = subtreeRows(current);
+        for (int r : rows) {
+            if (r == current || !isRowCheckableOriginal(r))
+                continue;
+            ++checkableCount;
+            if (m_checkedOriginalRows.contains(r))
+                ++checkedCount;
+        }
+
+        m_partialOriginalRows.remove(current);
+        if (checkableCount > 0) {
+            m_checkedOriginalRows.remove(current);
+            if (checkedCount == checkableCount) {
+                m_checkedOriginalRows.insert(current);
+            } else if (checkedCount > 0) {
+                m_partialOriginalRows.insert(current);
+            }
+        }
+
+        current = m_model->rowParent(current);
+    }
+}
+
+void AgGridWidget::recomputeAllCheckStates()
+{
+    m_partialOriginalRows.clear();
+    if (!m_model || !m_model->isTreeMode())
+        return;
+
+    // 深度优先铺平保证父行索引小于子行索引，自底向上遍历即可逐层聚合
+    for (int i = m_model->originalRowCount() - 1; i >= 0; --i) {
+        if (m_model->rowChildren(i).isEmpty())
+            continue;
+
+        int checkedCount = 0;
+        int checkableCount = 0;
+        const QVector<int> rows = subtreeRows(i);
+        for (int r : rows) {
+            if (r == i || !isRowCheckableOriginal(r))
+                continue;
+            ++checkableCount;
+            if (m_checkedOriginalRows.contains(r))
+                ++checkedCount;
+        }
+
+        m_partialOriginalRows.remove(i);
+        if (checkableCount > 0) {
+            m_checkedOriginalRows.remove(i);
+            if (checkedCount == checkableCount) {
+                m_checkedOriginalRows.insert(i);
+            } else if (checkedCount > 0) {
+                m_partialOriginalRows.insert(i);
+            }
+        }
+    }
 }
 
 int AgGridWidget::sortedColumn() const
@@ -4386,6 +4822,12 @@ bool AgGridWidget::isFiltered() const
 
 void AgGridWidget::setRowDragEnabled(bool enabled)
 {
+    // 树形模式行序由父子结构决定，扁平拖拽重排会破坏层级
+    if (enabled && m_model && m_model->isTreeMode()) {
+        qWarning() << "AgGridWidget: row drag is not supported in tree mode.";
+        return;
+    }
+
     if (m_rowDragEnabled == enabled)
         return;
     m_rowDragEnabled = enabled;
@@ -4519,13 +4961,60 @@ void AgGridWidget::keyPressEvent(QKeyEvent *event)
         event->accept();
         return;
     case Qt::Key_Left:
-        if (!m_activeEditor || tryFinishCurrentEdit())
-            moveSelection(0, -1);
-        event->accept();
-        return;
     case Qt::Key_Right:
-        if (!m_activeEditor || tryFinishCurrentEdit())
-            moveSelection(0, 1);
+        if (m_activeEditor && !tryFinishCurrentEdit()) {
+            event->accept();
+            return;
+        }
+        // 树形模式：选中树列时 Left / Right 折叠展开（QTreeWidget 风格）
+        if (isTreeMode() && m_selectedRow >= 0 && m_selectedColumn == treeColumn()) {
+            const int originalRow = m_model->originalRowForVisibleRow(m_selectedRow);
+            if (originalRow >= 0 && event->key() == Qt::Key_Right
+                && m_model->rowHasChildren(originalRow) && !m_model->isRowExpanded(originalRow)) {
+                m_model->setRowExpanded(originalRow, true);
+                event->accept();
+                return;
+            }
+            if (originalRow >= 0 && event->key() == Qt::Key_Right
+                && m_model->isRowExpanded(originalRow) && m_model->rowHasChildren(originalRow)) {
+                // 已展开：选中第一个可见子行
+                const QVector<int> children = m_model->rowChildren(originalRow);
+                if (!children.isEmpty()) {
+                    const int childVisible = m_model->visibleRowForOriginalRow(children.first());
+                    if (childVisible >= 0) {
+                        m_selectedRow = childVisible;
+                        m_selectedOriginalRow = children.first();
+                        ensureCellVisible(childVisible, m_selectedColumn);
+                        update();
+                        emit selectionChanged();
+                        event->accept();
+                        return;
+                    }
+                }
+            }
+            if (originalRow >= 0 && event->key() == Qt::Key_Left) {
+                if (m_model->isRowExpanded(originalRow) && m_model->rowHasChildren(originalRow)) {
+                    m_model->setRowExpanded(originalRow, false);
+                    event->accept();
+                    return;
+                }
+                // 已折叠 / 叶子行：选中父行
+                const int parentOriginal = m_model->rowParent(originalRow);
+                if (parentOriginal >= 0) {
+                    const int parentVisible = m_model->visibleRowForOriginalRow(parentOriginal);
+                    if (parentVisible >= 0) {
+                        m_selectedRow = parentVisible;
+                        m_selectedOriginalRow = parentOriginal;
+                        ensureCellVisible(parentVisible, m_selectedColumn);
+                        update();
+                        emit selectionChanged();
+                        event->accept();
+                        return;
+                    }
+                }
+            }
+        }
+        moveSelection(0, event->key() == Qt::Key_Left ? -1 : 1);
         event->accept();
         return;
     case Qt::Key_Up:

@@ -30,10 +30,169 @@ const QVector<AgColumnDef> &AgGridModel::topLevelColumnDefs() const
 
 void AgGridModel::setRowData(const QVector<QVariantMap> &rows)
 {
+    // 扁平入口：退出树形模式
+    m_treeMode = false;
+    m_treeRoots.clear();
+    m_rowParent.clear();
+    m_rowChildren.clear();
+    m_rowDepth.clear();
+    m_rowExpanded.clear();
+
     m_originalRowData = rows;
     applyFilterAndSort();
     emit rowsChanged();
     emit layoutChanged();
+}
+
+void AgGridModel::setTreeData(const QVector<AgTreeRow> &roots)
+{
+    m_treeMode = true;
+    m_treeRoots = roots;
+    flattenTreeRows();
+    applyFilterAndSort();
+    emit rowsChanged();
+    emit layoutChanged();
+}
+
+bool AgGridModel::isTreeMode() const
+{
+    return m_treeMode;
+}
+
+const QVector<AgTreeRow> &AgGridModel::treeData() const
+{
+    return m_treeRoots;
+}
+
+int AgGridModel::rowDepth(int originalRow) const
+{
+    if (originalRow < 0 || originalRow >= m_originalRowData.size())
+        return -1;
+    if (!m_treeMode)
+        return 0;
+    return m_rowDepth.at(originalRow);
+}
+
+int AgGridModel::rowParent(int originalRow) const
+{
+    if (!m_treeMode || originalRow < 0 || originalRow >= m_rowParent.size())
+        return -1;
+    return m_rowParent.at(originalRow);
+}
+
+QVector<int> AgGridModel::rowChildren(int originalRow) const
+{
+    if (!m_treeMode || originalRow < 0 || originalRow >= m_rowChildren.size())
+        return QVector<int>();
+    return m_rowChildren.at(originalRow);
+}
+
+bool AgGridModel::rowHasChildren(int originalRow) const
+{
+    return !rowChildren(originalRow).isEmpty();
+}
+
+bool AgGridModel::isRowExpanded(int originalRow) const
+{
+    if (!m_treeMode || originalRow < 0 || originalRow >= m_rowExpanded.size())
+        return false;
+    return m_rowExpanded.at(originalRow);
+}
+
+void AgGridModel::setRowExpanded(int originalRow, bool expanded)
+{
+    if (!m_treeMode || originalRow < 0 || originalRow >= m_rowExpanded.size())
+        return;
+    if (m_rowChildren.at(originalRow).isEmpty())
+        return;
+    if (m_rowExpanded.at(originalRow) == expanded)
+        return;
+    m_rowExpanded[originalRow] = expanded;
+    applyFilterAndSort();
+    emit rowExpandedChanged(originalRow, expanded);
+    emit layoutChanged();
+}
+
+void AgGridModel::expandAll()
+{
+    if (!m_treeMode)
+        return;
+    bool changed = false;
+    for (int i = 0; i < m_rowExpanded.size(); ++i) {
+        if (!m_rowChildren.at(i).isEmpty() && !m_rowExpanded.at(i)) {
+            m_rowExpanded[i] = true;
+            changed = true;
+        }
+    }
+    finishExpandedBatch(changed);
+}
+
+void AgGridModel::collapseAll()
+{
+    collapseToDepth(0);
+}
+
+void AgGridModel::expandToDepth(int depth)
+{
+    if (!m_treeMode)
+        return;
+    bool changed = false;
+    for (int i = 0; i < m_rowDepth.size(); ++i) {
+        if (m_rowDepth.at(i) <= depth && !m_rowChildren.at(i).isEmpty()
+            && !m_rowExpanded.at(i)) {
+            m_rowExpanded[i] = true;
+            changed = true;
+        }
+    }
+    finishExpandedBatch(changed);
+}
+
+void AgGridModel::collapseToDepth(int depth)
+{
+    if (!m_treeMode)
+        return;
+    bool changed = false;
+    for (int i = 0; i < m_rowDepth.size(); ++i) {
+        if (m_rowDepth.at(i) >= depth && m_rowExpanded.at(i)) {
+            m_rowExpanded[i] = false;
+            changed = true;
+        }
+    }
+    finishExpandedBatch(changed);
+}
+
+void AgGridModel::finishExpandedBatch(bool changed)
+{
+    if (!changed)
+        return;
+    applyFilterAndSort();
+    emit layoutChanged();
+}
+
+void AgGridModel::flattenTreeRows()
+{
+    m_originalRowData.clear();
+    m_rowParent.clear();
+    m_rowChildren.clear();
+    m_rowDepth.clear();
+    m_rowExpanded.clear();
+
+    std::function<void(const AgTreeRow &, int, int)> flatten =
+        [&](const AgTreeRow &node, int parent, int depth) {
+            const int index = m_originalRowData.size();
+            m_originalRowData.append(node.data);
+            m_rowParent.append(parent);
+            m_rowDepth.append(depth);
+            m_rowExpanded.append(node.expanded);
+            m_rowChildren.append(QVector<int>());
+            if (parent >= 0)
+                m_rowChildren[parent].append(index);
+            for (const AgTreeRow &child : node.children)
+                flatten(child, index, depth + 1);
+        };
+
+    for (const AgTreeRow &root : m_treeRoots)
+        flatten(root, -1, 0);
 }
 
 const QVector<QVariantMap> &AgGridModel::rowData() const
@@ -200,8 +359,9 @@ void AgGridModel::setColumnWidth(int column, int width)
 
     def->setWidth(clampedWidth);
     def->setWidthMode(AgColumnDef::ColumnWidthMode::Fixed);
+    // 只发 columnWidthsChanged：列宽变化不改变可见行 / 列坐标，
+    // 发 layoutChanged 会让视图清空合并单元格与选中（坐标其实全部有效）
     emit columnWidthsChanged();
-    emit layoutChanged();
 }
 
 void AgGridModel::setColumnWidth(const QString &field, int width)
@@ -234,8 +394,9 @@ void AgGridModel::setColumnPinMode(int column, AgColumnDef::PinMode mode)
         return;
 
     def->setPinMode(mode);
+    // 只发 columnsChanged：停靠变化不改变可见行 / 列坐标，
+    // 发 layoutChanged 会让视图清空合并单元格与选中（坐标其实全部有效）
     emit columnsChanged();
-    emit layoutChanged();
 }
 
 void AgGridModel::setColumnPinMode(const QString &field, AgColumnDef::PinMode mode)
@@ -264,6 +425,12 @@ void AgGridModel::clear()
     m_headerLevelCount = 1;
     m_sortRules.clear();
     m_filterCallback = nullptr;
+    m_treeMode = false;
+    m_treeRoots.clear();
+    m_rowParent.clear();
+    m_rowChildren.clear();
+    m_rowDepth.clear();
+    m_rowExpanded.clear();
     emit rowsChanged();
     emit columnsChanged();
     emit layoutChanged();
@@ -343,7 +510,10 @@ void AgGridModel::sort(const QList<AgSortRule> &rules)
     }
 
     m_sortRules = validRules;
-    sortVisibleData();
+    if (m_treeMode)
+        applyFilterAndSort();   // 树模式：排序在同级兄弟铺平时生效
+    else
+        sortVisibleData();
     emit layoutChanged();
 }
 
@@ -383,6 +553,10 @@ bool AgGridModel::hasFilterCallback() const
 
 void AgGridModel::moveRows(const QVector<int> &fromOriginalIndices, int targetOriginalIndex)
 {
+    // 树形模式行序由父子结构与展开态决定，扁平移动会破坏层级，直接忽略
+    if (m_treeMode)
+        return;
+
     if (fromOriginalIndices.isEmpty())
         return;
 
@@ -443,6 +617,12 @@ void AgGridModel::applyFilterAndSort()
     if (originalCount == 0)
         return;
 
+    if (m_treeMode) {
+        // 树模式：过滤级联 + 同级兄弟排序 + 按展开态铺平在重建时一次完成
+        rebuildVisibleRowsTree();
+        return;
+    }
+
     if (m_filterCallback) {
         for (int i = 0; i < originalCount; ++i) {
             if (m_filterCallback(m_originalRowData.at(i))) {
@@ -461,6 +641,74 @@ void AgGridModel::applyFilterAndSort()
     }
 
     sortVisibleData();
+}
+
+void AgGridModel::rebuildVisibleRowsTree()
+{
+    const int originalCount = m_originalRowData.size();
+
+    // 1. 过滤命中标记（无过滤回调 = 全部命中）
+    QVector<bool> kept(originalCount, true);
+    if (m_filterCallback) {
+        for (int i = 0; i < originalCount; ++i)
+            kept[i] = m_filterCallback(m_originalRowData.at(i));
+    }
+
+    // 2. 级联保留：命中行的祖先链保留显示（后代是否露出仍取决于各级展开态）
+    for (int i = originalCount - 1; i >= 0; --i) {
+        if (!kept.at(i))
+            continue;
+        int parent = m_rowParent.at(i);
+        while (parent >= 0 && !kept.at(parent)) {
+            kept[parent] = true;
+            parent = m_rowParent.at(parent);
+        }
+    }
+
+    // 3. 深度优先铺平：同级兄弟按排序规则稳定排序后依次输出；
+    //    仅展开的行继续下钻（默认折叠）。
+    auto compareOriginal = [this](int a, int b) -> bool {
+        for (const AgSortRule &rule : m_sortRules) {
+            const QString field = fieldAtColumn(rule.column);
+            if (field.isEmpty())
+                continue;
+            const QVariant va = m_originalRowData.at(a).value(field);
+            const QVariant vb = m_originalRowData.at(b).value(field);
+            if (va == vb)
+                continue;
+            const bool less = variantLessThan(va, vb);
+            return rule.order == Qt::AscendingOrder ? less : !less;
+        }
+        return false;
+    };
+
+    std::function<void(int)> emitChildren;
+    std::function<void(int)> emitRow = [&](int originalRow) {
+        if (!kept.at(originalRow))
+            return;
+        m_rowData.append(m_originalRowData.at(originalRow));
+        m_visibleToOriginal.append(originalRow);
+        m_originalToVisible[originalRow] = m_rowData.size() - 1;
+        if (m_rowExpanded.at(originalRow))
+            emitChildren(originalRow);
+    };
+    emitChildren = [&](int parentRow) {
+        QVector<int> children = m_rowChildren.at(parentRow);
+        if (children.size() > 1)
+            std::stable_sort(children.begin(), children.end(), compareOriginal);
+        for (int child : children)
+            emitRow(child);
+    };
+
+    QVector<int> roots;
+    for (int i = 0; i < originalCount; ++i) {
+        if (m_rowParent.at(i) < 0)
+            roots.append(i);
+    }
+    if (roots.size() > 1)
+        std::stable_sort(roots.begin(), roots.end(), compareOriginal);
+    for (int root : roots)
+        emitRow(root);
 }
 
 void AgGridModel::sortVisibleData()

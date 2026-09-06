@@ -20,6 +20,14 @@ struct AgCellRendererContext
     bool hovered = false;                  ///< 鼠标是否悬停在该单元格上
     bool selected = false;                 ///< 是否为当前选中格
     Qt::Alignment alignment = Qt::AlignLeft | Qt::AlignVCenter;  ///< 最终对齐（列对齐 + 样式覆盖后的结果）
+
+    // 树形支持：仅树形表格的首个可见数据列由控件填充以下字段，
+    // 其余格子均为默认值（不占位、不绘制箭头），非树场景行为不变。
+    bool treeRow = false;                  ///< 该格是否位于树形表格的树列（保留缩进 + 箭头占位）
+    int treeDepth = 0;                     ///< 行层级（根 = 0），据此缩进
+    bool treeHasChildren = false;          ///< 行是否有子行（决定是否绘制展开箭头）
+    bool treeExpanded = false;             ///< 行当前是否展开（箭头指向）
+    bool treeExpanderHovered = false;      ///< 鼠标是否悬停在展开箭头热区上
 };
 
 /**
@@ -90,6 +98,21 @@ public:
                                 int column,
                                 const AgGridModel *model,
                                 const AgGridStyle *style) const { Q_UNUSED(rect) Q_UNUSED(value) Q_UNUSED(columnDef) Q_UNUSED(row) Q_UNUSED(column) Q_UNUSED(model) Q_UNUSED(style) return -1; }
+
+    /// 带树形上下文的重载：控件优先调用；默认转调旧接口保持兼容。
+    /// 树形首列的渲染器应据此扣减缩进 / 箭头占位后再测量换行宽度。
+    virtual int preferredHeight(const QRect &rect,
+                                const QVariant &value,
+                                const AgColumnDef &columnDef,
+                                int row,
+                                int column,
+                                const AgGridModel *model,
+                                const AgGridStyle *style,
+                                const AgCellRendererContext &context) const
+    {
+        Q_UNUSED(context)
+        return preferredHeight(rect, value, columnDef, row, column, model, style);
+    }
 
     // 返回该单元格复制到剪贴板的内容。
     // 返回无效的 QVariant 表示该渲染器不提供复制内容，此时不会复制到剪贴板。

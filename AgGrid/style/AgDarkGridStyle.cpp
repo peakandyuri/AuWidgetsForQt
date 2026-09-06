@@ -80,6 +80,11 @@ QVariant AgDarkGridStyle::value(StyleRole role, const AgGridModel *model, int ro
     case CellForegroundColor:
         return QColor(220, 220, 220);
 
+    case TreeExpanderColor:
+        return QColor(160, 160, 165);
+    case TreeExpanderHoveredColor:
+        return QColor(0, 150, 255);
+
     default:
         break;
     }

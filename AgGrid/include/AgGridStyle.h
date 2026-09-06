@@ -119,7 +119,13 @@ public:
         LoadingSpinnerColor,        ///< 加载圆环颜色
         LoadingSpinnerSize,         ///< 加载圆环直径（像素）
         LoadingTextColor,           ///< 加载文字颜色
-        LoadingText                 ///< 默认加载文字（setLoadingText 未设置或传空时生效；样式置空 = 只显示圆环）
+        LoadingText,                ///< 默认加载文字（setLoadingText 未设置或传空时生效；样式置空 = 只显示圆环）
+
+        // 树形表格
+        TreeIndentWidth,            ///< 树形层级缩进宽度（每级像素）
+        TreeExpanderSize,           ///< 展开箭头热区边长（像素）
+        TreeExpanderColor,          ///< 展开箭头颜色
+        TreeExpanderHoveredColor    ///< 悬停时展开箭头颜色
     };
 
     AgGridStyle();

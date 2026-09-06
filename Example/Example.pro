@@ -18,6 +18,18 @@ DEFINES += QT_DEPRECATED_WARNINGS
 SOURCES += \
     main.cpp \
     mainwindow.cpp \
+    demos/DemoWindowBase.cpp \
+    demos/BasicDemoWindow.cpp \
+    demos/SelectionCheckDemoWindow.cpp \
+    demos/SortFilterDemoWindow.cpp \
+    demos/ColumnDemoWindow.cpp \
+    demos/RowDragDemoWindow.cpp \
+    demos/SpanDemoWindow.cpp \
+    demos/ScrollDemoWindow.cpp \
+    demos/TreeDemoWindow.cpp \
+    demos/SyncDemoWindow.cpp \
+    demos/StyleDemoWindow.cpp \
+    demos/LoadingDemoWindow.cpp \
     CustomAgGrid/ButtonRenderer.cpp \
     CustomAgGrid/HeaderButtonRenderer.cpp \
     CustomAgGrid/DemoValidator.cpp \
@@ -25,6 +37,18 @@ SOURCES += \
 
 HEADERS += \
     mainwindow.h \
+    demos/DemoWindowBase.h \
+    demos/BasicDemoWindow.h \
+    demos/SelectionCheckDemoWindow.h \
+    demos/SortFilterDemoWindow.h \
+    demos/ColumnDemoWindow.h \
+    demos/RowDragDemoWindow.h \
+    demos/SpanDemoWindow.h \
+    demos/ScrollDemoWindow.h \
+    demos/TreeDemoWindow.h \
+    demos/SyncDemoWindow.h \
+    demos/StyleDemoWindow.h \
+    demos/LoadingDemoWindow.h \
     CustomAgGrid/ButtonRenderer.h \
     CustomAgGrid/HeaderButtonRenderer.h \
     CustomAgGrid/DemoValidator.h \
@@ -35,11 +59,24 @@ FORMS += \
 
 INCLUDEPATH += \
     $$PWD/../AgGrid/include \
-    $$PWD/CustomAgGrid
+    $$PWD/CustomAgGrid \
+    $$PWD/demos
 DEPENDPATH += $$PWD/../AgGrid
 
 win32: LIBS += -L$$PWD/../AgGrid/bin/ -lAgGrid
 else:unix: LIBS += -L$$PWD/../AgGrid/bin/ -lAgGrid
+
+# 让目标依赖 AgGrid 导入库：库重编后自动触发重链接 + POST_LINK 拷贝
+win32: PRE_TARGETDEPS += $$PWD/../AgGrid/bin/libAgGrid.a
+
+# 构建完成后把最新 AgGrid.dll 拷贝到可执行文件目录，避免运行时加载到旧版 DLL
+win32 {
+    CONFIG(release, debug|release) {
+        QMAKE_POST_LINK += $$QMAKE_COPY $$shell_path($$PWD/../AgGrid/bin/AgGrid.dll) $$shell_path($$OUT_PWD/release) $$escape_expand(\\n\\t)
+    } else {
+        QMAKE_POST_LINK += $$QMAKE_COPY $$shell_path($$PWD/../AgGrid/bin/AgGrid.dll) $$shell_path($$OUT_PWD/debug) $$escape_expand(\\n\\t)
+    }
+}
 
 # Default rules for deployment.
 qnx: target.path = /tmp/$${TARGET}/bin

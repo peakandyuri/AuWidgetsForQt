@@ -12,15 +12,16 @@
 - [6. AgColumnDef 列定义](#6-agcolumndef-列定义)
 - [7. AgGridWidget 表格控件](#7-aggridwidget-表格控件)
 - [8. 单元格合并（Span）专题](#8-单元格合并span专题)
-- [9. 样式系统：AgGridStyle / AgDarkGridStyle](#9-样式系统aggridstyle--agdarkgridstyle)
-- [10. 单元格渲染器](#10-单元格渲染器)
-- [11. 表头渲染器](#11-表头渲染器)
-- [12. 单元格编辑器](#12-单元格编辑器)
-- [13. 编辑校验器](#13-编辑校验器)
-- [14. 多表格同步：AgGridSyncGroup](#14-多表格同步aggridsyncgroup)
-- [15. 信号速查表](#15-信号速查表)
-- [16. 样式键（StyleRole）速查表](#16-样式键stylerole速查表)
-- [17. 常见问题与注意事项](#17-常见问题与注意事项)
+- [9. 树形表格（Tree）专题](#9-树形表格tree专题)
+- [10. 样式系统：AgGridStyle / AgDarkGridStyle](#10-样式系统aggridstyle--agdarkgridstyle)
+- [11. 单元格渲染器](#11-单元格渲染器)
+- [12. 表头渲染器](#12-表头渲染器)
+- [13. 单元格编辑器](#13-单元格编辑器)
+- [14. 编辑校验器](#14-编辑校验器)
+- [15. 多表格同步：AgGridSyncGroup](#15-多表格同步aggridsyncgroup)
+- [16. 信号速查表](#16-信号速查表)
+- [17. 样式键（StyleRole）速查表](#17-样式键stylerole速查表)
+- [18. 常见问题与注意事项](#18-常见问题与注意事项)
 
 ---
 
@@ -35,6 +36,7 @@
 - **单元格合并**：类似 `QTableView::setSpan` 的行列合并能力
 - **内置辅助列**：可选的行号列、复选框列、行拖拽手柄列
 - **行拖拽排序**：拖动手柄整行拖动重排，带动画与自动滚动
+- **树形表格**：`setTreeData()` 载入层级数据，首列层级缩进 + 展开 / 折叠箭头（参考 QTreeView 多列即表格树）；内置复选框列支持父子级联勾选与三态（半选）
 - **列拖拽排序 / 显隐动画**：任意层级的列可拖动重排，列显隐带位移动画
 - **多表格同步**：多个表格的滚动与列宽可互相同步（数据对比场景）
 - **加载遮罩**：`setLoading()` 由调用方控制显隐，半透明蒙层 + 旋转圆环 + 文案，带淡入淡出（数据请求等异步场景）
@@ -245,8 +247,46 @@ m_rowData（可见行，索引称 visibleRow，通过 m_visibleToOriginal / m_or
 | `rowsMoved(fromOriginalIndices, targetOriginalIndex)` | `moveRows` 完成后 |
 | `columnsChanged()` | 列定义被替换 |
 | `columnWidthsChanged()` | 列宽变化 |
-| `layoutChanged()` | 需要重建布局的大变化（setRowData / setColumnDefs / 排序过滤 / 行移动） |
+| `layoutChanged()` | 需要重建布局的大变化（setRowData / setTreeData / setColumnDefs / 排序过滤 / 行移动 / 展开折叠） |
 | `filterChanged()` | 过滤状态变化（由视图转发为同名信号） |
+| `rowExpandedChanged(originalRow, expanded)` | 树形单行展开状态变化（原始行号；`expandAll` 等批量操作不逐行发送） |
+
+---
+
+### 5.8 树形数据
+
+**头文件**：`AgGrid/include/AgTreeRow.h`
+
+树形行节点（可拷贝结构体）：
+
+```cpp
+struct AgTreeRow {
+    QVariantMap data;               // 本行列数据（键 = 列 field）
+    QVector<AgTreeRow> children;    // 子行集合；空 = 叶子行
+    bool expanded = false;          // setTreeData 时的初始展开态（默认折叠）
+};
+```
+
+| 接口 | 说明 |
+|---|---|
+| `void setTreeData(const QVector<AgTreeRow> &roots)` | 以树形结构替换全部行数据（默认全部折叠）。内部按深度优先铺平为原始行并维护父子 / 深度 / 展开态。触发 rowsChanged + layoutChanged |
+| `bool isTreeMode() const` | 是否树形模式（`setRowData` / `clear()` 会退出树形模式，两种入口互斥、后调用者生效） |
+| `const QVector<AgTreeRow> &treeData() const` | setTreeData 传入的原始树 |
+| `int rowDepth(int originalRow) const` | 行层级（根 = 0；非树模式有效行返回 0） |
+| `int rowParent(int originalRow) const` | 父行（根行 / 非树模式返回 -1） |
+| `QVector<int> rowChildren(int originalRow) const` | 子行列表（原始行号，传入顺序） |
+| `bool rowHasChildren(int originalRow) const` | 是否有子行（决定是否显示展开箭头） |
+| `bool isRowExpanded(int originalRow) const` | 当前是否展开 |
+| `void setRowExpanded(int originalRow, bool expanded)` | 展开 / 折叠单行（叶子行无效果）。触发 rowExpandedChanged + layoutChanged |
+| `void expandAll() / collapseAll()` | 全部展开 / 折叠（触发 layoutChanged，不逐行发 rowExpandedChanged） |
+| `void expandToDepth(int depth)` | 展开深度 ≤ depth 的所有行（可见行到达深度 depth + 1） |
+| `void collapseToDepth(int depth)` | 折叠深度 ≥ depth 的所有行（可见行到达深度 depth） |
+
+树形模式下的行为约定：
+
+- **过滤级联**：命中过滤回调的行其祖先链保留显示；后代是否露出仍取决于各级展开态；
+- **排序按同级兄弟**：排序规则在每层兄弟组内生效（深度优先铺平时排序后输出），扁平模式行为不变；
+- **行移动禁用**：`moveRows()` 直接忽略（行序由父子结构决定）。
 
 ---
 
@@ -478,7 +518,7 @@ bool hasSpans() const;
 
 | 函数 | 说明 |
 |---|---|
-| `void setCellEditValidator(QSharedPointer<AgCellEditValidator> validator)` | 设置全局提交校验器（见第 13 节） |
+| `void setCellEditValidator(QSharedPointer<AgCellEditValidator> validator)` | 设置全局提交校验器（见第 14 节） |
 | `void setCellEditableCallback(const std::function<bool(const AgGridModel *, int row, int column)> &callback)` | 动态可编辑回调：在列 `editable` 基础上按行/列最终裁决 |
 
 ### 7.15 交互状态查询（渲染器辅助）
@@ -513,7 +553,33 @@ QTimer::singleShot(2000, this, [this]() {
 - 覆盖表格整个面板（含表头），鼠标点击 / 双击 / 滚轮 / 键盘 / 右键菜单均被屏蔽，悬停高亮与手型光标反馈一并清除；
 - 滚动条隐藏，淡出结束后按内容自动恢复；
 - 打开中的编辑器自动关闭（**不提交**）；进行中的行 / 列拖拽自动取消；
-- 蒙层颜色、圆环颜色 / 直径、文字颜色 / 默认文字由样式键控制，见第 16 节"加载遮罩"。
+- 蒙层颜色、圆环颜色 / 直径、文字颜色 / 默认文字由样式键控制，见第 17 节"加载遮罩"。
+
+### 7.17 树形表格控制
+
+模型经 `setTreeData()` 载入层级数据后自动进入树形显示，无需额外开关。控件侧接口（row 均为可见行号）：
+
+| 接口 | 说明 |
+|---|---|
+| `bool isTreeMode() const` | 当前是否树形模式 |
+| `void setRowExpanded(int row, bool expanded)` | 展开 / 折叠某行（叶子行无效果） |
+| `bool isRowExpanded(int row) const` | 行当前是否展开 |
+| `bool rowHasChildren(int row) const` | 行是否有子行 |
+| `int rowDepth(int row) const` | 行层级（根 = 0） |
+| `void expandAll() / collapseAll()` | 全部展开 / 折叠 |
+| `void expandToDepth(int depth)` | 展开深度 ≤ depth 的所有行 |
+| `void collapseToDepth(int depth)` | 折叠深度 ≥ depth 的所有行 |
+| `bool isRowPartiallyChecked(int row) const` | 行复选框是否处于半选状态 |
+
+树形模式复选框级联（内置复选框列）：
+
+- 勾选父行同时勾选其全部可勾选子行（含折叠不可见的行）；取消同理整树取消；
+- 子行部分勾选时父行显示**半选**（横线）；祖先状态由后代聚合得出（有可勾选后代时完全由后代决定）；
+- 表头全选 / 半选按**原始行全集**统计（折叠不可见的行也计入）；
+- 行可选回调 `setRowCheckableCallback` 在树形模式接收**原始行号**（扁平模式仍为可见行号）；
+- 数据列复选框（`columnDef.setCheckbox(true)`）不参与级联，各行独立。
+
+信号：`rowExpandedChanged(int row, bool expanded)`（可见行号，批量操作不逐行发送）。
 
 ---
 
@@ -559,8 +625,10 @@ hover 高亮在合并单元格上是**原子化**的：进入/离开合并区域
 | 事件 | 合并区域的行为 |
 |---|---|
 | `setSpan` 重叠替换 / 1x1 清除 | 立即生效 |
-| 排序 / 过滤 / 行移动（`layoutChanged`） | **自动清空全部合并**（可见行坐标已失效） |
+| 排序 / 过滤 / 行移动 / 树形展开折叠（`layoutChanged`） | **自动清空全部合并**（可见行坐标已失效） |
 | 行数 / 列数减少（`rowsChanged` / `columnsChanged`） | 锚点越界的合并被剔除；存续合并按当前范围自动截断 |
+| 列宽调整（拖动表头 / 双击自适应 / `setColumnWidth`） | **保持不变**（可见行 / 列坐标未变） |
+| 列停靠变化（`setColumnPinMode`） | **保持不变**；合并不跨停靠边界，跨界部分按停靠区域自动截断显示 |
 | `setModel()` 换模型 | 清空全部合并 |
 | 行拖拽重排过程中 | 保持不变（由拖拽逻辑接管，结束后合并停留在可见行坐标上） |
 
@@ -577,11 +645,79 @@ qDebug() << grid->rowSpan(0, 0);   // 3（若 (0,0) 是上面 3 行合并的锚�
 
 ---
 
-## 9. 样式系统：AgGridStyle / AgDarkGridStyle
+## 9. 树形表格（Tree）专题
+
+参考 QTreeView 的交互模型：多列 + 层级行 = 表格树（类似 ag-grid 的 tree data）。
+
+### 9.1 数据结构
+
+行数据用 `AgTreeRow` 嵌套表达（不要求 id / parentId 字段）：
+
+```cpp
+QVector<AgTreeRow> roots;
+
+AgTreeRow dept;
+dept.data.insert("name", QStringLiteral(u"研发部"));   // 首列显示 + 缩进箭头
+dept.data.insert("owner", QStringLiteral(u"张三"));
+
+AgTreeRow task;
+task.data.insert("name", QStringLiteral(u"任务 A-1"));
+task.data.insert("owner", QStringLiteral(u"李四"));
+
+dept.children.append(task);      // 有 children 的行显示展开箭头
+roots.append(dept);
+
+model->setTreeData(roots);       // 默认全部折叠，仅显示根行
+```
+
+### 9.2 展开与折叠
+
+| 方式 | 行为 |
+|---|---|
+| 点击首列箭头 | 切换该行展开 / 折叠（不改选中、不触发 cellClicked） |
+| 双击首列 | 有子行时切换展开 / 折叠（不进入编辑） |
+| 键盘 Right | 折叠态展开；已展开时选中第一个可见子行 |
+| 键盘 Left | 展开态折叠；已折叠 / 叶子行选中父行 |
+| `expandAll() / collapseAll()` | 全部展开 / 折叠 |
+| `expandToDepth(d) / collapseToDepth(d)` | 按层级批量展开 / 折叠 |
+
+展开 / 折叠触发模型 `layoutChanged`：视图自动刷新行高与滚动条，合并区域清空，选中按原始行恢复；展开态跨排序 / 过滤稳定（按原始行记录）。
+
+### 9.3 复选框层级勾选
+
+内置复选框列在树形模式下自动级联：
+
+```text
+[✓] ▼ 研发部            ← 勾父 → 全部子行勾选
+[✓]   任务 A-1
+[✓]   任务 A-2
+[-] ▶ 产品部            ← 子行部分勾选 → 父行半选（横线）
+[ ] ▶ 市场部
+```
+
+- 状态聚合规则：有可勾选后代的行，其状态完全由后代聚合决定（全勾 = 选中 / 混合 = 半选 / 全不勾 = 未选中）；无可勾选后代的行独立勾选；
+- 级联作用于**全部可勾选行**（含折叠不可见的行）；
+- 查询：`isRowChecked(row)` / `isRowPartiallyChecked(row)`；持久化推荐 `checkedOriginalRows()`。
+
+### 9.4 树模式与其他能力的组合
+
+| 能力 | 树模式行为 |
+|---|---|
+| 排序 | 每层兄弟组内按规则排序（深铺时生效），不跨层级打乱父子关系 |
+| 过滤 | 命中行保留祖先链；祖先是否展开由展开态决定 |
+| 合并单元格 | 展开折叠改变可见行映射，合并自动清空（与排序 / 过滤一致） |
+| 行拖拽 | 不可用（`setRowDragEnabled(true)` 被忽略并告警） |
+| 行号列 / 渲染器 / 编辑器 / 停靠 / 显隐 | 正常可用 |
+
+树列固定为**首个可见叶子列**；箭头颜色 / 缩进宽度 / 热区边长由样式键控制，见第 17 节"树形表格"。
+
+---
+
+## 10. 样式系统：AgGridStyle / AgDarkGridStyle
 
 **头文件**：`AgGrid/include/AgGridStyle.h`、`AgDarkGridStyle.h`
 
-### 9.1 概述
+### 10.1 概述
 
 样式是"角色（StyleRole）→ 值（QVariant）"的查询表，支持三种粒度：
 
@@ -589,7 +725,7 @@ qDebug() << grid->rowSpan(0, 0);   // 3（若 (0,0) 是上面 3 行合并的锚�
 2. **控件独立样式**（`AgGridWidget::setStyle`）：控件接管所有权
 3. **按行列上下文**：`value()` / `color()` / `integer()` 等都接受 `model, row, column` 参数，子类可按单元格位置返回不同值
 
-### 9.2 主要成员
+### 10.2 主要成员
 
 | 函数 | 说明 |
 |---|---|
@@ -605,13 +741,13 @@ qDebug() << grid->rowSpan(0, 0);   // 3（若 (0,0) 是上面 3 行合并的锚�
 | `static AgGridStyle *createLightStyle()` / `static AgGridStyle *createDarkStyle()` | 内置浅色 / 暗色主题工厂（返回新实例，所有权归调用者） |
 | `virtual QVariant defaultValue(StyleRole role) const`（protected） | 各角色默认值，子类可部分覆盖 |
 
-全部 StyleRole 含义见[第 16 节速查表](#16-样式键stylerole速查表)。
+全部 StyleRole 含义见[第 17 节速查表](#17-样式键stylerole速查表)。
 
-### 9.3 AgDarkGridStyle
+### 10.3 AgDarkGridStyle
 
 `AgGridStyle` 的暗色主题实现（构造即配置暗色调色板），同样提供 `clone()`。等价的便捷写法是 `AgGridStyle::createDarkStyle()`。
 
-### 9.4 自定义样式示例
+### 10.4 自定义样式示例
 
 ```cpp
 class MyStyle : public AgGridStyle {
@@ -630,11 +766,11 @@ grid->setStyle(new MyStyle());
 
 ---
 
-## 10. 单元格渲染器
+## 11. 单元格渲染器
 
 **头文件**：`AgGrid/include/AgCellRenderer.h`、`AgDefaultCellRenderer.h`、`AgCheckBoxCellRenderer.h`
 
-### 10.1 AgCellRendererContext
+### 11.1 AgCellRendererContext
 
 ```cpp
 struct AgCellRendererContext {
@@ -644,7 +780,7 @@ struct AgCellRendererContext {
 };
 ```
 
-### 10.2 AgCellRenderer（抽象基类）
+### 11.2 AgCellRenderer（抽象基类）
 
 | 虚函数 | 说明 |
 |---|---|
@@ -657,14 +793,14 @@ struct AgCellRendererContext {
 
 调用时机说明：hover 状态变化、鼠标进出都会触发控件重绘相应区域；渲染器内部状态（如按钮悬停）应在 `cellMouseEnter/Leave` 中更新。
 
-### 10.3 内置实现
+### 11.3 内置实现
 
 | 类 | 说明 |
 |---|---|
 | `AgDefaultCellRenderer` | 默认文本渲染器：按 `textWrapMode` 绘制文字，支持 `CellBackgroundColor` / `CellForegroundColor` 上下文样式与自动行高 |
 | `AgCheckBoxCellRenderer` | 复选框渲染器：值按 bool 绘制复选框，整格可点击（配合 `setEditable(true)`），`wantsHoverCursor` 返回 true |
 
-### 10.4 自定义示例（按钮列）
+### 11.4 自定义示例（按钮列）
 
 ```cpp
 class ButtonRenderer : public AgCellRenderer {
@@ -687,11 +823,11 @@ def.setCellRenderer("button");
 
 ---
 
-## 11. 表头渲染器
+## 12. 表头渲染器
 
 **头文件**：`AgGrid/include/AgHeaderRenderer.h`
 
-### 11.1 AgHeaderRendererContext
+### 12.1 AgHeaderRendererContext
 
 ```cpp
 struct AgHeaderRendererContext {
@@ -705,7 +841,7 @@ struct AgHeaderRendererContext {
 };
 ```
 
-### 11.2 AgHeaderRenderer（抽象基类）
+### 12.2 AgHeaderRenderer（抽象基类）
 
 | 虚函数 | 说明 |
 |---|---|
@@ -719,11 +855,11 @@ struct AgHeaderRendererContext {
 
 ---
 
-## 12. 单元格编辑器
+## 13. 单元格编辑器
 
 **头文件**：`AgGrid/include/AgCellEditor.h` 及三个内置实现
 
-### 12.1 AgCellEditor（抽象基类）
+### 13.1 AgCellEditor（抽象基类）
 
 | 虚函数 | 说明 |
 |---|---|
@@ -735,7 +871,7 @@ struct AgHeaderRendererContext {
 
 编辑生命周期：双击 / Enter / F2 / 直接输入字符 → `createEditor` + `setEditorValue`（直接输入还会调 `setInitialTypedText`）→ 编辑中滚动自动跟随 → 提交时 `editorValue` 取值 → 经校验器裁决 → 写入模型并发出 `cellEditingFinished`、`cellValueChanged`。
 
-### 12.2 内置实现
+### 13.2 内置实现
 
 | 类 | 编辑控件 | 特性 |
 |---|---|---|
@@ -743,7 +879,7 @@ struct AgHeaderRendererContext {
 | `AgMultiLineCellEditor` | QPlainTextEdit | 多行编辑；`wantsReturnForNewLine()` 返回 true（Enter 换行） |
 | `AgComboBoxCellEditor(const QStringList &items)` | QComboBox（可编辑） | 下拉选择；`setItems()` / `items()` 管理选项 |
 
-### 12.3 注册与使用
+### 13.3 注册与使用
 
 ```cpp
 grid->registerCellEditor("combo",
@@ -754,7 +890,7 @@ def.setEditable(true);         // 必须可编辑
 
 ---
 
-## 13. 编辑校验器
+## 14. 编辑校验器
 
 **头文件**：`AgGrid/include/AgCellEditValidator.h`
 
@@ -779,7 +915,7 @@ public:
 
 ---
 
-## 14. 多表格同步：AgGridSyncGroup
+## 15. 多表格同步：AgGridSyncGroup
 
 **头文件**：`AgGrid/include/AgGridSyncGroup.h`
 **基类**：`QObject`
@@ -815,7 +951,7 @@ sync->syncFrom(gridA);      // 初始对齐
 
 ---
 
-## 15. 信号速查表（AgGridWidget）
+## 16. 信号速查表（AgGridWidget）
 
 | 信号 | 说明 |
 |---|---|
@@ -836,10 +972,11 @@ sync->syncFrom(gridA);      // 初始对齐
 | `verticalScrollChanged(int value)` / `horizontalScrollChanged(int value)` | 滚动偏移变化（所有来源） |
 | `columnWidthsChanged()` | 列宽变化（模型层转发） |
 | `rowsDragged(const QVector<int> &originalRows, int targetOriginalIndex)` | 行拖拽完成（**原始行号**） |
+| `rowExpandedChanged(int row, bool expanded)` | 树形行展开状态变化（可见行号；批量操作不逐行发送） |
 
 ---
 
-## 16. 样式键（StyleRole）速查表
+## 17. 样式键（StyleRole）速查表
 
 带 📍 的键支持按 `(model, row, column)` 上下文返回不同值。
 
@@ -933,9 +1070,18 @@ sync->syncFrom(gridA);      // 初始对齐
 | `LoadingTextColor` | QColor | 加载文字颜色 |
 | `LoadingText` | QString | 默认加载文字（`setLoadingText` 未设置或传 null 时生效；置空 = 只显示圆环） |
 
+### 树形表格
+
+| 键 | 类型 | 说明 |
+|---|---|---|
+| `TreeIndentWidth` | int | 每级层级缩进宽度 |
+| `TreeExpanderSize` | int | 展开箭头热区边长 |
+| `TreeExpanderColor` | QColor | 展开箭头颜色 |
+| `TreeExpanderHoveredColor` | QColor | 悬停时箭头颜色 |
+
 ---
 
-## 17. 常见问题与注意事项
+## 18. 常见问题与注意事项
 
 1. **合并单元格按可见行坐标存储**：排序 / 过滤 / 行移动会自动清空全部合并（坐标已失效）；行数列数减少时自动剔除越界合并。若需要"合并跟随数据行"，需在数据变化后由调用方重新 `setSpan`。
 2. **勾选与行拖拽使用原始行号**：`checkedOriginalRows()`、`rowsDragged` 信号跨排序过滤稳定；界面展示相关用可见行号。
@@ -946,3 +1092,4 @@ sync->syncFrom(gridA);      // 初始对齐
 7. **样式无效色（QColor 无效）表示不绘制该元素**：例如把 `AlternateRowBackgroundColor` 设为无效色可关闭斑马纹。
 8. **DLL 更新**：Windows 下 exe 优先加载同目录的 `AgGrid.dll`，重编译库后确认 exe 旁的 DLL 已更新（Example.pro 已内置自动拷贝）。
 9. **内存所有权**：模型由调用者管理（通常 `new AgGridModel(parent)`）；`setStyle()` 传入的样式由控件接管并销毁；注册的渲染器 / 编辑器通过 `QSharedPointer` 管理。
+10. **树形模式注意**：行拖拽不可用；展开 / 折叠会清空合并单元格；行可选回调接收**原始行号**；勾选级联覆盖折叠不可见的子行；`setRowData()` 会退出树形模式（两种数据入口互斥）。

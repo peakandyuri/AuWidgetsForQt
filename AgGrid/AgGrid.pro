@@ -49,6 +49,7 @@ HEADERS += \
     include/AgGrid_global.h \
     include/AgColumnDef.h \
     include/AgGridModel.h \
+    include/AgTreeRow.h \
     include/AgGridWidget.h \
     include/AgGridSyncGroup.h \
     widget/AgGridScrollBar.h \

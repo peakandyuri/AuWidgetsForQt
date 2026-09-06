@@ -200,7 +200,11 @@ public:
 
     /// 某可见行是否勾选。
     bool isRowChecked(int row) const;
+    /// 某可见行是否处于半选状态（树形模式由子行勾选状态聚合得出）。
+    bool isRowPartiallyChecked(int row) const;
     /// 设置某可见行的勾选状态。
+    /// 树形模式下级联：勾选父行同时勾选全部子行，父行状态由子行聚合（半选）。
+    /// 折叠不可见的子行同样参与级联；行可选回调在树形模式接收原始行号。
     void setRowChecked(int row, bool checked);
     /// 该行是否允许勾选（默认全部允许，可由回调裁决）。
     bool isRowCheckable(int row) const;
@@ -267,6 +271,27 @@ public:
     /// 当前加载文字；null 表示跟随样式键 LoadingText。
     QString loadingText() const;
 
+    // 树形表格（模型经 setTreeData 载入层级数据后自动生效）
+    /// 当前是否处于树形模式。
+    bool isTreeMode() const;
+    /// 展开或折叠某行（row 为可见行号；叶子行无效果）。
+    /// 走模型 layoutChanged：视图自动刷新，合并区域清空、选中按原始行恢复。
+    void setRowExpanded(int row, bool expanded);
+    /// 行当前是否展开（row 为可见行号；叶子行 / 非树形模式返回 false）。
+    bool isRowExpanded(int row) const;
+    /// 行是否有子行（决定是否显示展开箭头；支持双击 / 键盘切换）。
+    bool rowHasChildren(int row) const;
+    /// 行的层级（根 = 0；非树形模式返回 0）。
+    int rowDepth(int row) const;
+    /// 全部展开。
+    void expandAll();
+    /// 全部折叠。
+    void collapseAll();
+    /// 展开深度 ≤ depth 的所有行（可见行到达深度 depth + 1）。
+    void expandToDepth(int depth);
+    /// 折叠深度 ≥ depth 的所有行（可见行到达深度 depth）。
+    void collapseToDepth(int depth);
+
 signals:
     /// 单元格被左键单击（row 可能为内置辅助列编号；合并格返回锚点坐标）。
     void cellClicked(int row, int column);
@@ -311,6 +336,10 @@ signals:
     void headerRightClicked(int column, int level, const QPoint &globalPos);
     /// 行拖拽重排完成（原始行号；targetOriginalIndex 为插入目标位置）。
     void rowsDragged(const QVector<int> &originalRows, int targetOriginalIndex);
+
+    // 树形表格
+    /// 树形行展开状态变化（row 为可见行号；expandAll 等批量操作不逐行发送）。
+    void rowExpandedChanged(int row, bool expanded);
 
 protected:
     /// 绘制流程：背景 → 圆角面板 → 表头 → 行背景 → 各区域行/网格线 →
@@ -498,6 +527,34 @@ private:
     bool headerHitAt(const QPoint &pos, int &column, int &level) const;
     int checkableRowCount() const;
 
+    // 树形表格
+    /// 树列（首个可见叶子列）；非树形模式返回 -1。
+    int treeColumn() const;
+    /// 树形首列的缩进 + 箭头占位总宽（与默认渲染器的几何约定一致）。
+    int treeLeadingWidth(int depth) const;
+    /// 行的展开箭头热区（控件坐标）；行无子行 / 非树形模式返回无效矩形。
+    QRect treeExpanderRect(int row) const;
+    /// 切换行展开态（可见行号）。
+    void toggleRowExpanded(int row);
+    /// 原始行子树内的全部原始行（含自身；非树形模式返回空）。
+    QVector<int> subtreeRows(int originalRow) const;
+
+    // 复选框列（树形级联三态）
+    /// 树形模式：按原始行裁决可勾选（回调在树形模式接收原始行号，覆盖折叠行）。
+    bool isRowCheckableOriginal(int originalRow) const;
+    /// 树形模式：可勾选原始行总数（含折叠不可见的行）。
+    int checkableOriginalRowCount() const;
+    /// 树形模式：处于勾选状态的可勾选原始行数量（聚合勾选可能含不可勾选祖先，需过滤）。
+    int checkedCheckableOriginalCount() const;
+    /// 原始行三态。
+    Qt::CheckState rowCheckStateOriginal(int originalRow) const;
+    /// 以原始行为根级联勾选 / 取消整个子树，并重算祖先链三态。
+    void cascadeRowCheck(int originalRow, bool checked);
+    /// 自底向上重算 originalRow 祖先链的三态（勾父全选子 / 子勾父半选）。
+    void recomputeAncestorCheckStates(int originalRow);
+    /// 重建整棵树的三态（数据重载 / 回调变化后调用）。
+    void recomputeAllCheckStates();
+
     struct RowDragAnimationEntry {
         int visibleRow;
         int startOffset;
@@ -567,6 +624,8 @@ private:
     /// 通知渲染器鼠标进入单元格（cellPos 相对单元格左上角）。
     void notifyRendererEnter(int row, int column, const QPoint &cellPos);
     void notifyRendererLeave(int row, int column);
+    /// 树形展开箭头热区：手型光标（优先于渲染器的光标判定）。
+    void applyTreeExpanderCursor(int column, int row, const QPoint &pos);
     /// 解析某列生效的单元格渲染器（checkbox 列 → 内置复选框；否则按注册名，缺省默认文本渲染器）。
     QSharedPointer<AgCellRenderer> rendererForColumn(int column) const;
     bool isRowDragging(int visibleRow) const;
@@ -593,6 +652,7 @@ private:
     int m_selectedColumn;          ///< 选中列（叶子列索引，-1 无）
     int m_hoverRow;                ///< 悬停行（合并格记录锚点行）
     int m_hoverColumn;             ///< 悬停列（合并格记录锚点列）
+    QPoint m_hoverPos;             ///< 最近一次鼠标位置（展开箭头 hover 判定）
     int m_hoverHeaderColumn;       ///< 悬停表头节点首个叶子列
     int m_hoverHeaderLevel;        ///< 悬停表头层级
     QPoint m_hoverHeaderPos;       ///< 悬停表头内相对坐标
@@ -623,6 +683,7 @@ private:
     bool m_showRowNumberColumn;              ///< 是否显示行号列
     bool m_showCheckboxColumn;               ///< 是否显示复选框列
     QSet<int> m_checkedOriginalRows;         ///< 勾选行集合（原始行号，跨排序过滤稳定）
+    QSet<int> m_partialOriginalRows;         ///< 半选行集合（原始行号；树形模式父子聚合）
 
     int m_sortedColumn;                      ///< 当前排序列（-1 未排序）
     Qt::SortOrder m_sortOrder;               ///< 当前排序方向

@@ -5,6 +5,7 @@
 #include "AgGridStyle.h"
 
 #include <QFontMetrics>
+#include <QPolygonF>
 #include <QTextOption>
 
 void AgDefaultCellRenderer::paint(QPainter *painter,
@@ -65,7 +66,49 @@ void AgDefaultCellRenderer::paint(QPainter *painter,
     const QString text = value.toString();
     const int hPadding = style->integer(AgGridStyle::CellHorizontalPadding, model, row, column);
     const int vPadding = style->integer(AgGridStyle::CellVerticalPadding, model, row, column);
-    const QRect textRect = rect.adjusted(hPadding, vPadding, -hPadding, -vPadding);
+
+    // 树形首列：先画层级缩进与展开箭头，文字让出占位宽度。
+    // 箭头盒 x = rect.left() + hPadding + depth * 缩进宽（控件热区命中使用同一公式）。
+    int treeLeading = 0;
+    if (context.treeRow) {
+        const int indentWidth = style->integer(AgGridStyle::TreeIndentWidth, model, row, column);
+        const int expanderSize = style->integer(AgGridStyle::TreeExpanderSize, model, row, column);
+        const int expanderGap = qMax(4, expanderSize / 4);
+        const int expanderX = rect.left() + hPadding + context.treeDepth * indentWidth;
+        const QRect expanderRect(expanderX,
+                                 rect.center().y() - expanderSize / 2,
+                                 expanderSize, expanderSize);
+        treeLeading = context.treeDepth * indentWidth + expanderSize + expanderGap;
+
+        if (context.treeHasChildren) {
+            QColor expanderColor = context.treeExpanderHovered
+                ? style->color(AgGridStyle::TreeExpanderHoveredColor, model, row, column)
+                : style->color(AgGridStyle::TreeExpanderColor, model, row, column);
+            if (expanderColor.isValid()) {
+                painter->save();
+                painter->setRenderHint(QPainter::Antialiasing, true);
+                painter->setPen(Qt::NoPen);
+                painter->setBrush(expanderColor);
+                const qreal cx = expanderRect.center().x();
+                const qreal cy = expanderRect.center().y();
+                const qreal r = expanderRect.width() / 2.0;
+                QPolygonF triangle;
+                if (context.treeExpanded) {
+                    triangle << QPointF(cx - r * 0.60, cy - r * 0.35)
+                             << QPointF(cx + r * 0.60, cy - r * 0.35)
+                             << QPointF(cx, cy + r * 0.45);
+                } else {
+                    triangle << QPointF(cx - r * 0.35, cy - r * 0.60)
+                             << QPointF(cx + r * 0.45, cy)
+                             << QPointF(cx - r * 0.35, cy + r * 0.60);
+                }
+                painter->drawPolygon(triangle);
+                painter->restore();
+            }
+        }
+    }
+
+    const QRect textRect = rect.adjusted(hPadding + treeLeading, vPadding, -hPadding, -vPadding);
 
     switch (columnDef.textWrapMode()) {
     case AgColumnDef::TextWrapMode::WordWrap: {
@@ -106,6 +149,19 @@ int AgDefaultCellRenderer::preferredHeight(const QRect &rect,
                                            const AgGridModel *model,
                                            const AgGridStyle *style) const
 {
+    AgCellRendererContext ctx;
+    return preferredHeight(rect, value, columnDef, row, column, model, style, ctx);
+}
+
+int AgDefaultCellRenderer::preferredHeight(const QRect &rect,
+                                           const QVariant &value,
+                                           const AgColumnDef &columnDef,
+                                           int row,
+                                           int column,
+                                           const AgGridModel *model,
+                                           const AgGridStyle *style,
+                                           const AgCellRendererContext &context) const
+{
     if (columnDef.textWrapMode() != AgColumnDef::TextWrapMode::WordWrap)
         return -1;
 
@@ -114,7 +170,16 @@ int AgDefaultCellRenderer::preferredHeight(const QRect &rect,
         return -1;
 
     const int hPadding = style->integer(AgGridStyle::CellHorizontalPadding, model, row, column);
-    const int availableWidth = rect.width() - 2 * hPadding;
+
+    // 树形首列扣减缩进 + 箭头占位（与 paint 的 textRect 让位保持一致）
+    int treeLeading = 0;
+    if (context.treeRow) {
+        const int indentWidth = style->integer(AgGridStyle::TreeIndentWidth, model, row, column);
+        const int expanderSize = style->integer(AgGridStyle::TreeExpanderSize, model, row, column);
+        treeLeading = context.treeDepth * indentWidth + expanderSize + qMax(4, expanderSize / 4);
+    }
+
+    const int availableWidth = rect.width() - 2 * hPadding - treeLeading;
     if (availableWidth <= 0)
         return -1;
 

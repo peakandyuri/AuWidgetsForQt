@@ -156,6 +156,15 @@ QVariant AgGridStyle::defaultValue(StyleRole role) const
         return QColor(80, 80, 80);
     case LoadingText:
         return QStringLiteral("加载中…");
+
+    case TreeIndentWidth:
+        return large ? 20 : (medium ? 18 : 16);
+    case TreeExpanderSize:
+        return large ? 18 : (medium ? 16 : 14);
+    case TreeExpanderColor:
+        return QColor(130, 130, 130);
+    case TreeExpanderHoveredColor:
+        return QColor(0, 120, 215);
     }
 
     return QVariant();

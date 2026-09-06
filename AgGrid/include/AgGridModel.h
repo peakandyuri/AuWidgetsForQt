@@ -3,6 +3,7 @@
 
 #include "AgGrid_global.h"
 #include "AgColumnDef.h"
+#include "AgTreeRow.h"
 
 #include <QObject>
 #include <QVector>
@@ -33,6 +34,7 @@ struct AgSortRule {
  * 职责：
  *  - 持有列定义树（支持分组列，形成多级表头）；
  *  - 持有原始行数据（QVector<QVariantMap>，键为列 field）；
+ *  - 可选树形模式（setTreeData）：行数据带父子层级，按展开态铺平为可见行；
  *  - 维护"原始行 → 可见行"的过滤 / 排序映射；
  *  - 提供单元格读写、列宽、列停靠、排序规则与过滤回调。
  *
@@ -83,8 +85,42 @@ public:
     int originalRowCount() const;
     /// 可见行 → 原始行；无效返回 -1。
     int originalRowForVisibleRow(int visibleRow) const;
-    /// 原始行 → 可见行；被过滤隐藏返回 -1。
+    /// 原始行 → 可见行；被过滤或折叠隐藏返回 -1。
     int visibleRowForOriginalRow(int originalRow) const;
+
+    // ---- 树形数据 ----
+
+    /// 以树形结构替换全部行数据（默认全部折叠，仅显示根行；
+    /// 节点 expanded 字段可逐行指定初始态）。内部按深度优先铺平为原始行，
+    /// 并维护父子 / 深度 / 展开态元数据。触发 rowsChanged + layoutChanged。
+    /// 与 setRowData 互斥，后调用者生效。
+    void setTreeData(const QVector<AgTreeRow> &roots);
+    /// 是否处于树形模式（setTreeData 后为 true，setRowData / clear 后为 false）。
+    bool isTreeMode() const;
+    /// setTreeData 传入的原始树结构。
+    const QVector<AgTreeRow> &treeData() const;
+
+    /// 原始行的层级（根 = 0；非树模式的有效行返回 0，无效返回 -1）。
+    int rowDepth(int originalRow) const;
+    /// 原始行的父行；根行 / 非树模式返回 -1。
+    int rowParent(int originalRow) const;
+    /// 原始行的子行（原始行号，按传入顺序）；叶子行 / 非树模式返回空。
+    QVector<int> rowChildren(int originalRow) const;
+    /// 原始行是否有子行（决定是否显示展开箭头）。
+    bool rowHasChildren(int originalRow) const;
+
+    /// 原始行当前是否展开（叶子行 / 非树模式恒为 false）。
+    bool isRowExpanded(int originalRow) const;
+    /// 展开或折叠某个原始行（叶子行无效果）。触发 rowExpandedChanged + layoutChanged。
+    void setRowExpanded(int originalRow, bool expanded);
+    /// 全部展开。触发 layoutChanged（不逐行发 rowExpandedChanged）。
+    void expandAll();
+    /// 全部折叠。触发 layoutChanged。
+    void collapseAll();
+    /// 展开深度 ≤ depth 的所有行（可见行到达深度 depth + 1）。触发 layoutChanged。
+    void expandToDepth(int depth);
+    /// 折叠深度 ≥ depth 的所有行（可见行到达深度 depth）。触发 layoutChanged。
+    void collapseToDepth(int depth);
 
     // ---- 列查找 ----
 
@@ -150,7 +186,7 @@ public:
     bool hasFilterCallback() const;
 
     /// 行拖拽排序的模型入口：把一批原始行移动到 targetOriginalIndex 之前。
-    /// 触发 rowsMoved + rowsChanged + layoutChanged。
+    /// 触发 rowsMoved + rowsChanged + layoutChanged。树形模式下忽略（行序由父子结构决定）。
     void moveRows(const QVector<int> &fromOriginalIndices, int targetOriginalIndex);
 
 signals:
@@ -164,11 +200,13 @@ signals:
     void columnsChanged();
     /// 列宽变化。
     void columnWidthsChanged();
-    /// 重大布局变化（setRowData / setColumnDefs / 排序过滤 / 行移动）；
+    /// 重大布局变化（setRowData / setColumnDefs / 排序过滤 / 行移动 / 展开折叠）；
     /// 视图会重置 AutoFit 缓存、重建列偏移，并清空合并单元格区域。
     void layoutChanged();
     /// 过滤状态变化。
     void filterChanged();
+    /// 树形单行展开状态变化（原始行号；expandAll 等批量操作不逐行发送）。
+    void rowExpandedChanged(int originalRow, bool expanded);
 
 private:
     /// 重建 field → 列索引 哈希表（setColumnDefs 后调用）。
@@ -179,8 +217,14 @@ private:
     int computeHeaderLevelCount() const;
     /// 按过滤回调 + 排序规则重建可见行映射。
     void applyFilterAndSort();
-    /// 执行多规则排序（对可见数据排序）。
+    /// 执行多规则排序（对可见数据排序；仅扁平模式）。
     void sortVisibleData();
+    /// 树形模式：按过滤级联 + 同级兄弟排序 + 展开态重建可见行映射。
+    void rebuildVisibleRowsTree();
+    /// 把 m_treeRoots 铺平为原始行并重建树元数据（setTreeData 后调用）。
+    void flattenTreeRows();
+    /// 展开态批量修改的收尾：有变化时重建可见行并发 layoutChanged。
+    void finishExpandedBatch(bool changed);
 
     QVector<AgColumnDef> m_topLevelColumnDefs;   ///< 顶层列定义树
     QVector<AgColumnDef *> m_leafColumnDefs;     ///< 展开后的叶子列（指向 m_topLevelColumnDefs 内部）
@@ -193,6 +237,14 @@ private:
 
     QList<AgSortRule> m_sortRules;               ///< 当前排序规则
     std::function<bool(const QVariantMap &row)> m_filterCallback;  ///< 过滤回调（true 保留）
+
+    // ---- 树形数据 ----
+    QVector<AgTreeRow> m_treeRoots;              ///< setTreeData 传入的原始树
+    QVector<int> m_rowParent;                    ///< 原始行 → 父原始行（-1 = 根）
+    QVector<QVector<int> > m_rowChildren;        ///< 原始行 → 子原始行列表（传入顺序）
+    QVector<int> m_rowDepth;                     ///< 原始行 → 层级（根 = 0）
+    QVector<bool> m_rowExpanded;                 ///< 原始行 → 展开态
+    bool m_treeMode = false;                     ///< 是否树形模式
 };
 
 #endif // AGGRIDMODEL_H

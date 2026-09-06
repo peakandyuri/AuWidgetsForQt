@@ -47,6 +47,16 @@ public:
                         const AgGridModel *model,
                         const AgGridStyle *style) const override;
 
+    /// 带树形上下文的测量：树形首列扣减缩进 / 箭头占位后再计算换行宽度。
+    int preferredHeight(const QRect &rect,
+                        const QVariant &value,
+                        const AgColumnDef &columnDef,
+                        int row,
+                        int column,
+                        const AgGridModel *model,
+                        const AgGridStyle *style,
+                        const AgCellRendererContext &context) const override;
+
     /// 返回原始值的字符串形式。
     QVariant copyContent(const QVariant &value,
                          const AgColumnDef &columnDef,
