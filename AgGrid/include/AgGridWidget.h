@@ -536,6 +536,17 @@ private:
     QRect treeExpanderRect(int row) const;
     /// 切换行展开态（可见行号）。
     void toggleRowExpanded(int row);
+    /// 展开 / 折叠动画的统一入口：展开即时应用模型（子行淡入 + 兄弟行下移）；
+    /// 折叠先播放淡出 + 上移，动画结束时才应用模型折叠（末帧与最终状态一致，无跳变）。
+    void setRowExpandedAnimated(int row, bool expanded);
+    /// 应用展开 / 折叠动画进度（0~1）。
+    void applyTreeRowAnimation(qreal progress);
+    /// 结束动画：清理插值条目；折叠路径在此应用模型折叠。
+    void finishTreeAnimation();
+    /// 渐显 / 渐隐子行的当前不透明度（非动画行恒为 1）。
+    qreal rowAnimationOpacity(int row) const;
+    /// 行图层过滤：树动画分三层绘制（0=全部 / 1=渐变子行 / 2=平移行 / 3=静态行）。
+    bool treeLayerAcceptRow(int row) const;
     /// 原始行子树内的全部原始行（含自身；非树形模式返回空）。
     QVector<int> subtreeRows(int originalRow) const;
 
@@ -742,6 +753,22 @@ private:
     QVector<int> m_dragAnimationOldOffsets;  ///< 动画前行偏移
     qreal m_dragAnimationProgress;           ///< 动画进度 0~1
     QVariantAnimation *m_dragOffsetAnimation;  ///< 行重排动画驱动
+
+    // 树形展开 / 折叠动画（机制同行拖拽：旧偏移 → 新偏移插值 + 子行透明度渐变）
+    struct TreeRowAnimationEntry {
+        int visibleRow;      ///< 受影响行（可见行号）
+        int startOffset;     ///< 动画起始 y 偏移
+        int endOffset;       ///< 动画结束 y 偏移
+    };
+    QVector<TreeRowAnimationEntry> m_treeAnimationEntries;  ///< 平移行（兄弟行下移 / 上移）
+    QSet<int> m_treeAnimationFadeRows;                      ///< 渐显 / 渐隐的子行（可见行号）
+    QSet<int> m_treeAnimationMoveRows;                      ///< 平移行集合（可见行号，图层过滤用）
+    int m_treeLayerFilter;                                  ///< 绘制图层过滤（0=全部 / 1=渐变 / 2=平移 / 3=静态）
+    bool m_treeAnimationExpanding;                          ///< true=展开淡入 / false=折叠淡出
+    bool m_treeAnimationPendingCollapse;                    ///< 折叠动画结束时才应用模型折叠
+    int m_treeAnimationPendingRow;                          ///< 待应用折叠的原始行
+    qreal m_treeAnimationProgress;                          ///< 动画进度 0~1
+    QVariantAnimation *m_treeAnimation;                     ///< 展开折叠动画驱动
 
     // 列拖拽排序
     bool m_isColumnDragging;                 ///< 列拖拽进行中

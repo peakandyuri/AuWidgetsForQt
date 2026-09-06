@@ -77,6 +77,12 @@ AgGridWidget::AgGridWidget(QWidget *parent)
     , m_autoScrollTimer(nullptr)
     , m_dragAnimationProgress(0.0)
     , m_dragOffsetAnimation(nullptr)
+    , m_treeLayerFilter(0)
+    , m_treeAnimationExpanding(false)
+    , m_treeAnimationPendingCollapse(false)
+    , m_treeAnimationPendingRow(-1)
+    , m_treeAnimationProgress(0.0)
+    , m_treeAnimation(nullptr)
     , m_isColumnDragging(false)
     , m_isPotentialColumnDrag(false)
     , m_potentialColumnDragColumn(-1)
@@ -172,6 +178,7 @@ void AgGridWidget::setModel(AgGridModel *model)
     closeEditor(false);
     cancelRowDrag();
     cancelColumnDrag();
+    finishTreeAnimation();
     finishColumnVisibilityAnimation();
     m_model = model;
     connectModel();
@@ -696,34 +703,56 @@ void AgGridWidget::paintEvent(QPaintEvent * /*event*/)
     const QPair<int, int> rowRange = visibleRowRange();
 
     drawHeader(&painter);
-    drawRowBackgrounds(&painter, rowRange.first, rowRange.second);
 
-    if (bodyColRange.first <= bodyColRange.second) {
-        drawRows(&painter, rowRange.first, rowRange.second, bodyColRange.first, bodyColRange.second);
-        drawGridLines(&painter, bodyColRange.first, bodyColRange.second,
-                      rowRange.first, rowRange.second);
-    }
+    // 一个区域的行内容（背景之外的单元格 + 网格线）
+    auto drawRegionRows = [&](int firstColumn, int lastColumn) {
+        if (firstColumn > lastColumn)
+            return;
+        drawRows(&painter, rowRange.first, rowRange.second, firstColumn, lastColumn);
+        drawGridLines(&painter, firstColumn, lastColumn, rowRange.first, rowRange.second);
+    };
+    auto drawPinnedRegions = [&]() {
+        if (!m_leftPinnedColumns.isEmpty())
+            drawRegionRows(m_leftPinnedColumns.first(), m_leftPinnedColumns.last());
+        if (!m_rightPinnedColumns.isEmpty())
+            drawRegionRows(m_rightPinnedColumns.first(), m_rightPinnedColumns.last());
+    };
 
-    if (!m_leftPinnedColumns.isEmpty()) {
-        drawRows(&painter, rowRange.first, rowRange.second,
-                 m_leftPinnedColumns.first(), m_leftPinnedColumns.last());
-        drawGridLines(&painter, m_leftPinnedColumns.first(), m_leftPinnedColumns.last(),
-                      rowRange.first, rowRange.second);
-    }
+    // 树形展开 / 折叠动画期间分三层绘制：
+    //   静态行 → 渐变子行（半透明）→ 平移兄弟行（不透明顶层），
+    // 平移行盖在渐变子行之上，避免移动中单元格的边框 / 内容与子行互相穿透。
+    const bool treeAnimActive = !m_treeAnimationEntries.isEmpty()
+                              || !m_treeAnimationFadeRows.isEmpty();
 
-    if (!m_rightPinnedColumns.isEmpty()) {
-        drawRows(&painter, rowRange.first, rowRange.second,
-                 m_rightPinnedColumns.first(), m_rightPinnedColumns.last());
-        drawGridLines(&painter, m_rightPinnedColumns.first(), m_rightPinnedColumns.last(),
-                      rowRange.first, rowRange.second);
+    if (!treeAnimActive) {
+        drawRowBackgrounds(&painter, rowRange.first, rowRange.second);
+        drawRegionRows(bodyColRange.first, bodyColRange.second);
+        drawPinnedRegions();
+    } else {
+        const int layers[3] = {3, 1, 2};   // 静态行 → 渐变子行 → 平移行
+        for (const int layer : layers) {
+            m_treeLayerFilter = layer;
+            drawRowBackgrounds(&painter, rowRange.first, rowRange.second);
+            drawRegionRows(bodyColRange.first, bodyColRange.second);
+            drawPinnedRegions();
+        }
+        m_treeLayerFilter = 0;
     }
 
     // 绘制行号列单元格
     if (m_showRowNumberColumn) {
         painter.save();
         painter.setClipRect(0, headerHeight(), rowNumberColumnWidth(), bodyHeight(), Qt::IntersectClip);
-        for (int row = rowRange.first; row <= rowRange.second; ++row)
+        for (int row = rowRange.first; row <= rowRange.second; ++row) {
+            const qreal rowOpacity = rowAnimationOpacity(row);
+            if (rowOpacity < 1.0) {
+                painter.save();
+                painter.setOpacity(rowOpacity);
+            }
             drawRowNumberCell(&painter, row);
+            if (rowOpacity < 1.0)
+                painter.restore();
+        }
         painter.restore();
 
         const QColor gridLineColor = m_style->color(AgGridStyle::GridLineColor, m_model);
@@ -735,7 +764,14 @@ void AgGridWidget::paintEvent(QPaintEvent * /*event*/)
             for (int row = rowRange.first; row <= rowRange.second; ++row) {
                 const int y = rowY(row);
                 const int h = rowHeight(row);
+                const qreal rowOpacity = rowAnimationOpacity(row);
+                if (rowOpacity < 1.0) {
+                    painter.save();
+                    painter.setOpacity(rowOpacity);
+                }
                 painter.drawRect(0, y, rnW, h);
+                if (rowOpacity < 1.0)
+                    painter.restore();
             }
             painter.restore();
         }
@@ -749,10 +785,17 @@ void AgGridWidget::paintEvent(QPaintEvent * /*event*/)
         painter.save();
         painter.setClipRect(fixedX, headerHeight(), fixedW, bodyHeight(), Qt::IntersectClip);
         for (int row = rowRange.first; row <= rowRange.second; ++row) {
+            const qreal rowOpacity = rowAnimationOpacity(row);
+            if (rowOpacity < 1.0) {
+                painter.save();
+                painter.setOpacity(rowOpacity);
+            }
             if (m_showCheckboxColumn)
                 drawCheckboxCell(&painter, row);
             if (m_rowDragEnabled)
                 drawDragHandleCell(&painter, row);
+            if (rowOpacity < 1.0)
+                painter.restore();
         }
         painter.restore();
 
@@ -765,7 +808,14 @@ void AgGridWidget::paintEvent(QPaintEvent * /*event*/)
             for (int row = rowRange.first; row <= rowRange.second; ++row) {
                 const int y = rowY(row);
                 const int h = rowHeight(row);
+                const qreal rowOpacity = rowAnimationOpacity(row);
+                if (rowOpacity < 1.0) {
+                    painter.save();
+                    painter.setOpacity(rowOpacity);
+                }
                 painter.drawRect(fixedX, y, fixedW, h);
+                if (rowOpacity < 1.0)
+                    painter.restore();
             }
             painter.restore();
         }
@@ -2506,6 +2556,14 @@ int AgGridWidget::rowY(int row) const
         rebuildRowOffsets();
 
     int offset = m_rowOffsets.at(row);
+    // 树形展开 / 折叠动画：受影响行按进度在旧 / 新偏移间插值
+    for (const TreeRowAnimationEntry &entry : m_treeAnimationEntries) {
+        if (entry.visibleRow == row) {
+            offset = entry.startOffset
+                     + qRound((entry.endOffset - entry.startOffset) * m_treeAnimationProgress);
+            break;
+        }
+    }
     if (!m_dragAnimationEntries.isEmpty()) {
         for (const RowDragAnimationEntry &entry : m_dragAnimationEntries) {
             if (entry.visibleRow == row) {
@@ -3327,17 +3385,31 @@ void AgGridWidget::drawRowBackgrounds(QPainter *painter, int firstRow, int lastR
     painter->save();
     painter->setClipRect(clipRect, Qt::IntersectClip);
 
-    // 先铺满 body 区底色（包含滚动条占用的右侧区域），避免滚动条隐藏时露出旧像素
+    // 先铺满 body 区底色（包含滚动条占用的右侧区域），避免滚动条隐藏时露出旧像素。
+    // 平移行图层不铺全局底色（会盖住下层渐变子行），改由平移行逐行铺不透明底。
     const QColor rowBackgroundColor = m_style->color(AgGridStyle::RowBackgroundColor, m_model);
-    painter->fillRect(clipRect, rowBackgroundColor.isValid() ? rowBackgroundColor : palette().base());
+    if (m_treeLayerFilter == 0 || m_treeLayerFilter == 3)
+        painter->fillRect(clipRect, rowBackgroundColor.isValid() ? rowBackgroundColor : palette().base());
 
     const QColor selectedColor = m_style->color(AgGridStyle::SelectedRowBackgroundColor, m_model);
     const QColor alternateColor = m_style->color(AgGridStyle::AlternateRowBackgroundColor, m_model);
     const QColor hoverColor = m_style->color(AgGridStyle::HoverRowBackgroundColor, m_model);
 
     for (int row = firstRow; row <= lastRow; ++row) {
+        if (!treeLayerAcceptRow(row))
+            continue;
         const int y = rowY(row);
         const int h = rowHeight(row);
+        // 树形展开 / 折叠动画：渐显 / 渐隐子行的行背景随进度变透明；
+        // 平移行图层保持完全不透明（覆盖下层渐变子行，避免单元格边框穿透）
+        const qreal rowOpacity = (m_treeLayerFilter == 2) ? 1.0 : rowAnimationOpacity(row);
+        if (rowOpacity < 1.0) {
+            painter->save();
+            painter->setOpacity(rowOpacity);
+        }
+        if (m_treeLayerFilter == 2)
+            painter->fillRect(0, y, viewportW, h,
+                              rowBackgroundColor.isValid() ? rowBackgroundColor : palette().base());
         if (row == m_selectedRow && selectedColor.isValid())
             painter->fillRect(0, y, viewportW, h, selectedColor);
         else if (alternateColor.isValid() && row % 2 == 1)
@@ -3345,6 +3417,8 @@ void AgGridWidget::drawRowBackgrounds(QPainter *painter, int firstRow, int lastR
 
         if (row == m_hoverRow && row != m_selectedRow && hoverColor.isValid())
             painter->fillRect(0, y, viewportW, h, hoverColor);
+        if (rowOpacity < 1.0)
+            painter->restore();
     }
 
     painter->restore();
@@ -3393,6 +3467,8 @@ void AgGridWidget::drawRows(QPainter *painter, int firstRow, int lastRow, int fi
     }
 
     for (int row = paintFirstRow; row <= lastRow; ++row) {
+        if (!treeLayerAcceptRow(row))
+            continue;
         const int y = rowY(row);
         const int h = rowHeight(row);
 
@@ -3410,7 +3486,8 @@ void AgGridWidget::drawRows(QPainter *painter, int firstRow, int lastRow, int fi
                 : QRect(columnX(col), y, m_columnOffsets.at(col + 1) - m_columnOffsets.at(col), h);
             const QVariant value = m_model->cellValue(row, col);
 
-            const qreal opacity = columnOpacity(col);
+            // 列显隐动画透明度 × 树形展开 / 折叠动画的行透明度
+            const qreal opacity = columnOpacity(col) * rowAnimationOpacity(row);
             const bool fade = opacity < 1.0;
             if (fade) {
                 painter->save();
@@ -3517,8 +3594,16 @@ void AgGridWidget::drawGridLines(QPainter *painter, int firstColumn, int lastCol
     // 每个单元格绘制完整边框；相邻单元格共享边界线，视觉上保持 1px，
     // 动画中每个单元格自带完整边框，避免掉线。
     for (int row = paintFirstRow; row <= lastRow; ++row) {
+        if (!treeLayerAcceptRow(row))
+            continue;
         const int y = rowY(row);
         const int h = rowHeight(row);
+        // 渐变子行的边框随动画进度淡入 / 淡出（平移行图层保持不透明）
+        const qreal rowOpacity = (m_treeLayerFilter == 2) ? 1.0 : rowAnimationOpacity(row);
+        if (rowOpacity < 1.0) {
+            painter->save();
+            painter->setOpacity(rowOpacity);
+        }
         for (int col = paintFirstColumn; col <= lastColumn; ++col) {
             if (columnRegion(col) != region)
                 continue;
@@ -3552,6 +3637,8 @@ void AgGridWidget::drawGridLines(QPainter *painter, int firstColumn, int lastCol
             if (fade)
                 painter->restore();
         }
+        if (rowOpacity < 1.0)
+            painter->restore();
     }
 
     painter->restore();
@@ -4533,16 +4620,176 @@ void AgGridWidget::toggleRowExpanded(int row)
     const int originalRow = m_model->originalRowForVisibleRow(row);
     if (originalRow < 0 || !m_model->rowHasChildren(originalRow))
         return;
-    m_model->setRowExpanded(originalRow, !m_model->isRowExpanded(originalRow));
+    setRowExpandedAnimated(row, !m_model->isRowExpanded(originalRow));
 }
 
 void AgGridWidget::setRowExpanded(int row, bool expanded)
 {
     if (!m_model || !m_model->isTreeMode() || row < 0 || row >= m_model->rowCount())
         return;
+    setRowExpandedAnimated(row, expanded);
+}
+
+void AgGridWidget::setRowExpandedAnimated(int row, bool expanded)
+{
+    if (!m_model || !m_model->isTreeMode()
+        || row < 0 || row >= m_model->rowCount())
+        return;
     const int originalRow = m_model->originalRowForVisibleRow(row);
-    if (originalRow >= 0)
-        m_model->setRowExpanded(originalRow, expanded);
+    if (originalRow < 0 || !m_model->rowHasChildren(originalRow))
+        return;
+    if (m_model->isRowExpanded(originalRow) == expanded)
+        return;
+
+    // 上一次动画尚未结束：立即结算（折叠路径在此应用模型），避免快照错乱
+    finishTreeAnimation();
+
+    // 快照动画前的可见顺序（original 行号按可见顺序）与行偏移
+    if (m_rowOffsetsDirty)
+        rebuildRowOffsets();
+    QVector<int> oldOrder;
+    QVector<int> oldOffsets;
+    oldOrder.reserve(m_model->rowCount());
+    oldOffsets.reserve(m_model->rowCount());
+    for (int v = 0; v < m_model->rowCount(); ++v) {
+        oldOrder.append(m_model->originalRowForVisibleRow(v));
+        oldOffsets.append(v < m_rowOffsets.size() ? m_rowOffsets.at(v) : 0);
+    }
+
+    m_treeAnimationEntries.clear();
+    m_treeAnimationFadeRows.clear();
+    m_treeAnimationMoveRows.clear();
+    m_treeAnimationExpanding = expanded;
+    m_treeAnimationPendingCollapse = false;
+    m_treeAnimationPendingRow = -1;
+
+    if (expanded) {
+        // 展开：先应用模型变化，子行成为真实可见行，可直接淡入
+        m_model->setRowExpanded(originalRow, true);
+        if (m_rowOffsetsDirty)
+            rebuildRowOffsets();
+
+        // 遍历新可见行：动画前不存在的 = 渐显子行；存在且位移的 = 平移兄弟行
+        for (int newRow = 0; newRow < m_model->rowCount(); ++newRow) {
+            const int original = m_model->originalRowForVisibleRow(newRow);
+            if (original < 0)
+                continue;
+            const int oldVisible = oldOrder.indexOf(original);
+            if (oldVisible < 0) {
+                m_treeAnimationFadeRows.insert(newRow);
+                continue;
+            }
+            if (oldVisible == newRow)
+                continue;
+            TreeRowAnimationEntry entry;
+            entry.visibleRow = newRow;
+            entry.startOffset = (oldVisible < oldOffsets.size()) ? oldOffsets.at(oldVisible) : 0;
+            entry.endOffset = (newRow < m_rowOffsets.size()) ? m_rowOffsets.at(newRow) : entry.startOffset;
+            m_treeAnimationEntries.append(entry);
+            m_treeAnimationMoveRows.insert(newRow);
+        }
+    } else {
+        // 折叠：模型变化延迟到动画结束，期间子行仍是真实可见行，可渐隐
+        // 子树在可见行上是连续区段 [row + 1, lastDescendant]
+        const int anchorDepth = m_model->rowDepth(originalRow);
+        int lastDescendant = row;
+        for (int r = row + 1; r < m_model->rowCount(); ++r) {
+            const int orow = m_model->originalRowForVisibleRow(r);
+            if (orow < 0 || m_model->rowDepth(orow) <= anchorDepth)
+                break;
+            lastDescendant = r;
+        }
+
+        if (lastDescendant == row) {
+            // 子树当前不可见（已折叠/被过滤）：无动画，直接折叠
+            m_model->setRowExpanded(originalRow, false);
+            return;
+        }
+
+        const int removedHeight = m_rowOffsets.at(lastDescendant + 1)
+                                - m_rowOffsets.at(row + 1);
+
+        // 子树行渐隐（保持原位）
+        for (int r = row + 1; r <= lastDescendant; ++r)
+            m_treeAnimationFadeRows.insert(r);
+        // 其后的行整体上移“被移除的子树高度”
+        for (int r = lastDescendant + 1; r < m_model->rowCount(); ++r) {
+            TreeRowAnimationEntry entry;
+            entry.visibleRow = r;
+            entry.startOffset = m_rowOffsets.at(r);
+            entry.endOffset = m_rowOffsets.at(r) - removedHeight;
+            m_treeAnimationEntries.append(entry);
+            m_treeAnimationMoveRows.insert(r);
+        }
+        m_treeAnimationPendingCollapse = true;
+        m_treeAnimationPendingRow = originalRow;
+    }
+
+    if (m_treeAnimationEntries.isEmpty() && m_treeAnimationFadeRows.isEmpty())
+        return;   // 无可动画内容（模型状态已就绪）
+
+    m_treeAnimation = new QVariantAnimation(this);
+    m_treeAnimation->setStartValue(0.0);
+    m_treeAnimation->setEndValue(1.0);
+    m_treeAnimation->setDuration(200);
+    m_treeAnimation->setEasingCurve(QEasingCurve::InOutSine);
+    connect(m_treeAnimation, &QVariantAnimation::valueChanged, this, [this](const QVariant &value) {
+        applyTreeRowAnimation(value.toReal());
+    });
+    connect(m_treeAnimation, &QVariantAnimation::finished, this, &AgGridWidget::finishTreeAnimation);
+    m_treeAnimation->start();
+}
+
+void AgGridWidget::applyTreeRowAnimation(qreal progress)
+{
+    m_treeAnimationProgress = qBound(0.0, progress, 1.0);
+    repaint();
+}
+
+void AgGridWidget::finishTreeAnimation()
+{
+    if (m_treeAnimation) {
+        m_treeAnimation->stop();
+        delete m_treeAnimation;
+        m_treeAnimation = nullptr;
+    }
+    const bool pendingCollapse = m_treeAnimationPendingCollapse;
+    const int pendingRow = m_treeAnimationPendingRow;
+    m_treeAnimationEntries.clear();
+    m_treeAnimationFadeRows.clear();
+    m_treeAnimationMoveRows.clear();
+    m_treeAnimationPendingCollapse = false;
+    m_treeAnimationPendingRow = -1;
+    m_treeAnimationProgress = 0.0;
+
+    // 折叠动画结束时应用模型折叠：最终偏移与动画末帧一致，无跳变
+    if (pendingCollapse && m_model && m_model->isTreeMode()
+        && pendingRow >= 0 && m_model->isRowExpanded(pendingRow)) {
+        m_model->setRowExpanded(pendingRow, false);
+    }
+}
+
+qreal AgGridWidget::rowAnimationOpacity(int row) const
+{
+    if (m_treeAnimationFadeRows.isEmpty() || !m_treeAnimationFadeRows.contains(row))
+        return 1.0;
+    return m_treeAnimationExpanding ? m_treeAnimationProgress
+                                    : 1.0 - m_treeAnimationProgress;
+}
+
+bool AgGridWidget::treeLayerAcceptRow(int row) const
+{
+    switch (m_treeLayerFilter) {
+    case 1:     // 仅渐变子行
+        return m_treeAnimationFadeRows.contains(row);
+    case 2:     // 仅平移行
+        return m_treeAnimationMoveRows.contains(row);
+    case 3:     // 仅静态行（既不渐变也不平移）
+        return !m_treeAnimationFadeRows.contains(row)
+            && !m_treeAnimationMoveRows.contains(row);
+    default:
+        return true;
+    }
 }
 
 bool AgGridWidget::isRowExpanded(int row) const
@@ -4571,24 +4818,28 @@ int AgGridWidget::rowDepth(int row) const
 
 void AgGridWidget::expandAll()
 {
+    finishTreeAnimation();   // 结算进行中的展开动画，避免偏移快照失效
     if (m_model)
         m_model->expandAll();
 }
 
 void AgGridWidget::collapseAll()
 {
+    finishTreeAnimation();
     if (m_model)
         m_model->collapseAll();
 }
 
 void AgGridWidget::expandToDepth(int depth)
 {
+    finishTreeAnimation();
     if (m_model)
         m_model->expandToDepth(depth);
 }
 
 void AgGridWidget::collapseToDepth(int depth)
 {
+    finishTreeAnimation();
     if (m_model)
         m_model->collapseToDepth(depth);
 }
@@ -4856,11 +5107,12 @@ void AgGridWidget::setLoading(bool loading)
 
     if (loading) {
         // 蒙层盖不住子控件，先收掉：编辑器（数据即将刷新，放弃未提交修改）、
-        // 进行中的拖拽与滚动条
+        // 进行中的拖拽、展开动画与滚动条
         if (isEditing())
             closeEditor(false);
         cancelRowDrag();
         cancelColumnDrag();
+        finishTreeAnimation();
         clearHoverCell();
         clearHeaderHover();
         updateScrollBars();
@@ -4971,7 +5223,7 @@ void AgGridWidget::keyPressEvent(QKeyEvent *event)
             const int originalRow = m_model->originalRowForVisibleRow(m_selectedRow);
             if (originalRow >= 0 && event->key() == Qt::Key_Right
                 && m_model->rowHasChildren(originalRow) && !m_model->isRowExpanded(originalRow)) {
-                m_model->setRowExpanded(originalRow, true);
+                setRowExpandedAnimated(m_selectedRow, true);
                 event->accept();
                 return;
             }
@@ -4994,7 +5246,7 @@ void AgGridWidget::keyPressEvent(QKeyEvent *event)
             }
             if (originalRow >= 0 && event->key() == Qt::Key_Left) {
                 if (m_model->isRowExpanded(originalRow) && m_model->rowHasChildren(originalRow)) {
-                    m_model->setRowExpanded(originalRow, false);
+                    setRowExpandedAnimated(m_selectedRow, false);
                     event->accept();
                     return;
                 }
