@@ -1000,6 +1000,7 @@ sync->syncFrom(gridA);      // 初始对齐
 | `HeaderBorderColor` | QColor | 表头边框 / 区域分隔线颜色 |
 | `HeaderFont` | QFont | 表头字体（列定义可覆盖） |
 | `HeaderAlignment` | Qt::Alignment | 表头对齐（列定义可覆盖） |
+| `SortIndicatorColor` | QColor | 排序指示三角颜色（无效色跟随表头文字色） |
 
 ### 单元格 / 网格线
 

@@ -688,9 +688,11 @@ void AgGridWidget::paintEvent(QPaintEvent * /*event*/)
     painter.save();
     if (radius > 0) {
         painter.setRenderHint(QPainter::Antialiasing, true);
-        // 内容裁剪区与外边框对齐（外边框向里缩进 1px），避免表头/单元格边框超出圆角外边框。
+        // 内容裁剪区对齐边框内沿：边框占最外圈 1px（外径 radius、内径 radius-1），
+        // 与网页 border-radius 的内圆角一致，避免表头/单元格边框超出圆角外边框。
         QPainterPath contentClip;
-        contentClip.addRoundedRect(QRectF(panel).adjusted(1, 1, -1, -1), radius, radius);
+        const qreal innerRadius = qMax(0, radius - 1);
+        contentClip.addRoundedRect(QRectF(panel).adjusted(1, 1, -1, -1), innerRadius, innerRadius);
         painter.setClipPath(contentClip, Qt::ReplaceClip);
     } else {
         painter.setClipRect(panel, Qt::ReplaceClip);
@@ -855,19 +857,27 @@ void AgGridWidget::paintEvent(QPaintEvent * /*event*/)
 
     painter.restore();
 
-    // 4. 绘制面板边框
+    // 4. 绘制面板边框：用“外轮廓 - 内轮廓”的环形填充代替画笔描边。
+    // 描边在开反锯齿时会把 1px 线摊到两侧（显得发虚、圆角处偏粗），
+    // 关闭反锯齿则会让圆角变成锯齿台阶；环形填充的直边恰好落在整数
+    // 像素上（实色 1px），圆角由反锯齿平滑过渡，观感与网页 border-radius 一致。
     const QColor borderColor = m_style->color(AgGridStyle::BorderColor, m_model);
     if (borderColor.isValid()) {
         painter.save();
-        QPen pen(borderColor);
-        painter.setPen(pen);
-        painter.setBrush(Qt::NoBrush);
-        // 关闭反锯齿，避免边框出现 2px 粗的感觉
-        painter.setRenderHint(QPainter::Antialiasing, false);
-        if (radius > 0)
-            painter.drawRoundedRect(QRectF(panel).adjusted(1, 1, -1, -1), radius, radius);
-        else
-            painter.drawRect(panel.adjusted(0, 0, -1, -1));
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(borderColor);
+        const QRectF innerPanel = QRectF(panel).adjusted(1, 1, -1, -1);
+        QPainterPath borderPath;
+        borderPath.setFillRule(Qt::OddEvenFill);
+        if (radius > 0) {
+            borderPath.addRoundedRect(QRectF(panel), radius, radius);
+            borderPath.addRoundedRect(innerPanel, radius - 1, radius - 1);
+        } else {
+            borderPath.addRect(QRectF(panel));
+            borderPath.addRect(innerPanel);
+        }
+        painter.drawPath(borderPath);
         painter.restore();
     }
 
@@ -2889,9 +2899,10 @@ void AgGridWidget::applyStyleToScrollBars()
     m_vScrollBar->setBackgroundColor(m_style->color(AgGridStyle::ScrollBarTrackBackgroundColor, m_model));
     m_vScrollBar->setSeparatorColor(m_style->color(AgGridStyle::GridLineColor, m_model));
 
-    // 圆角模式下，横向滚动条拖动区域两端缩进，避免与圆角重叠
-    const int radius = cornerRadius();
-    m_hScrollBar->setTrackMargin(radius > 0 ? radius : 2);
+    // 横向滚动条两端只留与纵向滚动条一致的小边距（2px）。
+    // 滑块是胶囊形（端部全圆角），贴近平板圆角区域也不会突兀；
+    // 之前按圆角半径缩进（默认 8px），导致滑块两端出现明显空隙。
+    m_hScrollBar->setTrackMargin(2);
 }
 
 void AgGridWidget::drawBackground(QPainter *painter)
@@ -3154,24 +3165,30 @@ void AgGridWidget::toggleSort(int column)
 
 void AgGridWidget::drawSortIndicator(QPainter *painter, const QRect &rect, Qt::SortOrder order) const
 {
-    const int size = 8;
-    const int x = rect.right() - size - 6;
-    const int y = rect.top() + (rect.height() - size) / 2;
+    const qreal size = 8;
+    const qreal x = rect.right() - size - 6;
+    const qreal y = rect.top() + (rect.height() - size) / 2.0;
 
-    QPolygon triangle;
+    // 浮点坐标 + 反锯齿：底边落在整数像素行保持锐利，两条斜边平滑无锯齿
+    QPolygonF triangle;
     if (order == Qt::AscendingOrder) {
-        triangle << QPoint(x, y + size)
-                 << QPoint(x + size, y + size)
-                 << QPoint(x + size / 2, y);
+        triangle << QPointF(x, y + size)
+                 << QPointF(x + size, y + size)
+                 << QPointF(x + size / 2.0, y);
     } else {
-        triangle << QPoint(x, y)
-                 << QPoint(x + size, y)
-                 << QPoint(x + size / 2, y + size);
+        triangle << QPointF(x, y)
+                 << QPointF(x + size, y)
+                 << QPointF(x + size / 2.0, y + size);
     }
 
+    QColor color = m_style->color(AgGridStyle::SortIndicatorColor, m_model);
+    if (!color.isValid())
+        color = m_style->color(AgGridStyle::HeaderForegroundColor, m_model);
+
     painter->save();
+    painter->setRenderHint(QPainter::Antialiasing, true);
     painter->setPen(Qt::NoPen);
-    painter->setBrush(m_style->color(AgGridStyle::HeaderForegroundColor, m_model));
+    painter->setBrush(color);
     painter->drawPolygon(triangle);
     painter->restore();
 }

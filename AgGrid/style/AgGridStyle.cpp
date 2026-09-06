@@ -77,6 +77,8 @@ QVariant AgGridStyle::defaultValue(StyleRole role) const
         return scaledFont(large ? 1 : (medium ? 0 : -1));
     case HeaderAlignment:
         return static_cast<int>(Qt::Alignment());
+    case SortIndicatorColor:
+        return QColor(90, 90, 90);
 
     case CellBorderColor:
     case GridLineColor:

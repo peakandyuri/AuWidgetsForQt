@@ -25,6 +25,8 @@ QVariant AgDarkGridStyle::value(StyleRole role, const AgGridModel *model, int ro
         return QColor(50, 50, 55);
     case HeaderForegroundColor:
         return QColor(220, 220, 220);
+    case SortIndicatorColor:
+        return QColor(220, 220, 220);
     case HeaderBorderColor:
         return QColor(70, 70, 75);
 

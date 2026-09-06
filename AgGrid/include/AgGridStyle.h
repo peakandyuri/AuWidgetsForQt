@@ -66,6 +66,7 @@ public:
         HeaderBorderColor,          ///< 表头边框 / 停靠区分隔线颜色
         HeaderFont,                 ///< 表头字体（列定义 headerFont 可覆盖）
         HeaderAlignment,            ///< 表头对齐（列定义 headerAlignment 可覆盖）
+        SortIndicatorColor,         ///< 排序指示三角颜色（无效色 = 跟随 HeaderForegroundColor）
 
         // 单元格 / 网格线
         CellBorderColor,            ///< 单元格边框色 [上下文]
