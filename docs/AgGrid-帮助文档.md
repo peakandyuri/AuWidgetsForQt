@@ -1095,3 +1095,4 @@ sync->syncFrom(gridA);      // 初始对齐
 8. **DLL 更新**：Windows 下 exe 优先加载同目录的 `AgGrid.dll`，重编译库后确认 exe 旁的 DLL 已更新（Example.pro 已内置自动拷贝）。
 9. **内存所有权**：模型由调用者管理（通常 `new AgGridModel(parent)`）；`setStyle()` 传入的样式由控件接管并销毁；注册的渲染器 / 编辑器通过 `QSharedPointer` 管理。
 10. **树形模式注意**：行拖拽不可用；展开 / 折叠会清空合并单元格；行可选回调接收**原始行号**；勾选级联覆盖折叠不可见的子行；`setRowData()` 会退出树形模式（两种数据入口互斥）。
+11. **构建套件位数必须一致**：库与示例必须用同一位数的套件构建（本工程验证环境为 Qt 5.12.9 **MinGW 64 位**，编译器 `Tools/mingw730_64`）。若出现大量"undefined reference to `AgGrid::…`"或链接时提示 `skipping incompatible … libAgGrid.a`，说明 Example 用的库与当前套件位数不一致：在 Qt Creator 中切换到 64 位套件（或至少保证 AgGrid 与 Example 用同一套件"重新构建所有项目"），并删除旧的 shadow 构建目录后重新执行 qmake。`AgGrid/bin` 是库的唯一输出目录，不同位数的构建会互相覆盖该目录下的 `AgGrid.dll` / `libAgGrid.a`。

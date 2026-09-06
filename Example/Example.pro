@@ -21,6 +21,7 @@ SOURCES += \
     demos/DemoWindowBase.cpp \
     demos/BasicDemoWindow.cpp \
     demos/SelectionCheckDemoWindow.cpp \
+    demos/HeaderCheckDemoWindow.cpp \
     demos/SortFilterDemoWindow.cpp \
     demos/ColumnDemoWindow.cpp \
     demos/RowDragDemoWindow.cpp \
@@ -32,6 +33,7 @@ SOURCES += \
     demos/LoadingDemoWindow.cpp \
     CustomAgGrid/ButtonRenderer.cpp \
     CustomAgGrid/HeaderButtonRenderer.cpp \
+    CustomAgGrid/HeaderCheckBoxRenderer.cpp \
     CustomAgGrid/DemoValidator.cpp \
     CustomAgGrid/DemoStyle.cpp
 
@@ -40,6 +42,7 @@ HEADERS += \
     demos/DemoWindowBase.h \
     demos/BasicDemoWindow.h \
     demos/SelectionCheckDemoWindow.h \
+    demos/HeaderCheckDemoWindow.h \
     demos/SortFilterDemoWindow.h \
     demos/ColumnDemoWindow.h \
     demos/RowDragDemoWindow.h \
@@ -51,6 +54,7 @@ HEADERS += \
     demos/LoadingDemoWindow.h \
     CustomAgGrid/ButtonRenderer.h \
     CustomAgGrid/HeaderButtonRenderer.h \
+    CustomAgGrid/HeaderCheckBoxRenderer.h \
     CustomAgGrid/DemoValidator.h \
     CustomAgGrid/DemoStyle.h
 

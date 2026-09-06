@@ -4,6 +4,7 @@
 #include "AgGridStyle.h"
 #include "BasicDemoWindow.h"
 #include "ColumnDemoWindow.h"
+#include "HeaderCheckDemoWindow.h"
 #include "LoadingDemoWindow.h"
 #include "RowDragDemoWindow.h"
 #include "ScrollDemoWindow.h"
@@ -55,6 +56,8 @@ MainWindow::MainWindow(QWidget *parent)
           [this]() { return static_cast<QDialog *>(new BasicDemoWindow(this)); } },
         { "selection", QStringLiteral(u"选中与勾选\n行号列 / 复选框列 / 行可选回调"),
           [this]() { return static_cast<QDialog *>(new SelectionCheckDemoWindow(this)); } },
+        { "headercheck", QStringLiteral(u"表头全选\n数据列复选框的表头全选 / 半选组件"),
+          [this]() { return static_cast<QDialog *>(new HeaderCheckDemoWindow(this)); } },
         { "sortfilter", QStringLiteral(u"排序与过滤\n表头排序 / 多规则排序 / 过滤回调"),
           [this]() { return static_cast<QDialog *>(new SortFilterDemoWindow(this)); } },
         { "column", QStringLiteral(u"列操作\n停靠 / 显隐动画 / 列拖拽"),
