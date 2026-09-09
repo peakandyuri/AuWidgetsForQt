@@ -11,6 +11,7 @@ AgColumnDef::AgColumnDef()
     , m_filterable(false)
     , m_visible(true)
     , m_resizable(true)
+    , m_tooltipEnabled(false)
     , m_pinMode(PinMode::None)
     , m_alignment(Qt::AlignLeft | Qt::AlignVCenter)
     , m_textWrapMode(TextWrapMode::NoWrap)
@@ -147,6 +148,16 @@ bool AgColumnDef::isResizable() const
 void AgColumnDef::setResizable(bool resizable)
 {
     m_resizable = resizable;
+}
+
+bool AgColumnDef::isTooltipEnabled() const
+{
+    return m_tooltipEnabled;
+}
+
+void AgColumnDef::setTooltipEnabled(bool enabled)
+{
+    m_tooltipEnabled = enabled;
 }
 
 AgColumnDef::PinMode AgColumnDef::pinMode() const

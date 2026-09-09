@@ -336,6 +336,7 @@ enum class TextWrapMode   { NoWrap, NoWrapTruncate, NoWrapOverflow, WordWrap };
 | visible | `isVisible()` / `setVisible()` | true | 初始可见性（运行时用 `AgGridWidget::setColumnVisible`） |
 | resizable | `isResizable()` / `setResizable()` | true | 允许拖动调宽 / 参与 AutoFit |
 | pinMode | `pinMode()` / `setPinMode()` | None | 左/右停靠 |
+| tooltipEnabled | `isTooltipEnabled()` / `setTooltipEnabled()` | false | 悬停 tooltip 开关：内容超出列宽被裁剪时悬停显示完整内容（仅 NoWrap/NoWrapTruncate 生效，见 7.18 节） |
 | cellRenderer | `cellRenderer()` / `setCellRenderer()` | 空 | 单元格渲染器注册名；为空用默认渲染器；checkbox 列强制用内置复选框渲染器 |
 | headerRenderer | `headerRenderer()` / `setHeaderRenderer()` | 空 | 表头渲染器注册名；为空绘制标准表头 |
 | cellEditor | `cellEditor()` / `setCellEditor()` | 空 | 编辑器注册名；为空用单行编辑器 |
@@ -580,6 +581,20 @@ QTimer::singleShot(2000, this, [this]() {
 - 数据列复选框（`columnDef.setCheckbox(true)`）不参与级联，各行独立。
 
 信号：`rowExpandedChanged(int row, bool expanded)`（可见行号，批量操作不逐行发送）。
+
+### 7.18 单元格 tooltip（内容超出列宽时显示）
+
+在列定义上手动开启（`tooltipEnabled`，默认关闭）。开启后，悬停单元格约 0.7 秒（系统延迟）弹出 tooltip：
+
+- **显示条件（同时满足）**：列 `tooltipEnabled=true`；`textWrapMode` 为 `NoWrap` 或 `NoWrapTruncate`（`WordWrap` 自动换行完整展示、`NoWrapOverflow` 有意溢出，均不弹）；单元格文本按当前字体与单元格内边距测量后确实**超出列宽**被裁剪（列宽足够不弹；合并单元格按整块合并区域测量）；
+- 自动隐藏：鼠标点击、滚动、排序/过滤/数据刷新、离开控件；
+- 编辑中、加载遮罩显示期间、复选框列、内置辅助列（行号/复选框/拖拽手柄）不显示；
+- tooltip 窗口为 Qt 内置 `QToolTip`（无边框置顶窗口），跨平台定位与自动隐藏行为一致；可用 QSS `QToolTip { ... }` 定制外观，内容支持 HTML 富文本（自动识别）；
+- 自定义 `cellRenderer` 的列按默认文本渲染器的几何约定近似判定截断。
+
+| 接口 | 说明 |
+|---|---|
+| `void setCellTooltipTextCallback(const std::function<QString(const AgGridModel *, int row, int column, const QString &cellText)> &callback)` | tooltip 内容回调：在截断条件满足时，以返回值作为 tooltip 文本（支持 HTML）；返回空串表示该格不显示；未设置时显示单元格文本本身。截断判定不受回调影响 |
 
 ---
 

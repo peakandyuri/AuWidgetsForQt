@@ -13,6 +13,7 @@
 #include <QPalette>
 #include <QApplication>
 #include <QToolTip>
+#include <QHelpEvent>
 #include <QClipboard>
 #include <QLabel>
 #include <QTimer>
@@ -146,12 +147,14 @@ AgGridWidget::AgGridWidget(QWidget *parent)
 
     connect(m_hScrollBar, &QScrollBar::valueChanged, this, [this](int value) {
         m_xOffset = value;
+        QToolTip::hideText();   // 滚动后 tooltip 指向的行列已移动，直接隐藏
         updateEditorGeometry();
         update();
         emit horizontalScrollChanged(value);
     });
     connect(m_vScrollBar, &QScrollBar::valueChanged, this, [this](int value) {
         m_yOffset = value;
+        QToolTip::hideText();
         refreshAutoFitColumns();
         updateEditorGeometry();
         update();
@@ -1658,6 +1661,7 @@ void AgGridWidget::connectModel()
         emit columnWidthsChanged();
     });
     connect(m_model, &AgGridModel::layoutChanged, this, [this]() {
+        QToolTip::hideText();   // 排序/过滤/移动行后悬停处内容已变化，隐藏失效的 tooltip
         if (m_activeEditor)
             closeEditor(false);
         // 合并区域按可见行坐标存储；排序/过滤/移动行会改变可见行对应的数据，
@@ -3888,6 +3892,11 @@ void AgGridWidget::setCellEditableCallback(const std::function<bool(const AgGrid
     m_cellEditableCallback = callback;
 }
 
+void AgGridWidget::setCellTooltipTextCallback(const std::function<QString(const AgGridModel *, int, int, const QString &)> &callback)
+{
+    m_cellTooltipTextCallback = callback;
+}
+
 bool AgGridWidget::isCellEditable(int row, int column) const
 {
     if (!m_model || row < 0 || row >= m_model->rowCount()
@@ -3988,6 +3997,57 @@ void AgGridWidget::clearEditError()
 
     m_activeEditor->setStyleSheet(QString());
     QToolTip::hideText();
+}
+
+QString AgGridWidget::cellTooltipText(const QPoint &pos) const
+{
+    if (!m_model || m_loading || m_activeEditor)
+        return QString();
+
+    // 悬停在滚动条等子控件上时不显示（childAt 无子控件时返回 nullptr）
+    if (childAt(pos))
+        return QString();
+
+    // cellAtPosition 约定：x = 列（内置辅助列为负值编号），y = 行
+    const QPoint cell = cellAtPosition(pos);
+    const int row = cell.y();
+    const int column = cell.x();
+    if (row < 0 || column < 0)
+        return QString();
+
+    const AgColumnDef def = m_model->columnDefAt(column);
+    // 仅 NoWrap / NoWrapTruncate 存在"内容超出列宽被裁剪"的语义：
+    // WordWrap 自动换行完整展示，NoWrapOverflow 有意溢出到相邻单元格，均不弹
+    if (!def.isTooltipEnabled() || def.isCheckbox()
+        || (def.textWrapMode() != AgColumnDef::TextWrapMode::NoWrap
+            && def.textWrapMode() != AgColumnDef::TextWrapMode::NoWrapTruncate))
+        return QString();
+
+    const QString text = m_model->cellValue(row, column).toString();
+    if (text.isEmpty())
+        return QString();
+
+    // 与默认渲染器的文本矩形保持同一几何约定：左右内边距 + 树形首列缩进/箭头占位。
+    // cellRect 对合并单元格返回整块合并矩形，与锚点按合并区域绘制的宽度一致。
+    const QRect rect = cellRect(row, column);
+    const int hPadding = m_style->integer(AgGridStyle::CellHorizontalPadding, m_model, row, column);
+    int treeLeading = 0;
+    const int treeCol = isTreeMode() ? treeColumn() : -1;
+    if (column == treeCol) {
+        const int originalRow = m_model->originalRowForVisibleRow(row);
+        if (originalRow >= 0)
+            treeLeading = treeLeadingWidth(m_model->rowDepth(originalRow));
+    }
+
+    QFont font = m_style->font(m_model, row, column);
+    if (font == QFont())
+        font = this->font();
+    if (QFontMetrics(font).horizontalAdvance(text) <= rect.width() - 2 * hPadding - treeLeading)
+        return QString();
+
+    if (m_cellTooltipTextCallback)
+        return m_cellTooltipTextCallback(m_model, row, column, text);
+    return text;
 }
 
 void AgGridWidget::copySelectedCell()
@@ -5329,6 +5389,21 @@ void AgGridWidget::keyPressEvent(QKeyEvent *event)
     }
 
     QWidget::keyPressEvent(event);
+}
+
+bool AgGridWidget::event(QEvent *event)
+{
+    // 列 tooltipEnabled=true 且内容超出列宽的单元格：悬停由 Qt 按系统延迟
+    // 派发 ToolTip 事件，此处统一经 cellTooltipText 裁决后交给 QToolTip 显示
+    // （QToolTip 自身即为无边框置顶窗口，定位与点击/按键/失焦自动隐藏跨平台一致）。
+    if (event->type() == QEvent::ToolTip) {
+        const QHelpEvent *helpEvent = static_cast<QHelpEvent *>(event);
+        const QString text = cellTooltipText(helpEvent->pos());
+        if (!text.isEmpty())
+            QToolTip::showText(helpEvent->globalPos(), text, this);
+        return true;
+    }
+    return QWidget::event(event);
 }
 
 bool AgGridWidget::eventFilter(QObject *watched, QEvent *event)

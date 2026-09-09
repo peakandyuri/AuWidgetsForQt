@@ -250,6 +250,11 @@ public:
     /// 动态可编辑回调：在列 editable=true 的基础上按 (row, column) 最终裁决是否可编辑。
     void setCellEditableCallback(const std::function<bool(const AgGridModel *, int, int)> &callback);
 
+    /// 单元格 tooltip 内容回调：列 tooltipEnabled=true 且内容超出列宽被裁剪时，
+    /// 以返回值作为 tooltip 文本（支持 HTML 富文本）；返回空串表示该格不显示。
+    /// 未设置回调时显示单元格文本本身。截断判定不受回调影响。
+    void setCellTooltipTextCallback(const std::function<QString(const AgGridModel *, int, int, const QString &)> &callback);
+
     // 行拖拽排序
     /// 开启行拖拽重排（显示拖拽手柄列）。
     void setRowDragEnabled(bool enabled);
@@ -356,6 +361,7 @@ protected:
     void focusInEvent(QFocusEvent *event) override;
     void focusOutEvent(QFocusEvent *event) override;
     void contextMenuEvent(QContextMenuEvent *event) override;
+    bool event(QEvent *event) override;
     bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
@@ -623,6 +629,10 @@ private:
     bool tryFinishCurrentEdit(bool focusOut = false);
     void showEditError(const QString &message);
     void clearEditError();
+    /// 计算 pos 处悬停单元格的 tooltip 文本（空串 = 不显示）。
+    /// 仅列 tooltipEnabled=true 且内容超出列宽被裁剪时返回文本，
+    /// 截断判定的几何约定与默认渲染器一致（左右内边距 + 树形首列缩进/箭头占位）。
+    QString cellTooltipText(const QPoint &pos) const;
     /// Ctrl+C 复制当前选中格（内容来自渲染器 copyContent）。
     void copySelectedCell();
 
@@ -723,6 +733,7 @@ private:
     QHash<QString, QSharedPointer<AgCellEditor>> m_cellEditors;  ///< 注册的编辑器
     QSharedPointer<AgCellEditValidator> m_cellEditValidator;     ///< 编辑提交校验器
     std::function<bool(const AgGridModel *, int, int)> m_cellEditableCallback;  ///< 动态可编辑回调
+    std::function<QString(const AgGridModel *, int, int, const QString &)> m_cellTooltipTextCallback;  ///< tooltip 内容回调
     std::function<bool(const AgGridModel *, int)> m_rowCheckableCallback;       ///< 行可选回调
     QWidget *m_activeEditor;                 ///< 当前编辑器控件
     QSharedPointer<AgCellEditor> m_activeEditorImpl;             ///< 当前编辑器实现

@@ -17,7 +17,7 @@
  *
  * 默认值速查：
  *  - width=120，minWidth=40，maxWidth=0（不限制），widthMode=Fixed，flexWeight=1
- *  - sortable=false，editable=false，filterable=false，resizable=true，visible=true
+ *  - sortable=false，editable=false，filterable=false，resizable=true，visible=true，tooltipEnabled=false
  *  - pinMode=None，alignment=AlignLeft|AlignVCenter，textWrapMode=NoWrap
  *  - checkbox=false，headerAlignment=AlignCenter，表头字体/前景色未设置（使用样式默认）
  *
@@ -115,6 +115,13 @@ public:
     PinMode pinMode() const;
     void setPinMode(PinMode mode);
 
+    /// 悬停 tooltip 开关（默认关闭）。开启后单元格内容超出列宽被裁剪时，
+    /// 悬停约 0.7 秒显示完整内容；仅 textWrapMode 为 NoWrap / NoWrapTruncate 的列生效
+    /// （WordWrap 自动换行完整展示、NoWrapOverflow 有意溢出，均不弹）。
+    /// tooltip 内容可通过 AgGridWidget::setCellTooltipTextCallback 定制。
+    bool isTooltipEnabled() const;
+    void setTooltipEnabled(bool enabled);
+
     // ---- 插拔组件（按注册名引用）----
 
     /// 单元格渲染器注册名；空 = 默认文本渲染器，checkbox 列强制内置复选框渲染器。
@@ -186,6 +193,7 @@ private:
     bool m_filterable;
     bool m_visible;
     bool m_resizable;
+    bool m_tooltipEnabled;
     PinMode m_pinMode;
     QString m_cellRenderer;
     QString m_headerRenderer;
