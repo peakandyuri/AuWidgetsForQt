@@ -13,6 +13,7 @@
 #include <QWidget>
 #include <QHash>
 #include <QSet>
+#include <QImage>
 #include <QSharedPointer>
 #include <QPainterPath>
 #include <QVariantAnimation>
@@ -29,6 +30,7 @@ class QTimer;
  *  - 虚拟化渲染：仅绘制可视区及缓冲区内的行，支持十万行级数据；
  *  - 多级表头（列定义树）、列停靠（左/右 Pin）、列拖拽排序与显隐动画；
  *  - 单列排序 / 多规则逻辑排序 / 自定义过滤回调；
+ *  - 行选中模式（单选 / 多选 / 不可选中）：多选支持点击切换与 Ctrl+点击累积；
  *  - 单元格编辑（可插拔编辑器）+ 提交校验器；
  *  - 单元格合并（setSpan，语义参考 QTableView::setSpan）；
  *  - 内置行号列、复选框列、行拖拽手柄列，支持行拖拽重排；
@@ -74,10 +76,24 @@ public:
     /// 默认行高（样式键 RowHeight）。启用自动换行的行可能高于该值。
     int rowHeight() const;
 
-    /// 当前选中行（可见行号）；无选中为 -1。
+    /// 当前选中行（可见行号）；多选模式为最后点击的行（锚点）；无选中为 -1。
     int selectedRow() const;
     /// 当前选中列（叶子列索引）；无选中为 -1。
     int selectedColumn() const;
+
+    /// 行选中模式。
+    enum class SelectionMode {
+        Single,    ///< 单选（默认）：点击选中一行；Ctrl+点击已选中行可取消选中
+        Multiple,  ///< 多选：点击 / Ctrl+点击均切换该行选中（点击即选中，再点击取消，可累积多行）
+        None       ///< 不可选中：鼠标 / 键盘 / 选中 API 均不改变选中状态
+    };
+    Q_ENUM(SelectionMode)
+
+    /// 设置行选中模式（默认单选）。切换为不可选中时清空现有选中；
+    /// 切换为单选时仅保留最后点击的行。
+    void setSelectionMode(SelectionMode mode);
+    /// 当前行选中模式。
+    SelectionMode selectionMode() const;
 
     /// 可视区上下额外渲染的缓冲行数（默认 3）：滚动更平滑，但过大影响绘制性能。
     int visibleRowBuffer() const;
@@ -161,12 +177,22 @@ public:
     /// 查询列可见性。
     bool isColumnVisible(int column) const;
 
-    /// 选中某行（保留当前列选择）。
+    /// 选中某行（保留当前列选择）。多选模式下替换为仅选中该行；不可选中模式下无效。
     void selectRow(int row);
-    /// 选中单元格；落在合并覆盖格上时自动映射到合并锚点。
+    /// 选中单元格；落在合并覆盖格上时自动映射到合并锚点。多选模式下替换为仅选中该行；
+    /// 不可选中模式下无效。
     void selectCell(int row, int column);
+    /// 多选模式：整体替换选中行集合（可见行号）；单选模式等价 selectRow(其中最小行号)；
+    /// 不可选中模式下无效。不改变滚动位置。
+    void selectRows(const QSet<int> &rows);
     /// 取消选中。
     void clearSelection();
+    /// 全部选中行（可见行号）；单选模式返回当前行；不可选中模式返回空集。
+    QSet<int> selectedRows() const;
+    /// 全部选中行（原始行号，跨排序过滤稳定，持久化推荐使用）。
+    QSet<int> selectedOriginalRows() const;
+    /// 某可见行是否处于选中状态（多选模式包含 Ctrl 累积选中的行）。
+    bool isRowSelected(int row) const;
     /// 布局变化（排序/过滤/移动行）后按记录的原始行恢复选中（框架内部自动调用）。
     void syncSelectionAfterLayoutChange();
 
@@ -255,6 +281,13 @@ public:
     /// 未设置回调时显示单元格文本本身。截断判定不受回调影响。
     void setCellTooltipTextCallback(const std::function<QString(const AgGridModel *, int, int, const QString &)> &callback);
 
+    // 网格线
+    /// 显示 / 隐藏数据单元格左右（列方向）边框线（默认显示）。隐藏后 body 区的数据列
+    /// （含合并单元格）只保留上下（行方向）边框线；表格自带的行号列 / 复选框列 /
+    /// 拖拽手柄列仍绘制完整边框，表头边框与停靠区分隔线也不受影响。
+    void setVerticalGridLinesVisible(bool visible);
+    bool isVerticalGridLinesVisible() const;
+
     // 行拖拽排序
     /// 开启行拖拽重排（显示拖拽手柄列）。
     void setRowDragEnabled(bool enabled);
@@ -275,6 +308,21 @@ public:
     void setLoadingText(const QString &text);
     /// 当前加载文字；null 表示跟随样式键 LoadingText。
     QString loadingText() const;
+
+    // 数据变化动画
+    /// 数据变化动画总开关（默认开启），覆盖两类动画：
+    /// 排序 / 过滤的行位移动画（行从旧布局位置移向新位置，出视口 / 进视口按方向队列出入），
+    /// 以及重设数据（setRowData / setTreeData / clear）的切换动画
+    /// （旧内容整体上移出场、新内容自视口下方移入）。时长见
+    /// setSortAnimationDuration() / setDataResetAnimationDuration()。
+    void setDataAnimationEnabled(bool enabled);
+    bool isDataAnimationEnabled() const;
+    /// 排序 / 过滤位移动画时长（毫秒，默认 100）。设为 0 关闭位移动画（立即生效）。
+    void setSortAnimationDuration(int ms);
+    int sortAnimationDuration() const;
+    /// 重设数据切换动画时长（毫秒，默认 200）。设为 0 关闭切换动画（立即生效）。
+    void setDataResetAnimationDuration(int ms);
+    int dataResetAnimationDuration() const;
 
     // 树形表格（模型经 setTreeData 载入层级数据后自动生效）
     /// 当前是否处于树形模式。
@@ -527,6 +575,17 @@ private:
     /// 行移动后同步勾选集合（按原始行号迁移被拖动行的勾选）。
     void updateCheckedRowsAfterMove(const QVector<int> &draggedOriginalRows, int targetOriginalIndex);
 
+    // 数据变化动画：排序 FLIP（行按旧布局位置 → 新布局位置位移）+ 重设数据切换
+    /// 快照当前 可见行→原始行 顺序与行偏移，作为下一次布局变化的动画起点。
+    void captureLayoutSnapshot();
+    /// 布局变化（排序 / 过滤）后按快照计算各行位移并播放 200ms 位移动画；
+    /// 移出视口的行夹取到视口外沿退场，新进入视口的行从所属方向的外沿入场。
+    void startSortMoveAnimation();
+    void finishSortMoveAnimation();
+    /// 重设数据：旧内容快照整体上移出场，新内容自视口下方移入（200ms）。
+    void startDataResetAnimation();
+    void finishDataResetAnimation();
+
     void toggleSort(int column);
     void drawSortIndicator(QPainter *painter, const QRect &rect, Qt::SortOrder order) const;
     int headerColumnAt(int x) const;
@@ -621,6 +680,11 @@ private:
     bool findNextEditableCell(int &row, int &column, int dColumn) const;
     /// 方向键移动选中格；跳过隐藏列与合并覆盖格。
     void moveSelection(int dRow, int dColumn);
+    /// 按当前模式应用数据区点击的行选中裁决（多选模式下点击与 Ctrl+点击均为切换该行）。
+    bool applyRowSelectionClick(int row, int column, bool ctrl);
+    /// 按当前模式应用复选框点击（内置复选框列 / 数据列复选框单元格）的行选中裁决；
+    /// 多选模式为切换加入 / 移出，withColumn 为 true 时同时把列作为选中锚点。
+    bool applyCheckboxClickSelection(int row, int column, bool withColumn);
     void ensureCellVisible(int row, int column);
     int targetVerticalOffset(int row, ScrollHint hint, int spanBottomRow = -1) const;
     int targetHorizontalOffset(int column, ScrollHint hint, int spanRightColumn = -1) const;
@@ -703,6 +767,7 @@ private:
 
     bool m_showRowNumberColumn;              ///< 是否显示行号列
     bool m_showCheckboxColumn;               ///< 是否显示复选框列
+    bool m_verticalGridLinesVisible;         ///< 是否绘制单元格左右（列方向）边框线
     QSet<int> m_checkedOriginalRows;         ///< 勾选行集合（原始行号，跨排序过滤稳定）
     QSet<int> m_partialOriginalRows;         ///< 半选行集合（原始行号；树形模式父子聚合）
 
@@ -712,6 +777,8 @@ private:
     QList<AgSortRule> m_sortRules;           ///< 多规则排序
 
     int m_selectedOriginalRow;               ///< 选中行对应的原始行号（布局变化后恢复选中用）
+    SelectionMode m_selectionMode;           ///< 行选中模式（单选 / 多选 / 不可选中）
+    QSet<int> m_selectedOriginalRows;        ///< 多选选中行集合（原始行号，跨排序过滤稳定）
 
     AgGridScrollBar *m_hScrollBar;           ///< 自绘水平滚动条
     AgGridScrollBar *m_vScrollBar;           ///< 自绘垂直滚动条
@@ -820,6 +887,28 @@ private:
     int m_loadingSpinnerAngle;               ///< 圆环旋转角（度）
     QTimer *m_loadingTimer;                  ///< 圆环旋转动画定时器
     QVariantAnimation *m_loadingAnimation;   ///< 遮罩淡入/淡出动画驱动
+
+    // 数据变化动画（排序 FLIP / 重设数据切换）
+    bool m_dataAnimationEnabled;             ///< 数据变化动画总开关（默认开启）
+    int m_sortAnimationDuration;             ///< 排序位移动画时长（毫秒，默认 100）
+    int m_resetAnimationDuration;            ///< 重设数据切换动画时长（毫秒，默认 200）
+    QVector<int> m_animLastOrder;            ///< 布局稳定后的可见行→原始行快照（动画起点）
+    QVector<int> m_animLastOffsets;          ///< 快照对应的行偏移表（size = rowCount + 1）
+    struct DataMoveAnimationEntry {
+        int visibleRow;                      ///< 新可见行号
+        int startOffset;                     ///< 动画起点 y（旧布局位置，已夹取到视口外沿）
+        int endOffset;                       ///< 动画终点 y（新布局位置）
+    };
+    QVector<DataMoveAnimationEntry> m_dataAnimationEntries;  ///< 排序位移动画条目
+    qreal m_dataAnimationProgress;           ///< 排序位移动画进度 0~1
+    QVariantAnimation *m_dataAnimation;      ///< 排序位移动画驱动
+
+    QImage m_dataResetSnapshot;              ///< 重设数据前的 body 内容快照（像素）
+    bool m_dataResetPending;                 ///< 已捕获快照，待模型应用后开演
+    bool m_dataResetAnimating;               ///< 切换动画进行中
+    qreal m_dataResetProgress;               ///< 切换动画进度 0~1
+    int m_dataResetSlideHeight;              ///< 切换动画滑动距离（开演时的 body 高度）
+    QVariantAnimation *m_dataResetAnimation; ///< 切换动画驱动
 
     static constexpr int kResizeHandleTolerance = 4;  ///< 列宽调整热区容差（像素）
 };

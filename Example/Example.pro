@@ -31,6 +31,8 @@ SOURCES += \
     demos/SyncDemoWindow.cpp \
     demos/StyleDemoWindow.cpp \
     demos/LoadingDemoWindow.cpp \
+    demos/RowHeightDemoWindow.cpp \
+    demos/DataAnimationDemoWindow.cpp \
     CustomAgGrid/ButtonRenderer.cpp \
     CustomAgGrid/HeaderButtonRenderer.cpp \
     CustomAgGrid/HeaderCheckBoxRenderer.cpp \
@@ -52,6 +54,8 @@ HEADERS += \
     demos/SyncDemoWindow.h \
     demos/StyleDemoWindow.h \
     demos/LoadingDemoWindow.h \
+    demos/RowHeightDemoWindow.h \
+    demos/DataAnimationDemoWindow.h \
     CustomAgGrid/ButtonRenderer.h \
     CustomAgGrid/HeaderButtonRenderer.h \
     CustomAgGrid/HeaderCheckBoxRenderer.h \

@@ -192,6 +192,9 @@ public:
 signals:
     /// 单元格数据变化（可见行坐标，闭区间范围）。
     void dataChanged(int topRow, int leftColumn, int bottomRow, int rightColumn);
+    /// 整体重设行数据之前发出（setRowData / setTreeData / clear）。
+    /// 此时旧数据仍可读取，视图可据此捕获数据切换动画所需的旧内容快照。
+    void rowsAboutToReset();
     /// 可见行集合内容变化（数据替换、过滤、排序、移动行）。
     void rowsChanged();
     /// 行拖拽移动完成（原始行号）。

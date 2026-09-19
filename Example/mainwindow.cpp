@@ -7,6 +7,7 @@
 #include "HeaderCheckDemoWindow.h"
 #include "LoadingDemoWindow.h"
 #include "RowDragDemoWindow.h"
+#include "RowHeightDemoWindow.h"
 #include "ScrollDemoWindow.h"
 #include "SelectionCheckDemoWindow.h"
 #include "SortFilterDemoWindow.h"
@@ -14,6 +15,7 @@
 #include "StyleDemoWindow.h"
 #include "SyncDemoWindow.h"
 #include "TreeDemoWindow.h"
+#include "DataAnimationDemoWindow.h"
 
 #include <QGridLayout>
 #include <QLabel>
@@ -64,6 +66,8 @@ MainWindow::MainWindow(QWidget *parent)
           [this]() { return static_cast<QDialog *>(new ColumnDemoWindow(this)); } },
         { "rowdrag", QStringLiteral(u"行拖拽重排\n整组拖动 / 动画 / 自动滚动"),
           [this]() { return static_cast<QDialog *>(new RowDragDemoWindow(this)); } },
+        { "rowheight", QStringLiteral(u"自适应行高\nWordWrap 自动换行 / 行高跟随内容与列宽"),
+          [this]() { return static_cast<QDialog *>(new RowHeightDemoWindow(this)); } },
         { "span", QStringLiteral(u"合并单元格\n行列合并 / 交互语义"),
           [this]() { return static_cast<QDialog *>(new SpanDemoWindow(this)); } },
         { "scroll", QStringLiteral(u"大数据量与定位\n10 万行虚拟化 / scrollToRow"),
@@ -76,6 +80,8 @@ MainWindow::MainWindow(QWidget *parent)
           [this]() { return static_cast<QDialog *>(new StyleDemoWindow(this)); } },
         { "loading", QStringLiteral(u"加载遮罩\nsetLoading / 模拟异步请求"),
           [this]() { return static_cast<QDialog *>(new LoadingDemoWindow(this)); } },
+        { "dataanimation", QStringLiteral(u"数据切换动画\n排序位移 / 重设数据切换（200ms）"),
+          [this]() { return static_cast<QDialog *>(new DataAnimationDemoWindow(this)); } },
     };
 
     const int columns = 3;

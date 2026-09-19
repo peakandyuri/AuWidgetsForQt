@@ -33,6 +33,8 @@
 - **列停靠（Pin）**：列可停靠到左侧 / 右侧，滚动时保持可见
 - **排序 / 过滤**：单列排序、多规则逻辑排序、自定义过滤回调
 - **单元格编辑**：双击 / 回车 / 直接输入字符进入编辑；内置单行、多行、下拉三种编辑器；支持自定义编辑器与提交校验
+- **行选中模式**：单选（默认）/ 多选 / 不可选中三种模式；多选支持点击切换与 Ctrl+点击累积
+- **数据切换动画**：排序 / 过滤时行从旧位置移向新位置（默认 100ms）；重设数据时旧内容上移出场、新内容下移入场（默认 200ms）；时长可调，0 关闭
 - **单元格合并**：类似 `QTableView::setSpan` 的行列合并能力
 - **内置辅助列**：可选的行号列、复选框列、行拖拽手柄列
 - **行拖拽排序**：拖动手柄整行拖动重排，带动画与自动滚动
@@ -152,10 +154,11 @@ m_rowData（可见行，索引称 visibleRow，通过 m_visibleToOriginal / m_or
 
 | 操作 | 行为 |
 |---|---|
-| 单击单元格 | 选中该格，发出 `cellClicked`；Ctrl+单击取消选中 |
+| 单击单元格 | 按选中模式更新选中（见 7.9），发出 `cellClicked` |
+| Ctrl+单击 | 多选模式：切换该行选中（与单击一致）；单选模式：点击已选中行时取消选中 |
 | 双击 / Enter / F2 | 开始编辑（可编辑列） |
 | 直接输入可打印字符 | 以该字符为初始值开始编辑 |
-| 方向键 | 移动选中格（自动跳过隐藏列与合并覆盖格） |
+| 方向键 | 移动选中格（自动跳过隐藏列与合并覆盖格；不可选中模式无效） |
 | Tab / Backtab | 跳到下一个 / 上一个可编辑格 |
 | Ctrl+C | 复制当前选中格内容 |
 | Space | 复选框列 / 复选框单元格切换勾选 |
@@ -243,6 +246,7 @@ m_rowData（可见行，索引称 visibleRow，通过 m_visibleToOriginal / m_or
 | 信号 | 触发时机 |
 |---|---|
 | `dataChanged(topRow, leftColumn, bottomRow, rightColumn)` | `setCellValue` 成功后（可见行坐标） |
+| `rowsAboutToReset()` | 整体重设行数据**之前**发出（setRowData / setTreeData / clear），旧数据仍可读取 |
 | `rowsChanged()` | 可见行集合内容变化（数据、过滤、排序、移动） |
 | `rowsMoved(fromOriginalIndices, targetOriginalIndex)` | `moveRows` 完成后 |
 | `columnsChanged()` | 列定义被替换 |
@@ -318,6 +322,8 @@ enum class TextWrapMode   { NoWrap, NoWrapTruncate, NoWrapOverflow, WordWrap };
 
 - `NoWrap`：单行裁剪；`NoWrapTruncate`：单行省略号；`NoWrapOverflow`：单行溢出显示
 - `WordWrap`：自动换行，行高按内容自适应（渲染器 `preferredHeight` 参与行高计算）
+
+自适应行高：`WordWrap` 列按当前列宽换行，行高 = max(样式键 `RowHeight`, 各列 `preferredHeight` 测量结果)；列宽变化、窗口尺寸变化、滚动条显隐、列显隐、排序 / 过滤后行高缓存自动失效重算。完整示例见 Example 启动器"自适应行高"窗口。
 
 ### 6.3 成员函数与默认值
 
@@ -451,13 +457,51 @@ enum class ScrollHint { EnsureVisible, PositionTop, PositionCenter, PositionBott
 
 ### 7.9 选择
 
+```cpp
+// 选中模式（默认单选）
+enum class SelectionMode {
+    Single,    // 单选（默认）：点击选中一行；Ctrl+点击已选中行可取消选中
+    Multiple,  // 多选：点击 / Ctrl+点击均切换该行选中（点击即选中，再点击取消）
+    None       // 不可选中：鼠标 / 键盘 / 选中 API 均不改变选中状态
+};
+void setSelectionMode(SelectionMode mode);
+SelectionMode selectionMode() const;
+```
+
+各模式交互语义：
+
+| 模式 | 单击 | Ctrl+单击 | 复选框列点击 | 选中 API（selectRow / selectCell / selectRows） |
+|---|---|---|---|---|
+| 单选（默认） | 选中该行 | 点击已选中行取消，否则选中 | 选中该行 | 选中指定行 |
+| 多选 | 切换该行选中：未选中则选中（其它已选行保持），已选中则取消 | 同单击：切换该行选中（按住 Ctrl 点击其它行累积选中，再点击取消） | 切换加入 / 移出 | `selectRows` 整体替换选中集合 |
+| 不可选中 | 不改变选中 | 不改变选中 | 仅切换勾选 | 无效 |
+
+多选模式下两种多选方式并存：**纯点击累积**——点击行即选中，再点击同一行取消，连续点击多行可累积；**Ctrl+点击累积**——点击选中一行后，按住 Ctrl 点击其它行加入选中，Ctrl+再点击取消。
+
+多选模式的选中集合按**原始行号**存储，排序 / 过滤 / 行拖拽后依然稳定；被过滤出可视区的行保持选中（恢复可见后仍高亮）。
+
 | 函数 | 说明 |
 |---|---|
-| `void selectRow(int row)` | 选中行（保留当前列） |
-| `void selectCell(int row, int column)` | 选中单元格；落在合并覆盖格上时自动映射到锚点 |
-| `void clearSelection()` | 取消选中 |
+| `void selectRow(int row)` | 选中行（保留当前列）；多选模式下替换为仅选中该行 |
+| `void selectCell(int row, int column)` | 选中单元格；落在合并覆盖格上时自动映射到锚点；多选模式下替换为仅选中该行 |
+| `void selectRows(const QSet<int> &rows)` | 多选模式：整体替换选中集合（可见行号）；单选模式等价选中其中最小行号；不改变滚动位置 |
+| `void clearSelection()` | 取消选中（清空多选集合） |
+| `QSet<int> selectedRows() const` | 全部选中行（可见行号；单选模式返回当前行） |
+| `QSet<int> selectedOriginalRows() const` | 全部选中行（**原始行号**，跨排序过滤稳定，推荐持久化时使用） |
+| `bool isRowSelected(int row) const` | 某可见行是否处于选中状态 |
+| `int selectedRow() const` / `int selectedColumn() const` | 当前锚点格（最后点击处，-1 表示无；焦点框与键盘导航、Ctrl+C 以它为准） |
 | `void syncSelectionAfterLayoutChange()` | 布局变化后按原始行恢复选中（内部自动调用） |
-| `int selectedRow() const` / `int selectedColumn() const` | 当前选中（-1 表示无） |
+
+示例：
+
+```cpp
+grid->setSelectionMode(AgGridWidget::SelectionMode::Multiple);   // 开启多选
+connect(grid, &AgGridWidget::selectionChanged, [=]() {
+    qDebug() << grid->selectedOriginalRows();   // 原始行号，跨排序过滤稳定
+});
+grid->selectRows(QSet<int>{2, 4, 6});            // 程序化多选
+grid->setSelectionMode(AgGridWidget::SelectionMode::None);       // 不可选中（清空现有选中）
+```
 
 信号：`selectionChanged()`。
 
@@ -595,6 +639,48 @@ QTimer::singleShot(2000, this, [this]() {
 | 接口 | 说明 |
 |---|---|
 | `void setCellTooltipTextCallback(const std::function<QString(const AgGridModel *, int row, int column, const QString &cellText)> &callback)` | tooltip 内容回调：在截断条件满足时，以返回值作为 tooltip 文本（支持 HTML）；返回空串表示该格不显示；未设置时显示单元格文本本身。截断判定不受回调影响 |
+
+### 7.19 数据变化动画
+
+控件在两类数据变化时自动播放过渡动画，时长可调（排序默认 100ms、重设数据默认 200ms，设为 0 关闭对应动画），可用 `setDataAnimationEnabled(bool)` 整体关闭：
+
+**1) 排序 / 过滤 —— 行位移动画**。以当前可视区域为基准（布局快照 = 上一次稳定后的可见行顺序与行偏移）：
+
+- 可视数据的新位置仍在视口内：直接从旧位置滑向新位置；
+- 可视数据移出视口：向新位置方向移出视口；同一方向的多行按"距边缘远近"排成间距为一行的队列依次退出，保持行间相对间距，不会在边缘叠成色块；
+- 视口外数据变为可见：从其所属方向的外沿按同样的队列方式移入（原在上方则从顶部进入，原在下方则从底部进入）；
+- 起止位置都在视口外的行（跨视口移动）不参与动画，保持不可见；被过滤掉的行瞬时消失（无绘制载体）。
+
+触发来源：表头点击排序、`sort()` / `setSortRules()` / 过滤回调变化等一切引起可见行序变化的 `layoutChanged`。树形模式不播放（展开 / 折叠有自己的动画），行拖拽重排使用自己的动画。
+
+**2) 重设数据 —— 两段式切换动画**。模型在 `setRowData()` / `setTreeData()` / `clear()` 应用新数据前发出 `rowsAboutToReset()`，控件捕获旧内容像素快照；新数据应用后分两段播放（总时长默认 200ms，前后各半）：
+
+- **前半程（离场）**：旧内容整体上移移出视口，视口短暂留空；
+- **后半程（入场）**：新内容自视口上方下移涌入，落位到最终状态。
+
+控件不可见时不播放。
+
+| 接口 | 说明 |
+|---|---|
+| `void setDataAnimationEnabled(bool enabled)` | 数据变化动画总开关（默认开启）；关闭后立即结束进行中的动画并停止快照捕获 |
+| `bool isDataAnimationEnabled() const` | 查询开关状态 |
+| `void setSortAnimationDuration(int ms)` / `int sortAnimationDuration() const` | 排序 / 过滤位移动画时长（默认 100ms；0 = 关闭位移动画） |
+| `void setDataResetAnimationDuration(int ms)` / `int dataResetAnimationDuration() const` | 重设数据切换动画总时长（默认 200ms，离场 / 入场各占一半；0 = 关闭切换动画） |
+
+示例见 Example 启动器"数据切换动画"窗口。
+
+### 7.20 网格线：隐藏列方向（左右）边框
+
+```cpp
+void setVerticalGridLinesVisible(bool visible);   // 默认显示
+bool isVerticalGridLinesVisible() const;
+```
+
+隐藏后 body 区的**数据列**（含合并单元格）只绘制上下（行方向）边框线，左右分隔线消失，呈现纯行分隔样式。表格自带的**行号列 / 复选框列 / 拖拽手柄列始终绘制完整边框**（不受开关影响），表头边框与底部收尾线同样不变。
+
+**停靠边界不受开关影响**：存在停靠列时，停靠区与 body 区之间的交界竖线始终绘制（使用表头边框色 `HeaderBorderColor`，贯穿表头与 body，滚动时跟随停靠列的粘性位置）；同侧多列停靠之间的分隔线则跟随本开关隐藏。
+
+示例见 Example 启动器"样式与外观"窗口的"显示列边框线"开关。
 
 ---
 

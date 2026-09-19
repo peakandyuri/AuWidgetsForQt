@@ -30,6 +30,8 @@ const QVector<AgColumnDef> &AgGridModel::topLevelColumnDefs() const
 
 void AgGridModel::setRowData(const QVector<QVariantMap> &rows)
 {
+    emit rowsAboutToReset();
+
     // 扁平入口：退出树形模式
     m_treeMode = false;
     m_treeRoots.clear();
@@ -46,6 +48,8 @@ void AgGridModel::setRowData(const QVector<QVariantMap> &rows)
 
 void AgGridModel::setTreeData(const QVector<AgTreeRow> &roots)
 {
+    emit rowsAboutToReset();
+
     m_treeMode = true;
     m_treeRoots = roots;
     flattenTreeRows();
@@ -415,6 +419,8 @@ AgColumnDef::PinMode AgGridModel::columnPinMode(int column) const
 
 void AgGridModel::clear()
 {
+    emit rowsAboutToReset();
+
     m_rowData.clear();
     m_originalRowData.clear();
     m_visibleToOriginal.clear();

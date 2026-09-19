@@ -5,6 +5,7 @@
 #include "AgGridWidget.h"
 #include "DemoStyle.h"
 
+#include <QCheckBox>
 #include <QHBoxLayout>
 #include <QPushButton>
 #include <QVBoxLayout>
@@ -71,14 +72,20 @@ StyleDemoWindow::StyleDemoWindow(QWidget *parent)
     QHBoxLayout *styleRow = new QHBoxLayout;
     QPushButton *demoStyleBtn = new QPushButton(QStringLiteral(u"应用 DemoStyle（本表独立样式）"), this);
     QPushButton *defaultStyleBtn = new QPushButton(QStringLiteral(u"恢复默认样式"), this);
+    QCheckBox *vLinesBox = new QCheckBox(QStringLiteral(u"显示列边框线（左右）"), this);
+    vLinesBox->setChecked(true);
     styleRow->addWidget(demoStyleBtn);
     styleRow->addWidget(defaultStyleBtn);
+    styleRow->addWidget(vLinesBox);
     styleRow->addStretch(1);
     connect(demoStyleBtn, &QPushButton::clicked, this, [this]() {
         m_grid->setStyle(new DemoStyle());   // 独立样式：控件接管所有权
     });
     connect(defaultStyleBtn, &QPushButton::clicked, this, [this]() {
         m_grid->setStyle(AgGridStyle::globalStyle()->clone());
+    });
+    connect(vLinesBox, &QCheckBox::toggled, this, [this](bool checked) {
+        m_grid->setVerticalGridLinesVisible(checked);
     });
 
     m_contentLayout->addLayout(themeRow);
@@ -89,4 +96,5 @@ StyleDemoWindow::StyleDemoWindow(QWidget *parent)
     addNote("全局主题影响所有未显式 setStyle() 的示例窗口；独立样式只影响本表格。");
     addNote("DemoStyle 演示按行列上下文动态样式：第 7n 行加粗、col1 每 5 行标红、含 99 的格变绿等。");
     addNote("尺寸模式改变行高 / 表头高 / 字体 / 内边距等尺寸类样式键的默认值。");
+    addNote("取消勾选\"显示列边框线\"后，数据列只保留行方向（上下）边框；行号列 / 复选框列 / 手柄列仍带完整边框。");
 }

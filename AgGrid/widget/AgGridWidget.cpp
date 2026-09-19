@@ -24,6 +24,14 @@
 
 constexpr int AgGridWidget::kResizeHandleTolerance;
 
+// OutCubic 缓动：快出缓停（数据变化动画各阶段使用，接近 web 端过渡手感）
+static qreal agOutCubic(qreal t)
+{
+    t = qBound(0.0, t, 1.0);
+    const qreal u = 1.0 - t;
+    return 1.0 - u * u * u;
+}
+
 AgGridWidget::AgGridWidget(QWidget *parent)
     : QWidget(parent)
     , m_model(nullptr)
@@ -43,10 +51,12 @@ AgGridWidget::AgGridWidget(QWidget *parent)
     , m_rightPinnedWidth(0)
     , m_showRowNumberColumn(false)
     , m_showCheckboxColumn(false)
+    , m_verticalGridLinesVisible(true)
     , m_sortedColumn(-1)
     , m_sortOrder(Qt::AscendingOrder)
     , m_sortingEnabled(false)
     , m_selectedOriginalRow(-1)
+    , m_selectionMode(SelectionMode::Single)
     , m_hScrollBar(new AgGridScrollBar(Qt::Horizontal, this))
     , m_vScrollBar(new AgGridScrollBar(Qt::Vertical, this))
     , m_hScrollBarVisible(false)
@@ -109,6 +119,16 @@ AgGridWidget::AgGridWidget(QWidget *parent)
     , m_loadingSpinnerAngle(0)
     , m_loadingTimer(nullptr)
     , m_loadingAnimation(nullptr)
+    , m_dataAnimationEnabled(true)
+    , m_sortAnimationDuration(100)
+    , m_resetAnimationDuration(200)
+    , m_dataAnimationProgress(0.0)
+    , m_dataAnimation(nullptr)
+    , m_dataResetPending(false)
+    , m_dataResetAnimating(false)
+    , m_dataResetProgress(0.0)
+    , m_dataResetSlideHeight(0)
+    , m_dataResetAnimation(nullptr)
 {
     AgGridStyle::registerGlobalStyleObserver(this);
 
@@ -183,6 +203,10 @@ void AgGridWidget::setModel(AgGridModel *model)
     cancelColumnDrag();
     finishTreeAnimation();
     finishColumnVisibilityAnimation();
+    finishSortMoveAnimation();
+    finishDataResetAnimation();
+    m_dataResetPending = false;
+    m_dataResetSnapshot = QImage();
     m_model = model;
     connectModel();
     m_xOffset = 0;
@@ -199,12 +223,14 @@ void AgGridWidget::setModel(AgGridModel *model)
     m_selectedRow = -1;
     m_selectedColumn = -1;
     m_selectedOriginalRow = -1;
+    m_selectedOriginalRows.clear();
     m_hoverRow = -1;
     m_hoverColumn = -1;
     m_editRow = -1;
     m_editColumn = -1;
     m_activeEditor = nullptr;
     m_checkedOriginalRows.clear();
+    captureLayoutSnapshot();   // 建立布局基线：下一次排序 / 过滤据此播放位移动画
     updateScrollBars();
     update();
 }
@@ -705,7 +731,17 @@ void AgGridWidget::paintEvent(QPaintEvent * /*event*/)
     painter.setRenderHint(QPainter::Antialiasing, false);
 
     const QPair<int, int> bodyColRange = visibleColumnRange();
-    const QPair<int, int> rowRange = visibleRowRange();
+    QPair<int, int> rowRange = visibleRowRange();
+    // 排序 / 过滤位移动画：退场行的新可见索引在视口之外，把绘制范围扩展到这些行，
+    // 使它们能按插值位置画出“移出视口”的过程（进场行本就在可视范围内）
+    if (!m_dataAnimationEntries.isEmpty() && m_model) {
+        for (const DataMoveAnimationEntry &entry : m_dataAnimationEntries) {
+            rowRange.first = qMin(rowRange.first, entry.visibleRow);
+            rowRange.second = qMax(rowRange.second, entry.visibleRow);
+        }
+        rowRange.first = qMax(0, rowRange.first);
+        rowRange.second = qMin(m_model->rowCount() - 1, rowRange.second);
+    }
 
     drawHeader(&painter);
 
@@ -764,7 +800,9 @@ void AgGridWidget::paintEvent(QPaintEvent * /*event*/)
         if (gridLineColor.isValid()) {
             painter.save();
             const int rnW = rowNumberColumnWidth();
-            painter.setClipRect(0, headerHeight(), rnW, bodyHeight(), Qt::IntersectClip);
+            // 裁剪含右边界像素：drawRect 的右边线落在 x = rnW 处，
+            // 数据列竖线隐藏时该边线由本循环独立绘制
+            painter.setClipRect(0, headerHeight(), rnW + 1, bodyHeight(), Qt::IntersectClip);
             painter.setPen(gridLineColor);
             for (int row = rowRange.first; row <= rowRange.second; ++row) {
                 const int y = rowY(row);
@@ -774,6 +812,7 @@ void AgGridWidget::paintEvent(QPaintEvent * /*event*/)
                     painter.save();
                     painter.setOpacity(rowOpacity);
                 }
+                // 行号列始终画完整边框，不受列边框开关影响
                 painter.drawRect(0, y, rnW, h);
                 if (rowOpacity < 1.0)
                     painter.restore();
@@ -808,7 +847,8 @@ void AgGridWidget::paintEvent(QPaintEvent * /*event*/)
         const QColor gridLineColor = m_style->color(AgGridStyle::GridLineColor, m_model);
         if (gridLineColor.isValid()) {
             painter.save();
-            painter.setClipRect(fixedX, headerHeight(), fixedW, bodyHeight(), Qt::IntersectClip);
+            // 裁剪含右边界像素（同行号列：保证右边线在数据列竖线隐藏时仍由本循环绘制）
+            painter.setClipRect(fixedX, headerHeight(), fixedW + 1, bodyHeight(), Qt::IntersectClip);
             painter.setPen(gridLineColor);
             for (int row = rowRange.first; row <= rowRange.second; ++row) {
                 const int y = rowY(row);
@@ -818,6 +858,7 @@ void AgGridWidget::paintEvent(QPaintEvent * /*event*/)
                     painter.save();
                     painter.setOpacity(rowOpacity);
                 }
+                // 复选框 / 拖拽手柄列始终画完整边框，不受列边框开关影响
                 painter.drawRect(fixedX, y, fixedW, h);
                 if (rowOpacity < 1.0)
                     painter.restore();
@@ -854,6 +895,21 @@ void AgGridWidget::paintEvent(QPaintEvent * /*event*/)
             painter.save();
             painter.setPen(gridLineColor);
             painter.drawLine(0, contentBottom, viewportWidthForColumns(), contentBottom);
+            painter.restore();
+        }
+    }
+
+    // 重设数据切换动画（两段式）：前半程旧内容快照匀速整体上移离场（视口渐空），
+    // 后半程快照已完全离场，新内容自视口上方下移涌入（见 rowY 的偏移逻辑）
+    if (m_dataResetAnimating && !m_dataResetSnapshot.isNull()) {
+        const qreal qe = (m_dataResetProgress < 0.5)
+                             ? m_dataResetProgress * 2.0   // 离场匀速，全程可见
+                             : 1.0;                        // 后半程快照已完全移出视口
+        const int y = headerHeight() - qRound(m_dataResetSlideHeight * qe);
+        if (y + m_dataResetSnapshot.height() > headerHeight()) {
+            painter.save();
+            painter.setClipRect(0, headerHeight(), width(), bodyHeight());
+            painter.drawImage(QPoint(0, y), m_dataResetSnapshot);
             painter.restore();
         }
     }
@@ -1024,14 +1080,7 @@ void AgGridWidget::mousePressEvent(QMouseEvent *event)
     if (cell.y() < 0 || (cell.x() < 0 && !isCheckboxColumn(cell.x()) && !isDragHandleColumn(cell.x())))
         return;
 
-    // Ctrl+点击数据行取消选中
-    if (event->button() == Qt::LeftButton && (event->modifiers() & Qt::ControlModifier)) {
-        if (m_activeEditor && !tryFinishCurrentEdit())
-            return;
-        clearSelection();
-        event->accept();
-        return;
-    }
+    const bool ctrlPressed = (event->modifiers() & Qt::ControlModifier) != 0;
 
     // 树形展开箭头：点击切换展开态（不改选中、不触发 cellClicked）
     if (event->button() == Qt::LeftButton && isTreeMode() && cell.x() == treeColumn()) {
@@ -1043,15 +1092,13 @@ void AgGridWidget::mousePressEvent(QMouseEvent *event)
         }
     }
 
-    // 复选框列：切换勾选状态并选中该行
+    // 复选框列：切换勾选状态并按选中模式更新行选中
     if (isCheckboxColumn(cell.x())) {
         toggleCheckboxCell(cell.y());
 
-        const bool rowChanged = (m_selectedRow != cell.y());
-        m_selectedRow = cell.y();
-        m_selectedOriginalRow = m_model->originalRowForVisibleRow(cell.y());
+        const bool changed = applyCheckboxClickSelection(cell.y(), -1, false);
         update();
-        if (rowChanged)
+        if (changed)
             emit selectionChanged();
         event->accept();
         return;
@@ -1073,10 +1120,7 @@ void AgGridWidget::mousePressEvent(QMouseEvent *event)
             return;
         toggleCheckboxCellValue(cell.y(), cell.x());
 
-        const bool changed = (m_selectedRow != cell.y() || m_selectedColumn != cell.x());
-        m_selectedRow = cell.y();
-        m_selectedColumn = cell.x();
-        m_selectedOriginalRow = m_model->originalRowForVisibleRow(cell.y());
+        const bool changed = applyCheckboxClickSelection(cell.y(), cell.x(), true);
         update();
         emit cellClicked(cell.y(), cell.x());
         if (changed)
@@ -1089,12 +1133,9 @@ void AgGridWidget::mousePressEvent(QMouseEvent *event)
     if (m_activeEditor && !tryFinishCurrentEdit())
         return;
 
-    const bool changed = (m_selectedRow != cell.y() || m_selectedColumn != cell.x());
-    m_selectedRow = cell.y();
-    m_selectedColumn = cell.x();
-    m_selectedOriginalRow = m_model->originalRowForVisibleRow(cell.y());
+    const bool changed = applyRowSelectionClick(cell.y(), cell.x(), ctrlPressed);
     update();
-    emit cellClicked(m_selectedRow, m_selectedColumn);
+    emit cellClicked(cell.y(), cell.x());
     if (changed)
         emit selectionChanged();
 }
@@ -1547,6 +1588,7 @@ void AgGridWidget::resizeEvent(QResizeEvent * /*event*/)
 {
     rebuildColumnOffsets();
     updateScrollBars();
+    captureLayoutSnapshot();   // Flex 列宽随视口变化，动画基线的行偏移保持新鲜
 }
 
 void AgGridWidget::wheelEvent(QWheelEvent *event)
@@ -1620,14 +1662,28 @@ void AgGridWidget::connectModel()
         }
         update();
     });
+    connect(m_model, &AgGridModel::rowsAboutToReset, this, [this]() {
+        // 数据整体重设前捕获旧内容像素快照：重设动画 = 快照上移出场 + 新内容下移入场
+        m_dataResetPending = false;
+        if (!m_dataAnimationEnabled || m_loading || !isVisible() || bodyHeight() <= 0)
+            return;
+        if (!m_model || m_model->rowCount() <= 0)
+            return;
+        finishSortMoveAnimation();
+        finishDataResetAnimation();
+        m_dataResetSnapshot = grab(QRect(0, headerHeight(), width(), bodyHeight())).toImage();
+        m_dataResetPending = !m_dataResetSnapshot.isNull();
+    });
     connect(m_model, &AgGridModel::rowsChanged, this, [this]() {
         const bool hadChecks = !m_checkedOriginalRows.isEmpty();
-        const bool hadSelection = (m_selectedRow >= 0);
+        const bool hadSelection = (m_selectedRow >= 0 || !m_selectedOriginalRows.isEmpty());
         // 行/列拖拽过程中由拖拽逻辑自行维护勾选与选择状态，不要清空；也避免自动重绘干扰拖拽动画
         if (!m_isRowDragging && !m_isColumnDragging) {
             m_checkedOriginalRows.clear();
             m_partialOriginalRows.clear();
             m_selectedOriginalRow = -1;
+            m_selectedOriginalRows.clear();
+            captureLayoutSnapshot();   // 数据已替换：位移动画基线随之重置
         }
         pruneSpans();
         invalidateRowHeights();
@@ -1650,6 +1706,7 @@ void AgGridWidget::connectModel()
             invalidateRowHeights();
             updateScrollBars();
             update();
+            captureLayoutSnapshot();
         }
     });
     connect(m_model, &AgGridModel::columnWidthsChanged, this, [this]() {
@@ -1659,6 +1716,7 @@ void AgGridWidget::connectModel()
         updateScrollBars();
         update();
         emit columnWidthsChanged();
+        captureLayoutSnapshot();
     });
     connect(m_model, &AgGridModel::layoutChanged, this, [this]() {
         QToolTip::hideText();   // 排序/过滤/移动行后悬停处内容已变化，隐藏失效的 tooltip
@@ -1681,6 +1739,13 @@ void AgGridWidget::connectModel()
         if (!m_isRowDragging && !m_isColumnDragging) {
             updateScrollBars();
             update();
+            // 数据变化动画：重设数据 → 快照切换动画；其余（排序 / 过滤）→ 行位移动画。
+            // 二者之后都刷新布局基线，供下一次布局变化使用。
+            if (m_dataResetPending)
+                startDataResetAnimation();
+            else
+                startSortMoveAnimation();
+            captureLayoutSnapshot();
         }
     });
     connect(m_model, &AgGridModel::filterChanged, this, [this]() { emit filterChanged(); });
@@ -1823,6 +1888,10 @@ void AgGridWidget::updateRoundedMask()
 
 void AgGridWidget::rebuildColumnOffsets()
 {
+    // 旧列宽表留作比较：Flex 列宽随视口尺寸 / 滚动条显隐 / 列显隐变化后，
+    // 依赖列宽的行高测量（WordWrap preferredHeight）需一并失效重算
+    const QVector<int> oldOffsets = m_columnOffsets;
+
     m_columnOffsets.clear();
     m_columnRegions.clear();
     m_leftPinnedColumns.clear();
@@ -1981,6 +2050,9 @@ void AgGridWidget::rebuildColumnOffsets()
             m_columnOffsets.append(offset);
         }
     }
+
+    if (m_columnOffsets != oldOffsets)
+        invalidateRowHeights();   // 列宽实际变化：行高测量结果失效（惰性重算）
 }
 
 int AgGridWidget::totalContentWidth() const
@@ -2584,6 +2656,26 @@ int AgGridWidget::rowY(int row) const
                 offset = entry.startOffset + qRound((entry.endOffset - entry.startOffset) * m_dragAnimationProgress);
                 break;
             }
+        }
+    }
+    if (!m_dataAnimationEntries.isEmpty()) {
+        // 排序 / 过滤位移动画：行按旧布局位置 → 新布局位置插值
+        for (const DataMoveAnimationEntry &entry : m_dataAnimationEntries) {
+            if (entry.visibleRow == row) {
+                offset = entry.startOffset
+                         + qRound((entry.endOffset - entry.startOffset) * m_dataAnimationProgress);
+                break;
+            }
+        }
+    }
+    if (m_dataResetAnimating) {
+        // 重设数据切换（两段式）：前半程旧内容（快照）上移离场、新内容停在视口下方；
+        // 后半程视口留空后，新内容自视口上方下移涌入
+        if (m_dataResetProgress < 0.5) {
+            offset += m_dataResetSlideHeight;
+        } else {
+            const qreal qe = agOutCubic((m_dataResetProgress - 0.5) * 2.0);
+            offset -= qRound(m_dataResetSlideHeight * (1.0 - qe));
         }
     }
     return headerHeight() + offset - m_yOffset;
@@ -3431,12 +3523,13 @@ void AgGridWidget::drawRowBackgrounds(QPainter *painter, int firstRow, int lastR
         if (m_treeLayerFilter == 2)
             painter->fillRect(0, y, viewportW, h,
                               rowBackgroundColor.isValid() ? rowBackgroundColor : palette().base());
-        if (row == m_selectedRow && selectedColor.isValid())
+        const bool rowSelected = isRowSelected(row);
+        if (rowSelected && selectedColor.isValid())
             painter->fillRect(0, y, viewportW, h, selectedColor);
         else if (alternateColor.isValid() && row % 2 == 1)
             painter->fillRect(0, y, viewportW, h, alternateColor);
 
-        if (row == m_hoverRow && row != m_selectedRow && hoverColor.isValid())
+        if (row == m_hoverRow && !rowSelected && hoverColor.isValid())
             painter->fillRect(0, y, viewportW, h, hoverColor);
         if (rowOpacity < 1.0)
             painter->restore();
@@ -3517,8 +3610,9 @@ void AgGridWidget::drawRows(QPainter *painter, int firstRow, int lastRow, int fi
 
             // 停靠列逐格铺背景；body 区合并单元格也需铺锚点行背景，避免露出斑马纹
             if (isPinnedRegion || span.isValid()) {
+                const bool rowSelected = isRowSelected(row);
                 QColor bg;
-                if (row == m_selectedRow && selectedColor.isValid())
+                if (rowSelected && selectedColor.isValid())
                     bg = selectedColor;
                 else if (alternateColor.isValid() && row % 2 == 1)
                     bg = alternateColor;
@@ -3526,7 +3620,7 @@ void AgGridWidget::drawRows(QPainter *painter, int firstRow, int lastRow, int fi
                     const QColor rowBg = m_style->color(AgGridStyle::RowBackgroundColor, m_model);
                     bg = rowBg.isValid() ? rowBg : palette().base().color();
                 }
-                if (row == m_hoverRow && row != m_selectedRow && hoverColor.isValid())
+                if (row == m_hoverRow && !rowSelected && hoverColor.isValid())
                     bg = hoverColor;
                 painter->fillRect(rect, bg);
             }
@@ -3614,6 +3708,8 @@ void AgGridWidget::drawGridLines(QPainter *painter, int firstColumn, int lastCol
 
     // 每个单元格绘制完整边框；相邻单元格共享边界线，视觉上保持 1px，
     // 动画中每个单元格自带完整边框，避免掉线。
+    // 隐藏左右（列方向）边框时只画上下两条横线（行分隔线保留）。
+    const bool drawVertical = m_verticalGridLinesVisible;
     for (int row = paintFirstRow; row <= lastRow; ++row) {
         if (!treeLayerAcceptRow(row))
             continue;
@@ -3640,7 +3736,12 @@ void AgGridWidget::drawGridLines(QPainter *painter, int firstColumn, int lastCol
                     painter->save();
                     painter->setOpacity(spanOpacity);
                 }
-                painter->drawRect(spanArea);
+                if (drawVertical) {
+                    painter->drawRect(spanArea);
+                } else {
+                    painter->drawLine(spanArea.left(), spanArea.top(), spanArea.right(), spanArea.top());
+                    painter->drawLine(spanArea.left(), spanArea.bottom(), spanArea.right(), spanArea.bottom());
+                }
                 if (spanOpacity < 1.0)
                     painter->restore();
                 continue;
@@ -3654,7 +3755,12 @@ void AgGridWidget::drawGridLines(QPainter *painter, int firstColumn, int lastCol
                 painter->save();
                 painter->setOpacity(opacity);
             }
-            painter->drawRect(x, y, w, h);
+            if (drawVertical) {
+                painter->drawRect(x, y, w, h);
+            } else {
+                painter->drawLine(x, y, x + w, y);
+                painter->drawLine(x, y + h, x + w, y + h);
+            }
             if (fade)
                 painter->restore();
         }
@@ -3757,11 +3863,28 @@ void AgGridWidget::drawRegionSeparators(QPainter *painter)
     pen.setWidth(1);
     painter->setPen(pen);
 
-    const int leftSeparatorX = fixedColumnsWidth() > 0 ? stickyLeftBoundaryX() : -1;
+    // 停靠区与 body 区的交界竖线始终绘制（无论停靠列是否发生 sticky 位移，
+    // 也不受列边框开关影响）；同侧多列停靠之间的分隔随列边框开关。
+    int leftSeparatorX = -1;
+    if (fixedColumnsWidth() > 0)
+        leftSeparatorX = stickyLeftBoundaryX();
+    for (int i = m_leftPinnedColumns.size() - 1; i >= 0; --i) {
+        const int col = m_leftPinnedColumns.at(i);
+        if (!isColumnHidden(col)) {
+            leftSeparatorX = qMax(leftSeparatorX, columnX(col) + columnWidth(col));
+            break;
+        }
+    }
     if (leftSeparatorX > 0)
         painter->drawLine(leftSeparatorX, 0, leftSeparatorX, bodyBottom);
 
-    const int rightSeparatorX = stickyRightBoundaryX();
+    int rightSeparatorX = stickyRightBoundaryX();
+    for (int col : m_rightPinnedColumns) {
+        if (!isColumnHidden(col)) {
+            rightSeparatorX = qMin(rightSeparatorX, columnX(col));
+            break;
+        }
+    }
     if (rightSeparatorX < viewportW)
         painter->drawLine(rightSeparatorX, 0, rightSeparatorX, bodyBottom);
 }
@@ -4145,6 +4268,8 @@ void AgGridWidget::moveSelection(int dRow, int dColumn)
 {
     if (!m_model || m_model->rowCount() == 0 || m_model->columnCount() == 0)
         return;
+    if (m_selectionMode == SelectionMode::None)
+        return;   // 不可选中模式：无选中光标，键盘导航无效
 
     int row = qMax(0, m_selectedRow);
     int column = qMax(0, m_selectedColumn);
@@ -4335,12 +4460,72 @@ void AgGridWidget::setHorizontalOffset(int value)
     m_hScrollBar->setValue(value);
 }
 
+void AgGridWidget::setSelectionMode(SelectionMode mode)
+{
+    if (m_selectionMode == mode)
+        return;
+
+    m_selectionMode = mode;
+
+    bool changed = false;
+    if (mode == SelectionMode::None) {
+        // 不可选中：清空全部选中
+        changed = (m_selectedRow >= 0 || m_selectedColumn >= 0 || !m_selectedOriginalRows.isEmpty());
+        m_selectedRow = -1;
+        m_selectedColumn = -1;
+        m_selectedOriginalRow = -1;
+        m_selectedOriginalRows.clear();
+    } else if (mode == SelectionMode::Single) {
+        // 单选：仅保留最后点击的锚点行
+        QSet<int> keep;
+        if (m_selectedRow >= 0 && m_selectedOriginalRow >= 0)
+            keep.insert(m_selectedOriginalRow);
+        changed = (keep != m_selectedOriginalRows);
+        m_selectedOriginalRows = keep;
+    } else if (m_selectedRow >= 0 && m_selectedOriginalRow >= 0
+               && !m_selectedOriginalRows.contains(m_selectedOriginalRow)) {
+        // 多选：锚点行并入选中集合
+        m_selectedOriginalRows.insert(m_selectedOriginalRow);
+        changed = true;
+    }
+
+    update();
+    if (changed)
+        emit selectionChanged();
+}
+
+AgGridWidget::SelectionMode AgGridWidget::selectionMode() const
+{
+    return m_selectionMode;
+}
+
 void AgGridWidget::selectRow(int row)
 {
     if (!m_model || row < 0 || row >= m_model->rowCount())
         return;
+    if (m_selectionMode == SelectionMode::None)
+        return;
 
     setFocus();
+
+    if (m_selectionMode == SelectionMode::Multiple) {
+        const int original = m_model->originalRowForVisibleRow(row);
+        if (m_selectedOriginalRows.size() == 1 && m_selectedOriginalRows.contains(original)
+            && m_selectedRow == row) {
+            ensureCellVisible(row, m_selectedColumn >= 0 ? m_selectedColumn : 0);
+            return;
+        }
+        m_selectedOriginalRows.clear();
+        m_selectedOriginalRows.insert(original);
+        m_selectedRow = row;
+        m_selectedOriginalRow = original;
+        if (m_selectedColumn < 0)
+            m_selectedColumn = 0;
+        ensureCellVisible(m_selectedRow, m_selectedColumn);
+        update();
+        emit selectionChanged();
+        return;
+    }
 
     if (row == m_selectedRow && m_selectedColumn >= 0) {
         ensureCellVisible(row, m_selectedColumn);
@@ -4370,7 +4555,28 @@ void AgGridWidget::selectCell(int row, int column)
         column = span.anchorColumn;
     }
 
+    if (m_selectionMode == SelectionMode::None)
+        return;
+
     setFocus();
+
+    if (m_selectionMode == SelectionMode::Multiple) {
+        const int original = m_model->originalRowForVisibleRow(row);
+        if (m_selectedOriginalRows.size() == 1 && m_selectedOriginalRows.contains(original)
+            && m_selectedRow == row && m_selectedColumn == column) {
+            ensureCellVisible(row, column);
+            return;
+        }
+        m_selectedOriginalRows.clear();
+        m_selectedOriginalRows.insert(original);
+        m_selectedRow = row;
+        m_selectedColumn = column;
+        m_selectedOriginalRow = original;
+        ensureCellVisible(row, column);
+        update();
+        emit selectionChanged();
+        return;
+    }
 
     if (row == m_selectedRow && column == m_selectedColumn) {
         ensureCellVisible(row, column);
@@ -4386,21 +4592,136 @@ void AgGridWidget::selectCell(int row, int column)
     emit selectionChanged();
 }
 
+void AgGridWidget::selectRows(const QSet<int> &rows)
+{
+    if (!m_model || rows.isEmpty())
+        return;
+    if (m_selectionMode == SelectionMode::None)
+        return;
+
+    if (m_selectionMode == SelectionMode::Single) {
+        int best = -1;
+        for (int row : rows) {
+            if (row >= 0 && row < m_model->rowCount() && (best < 0 || row < best))
+                best = row;
+        }
+        if (best >= 0)
+            selectRow(best);
+        return;
+    }
+
+    // 多选：按可见行号收集原始行；锚点取最小选中行，不改变滚动位置
+    QSet<int> originals;
+    int anchor = -1;
+    for (int row : rows) {
+        if (row < 0 || row >= m_model->rowCount())
+            continue;
+        originals.insert(m_model->originalRowForVisibleRow(row));
+        if (anchor < 0 || row < anchor)
+            anchor = row;
+    }
+
+    const QSet<int> oldRows = m_selectedOriginalRows;
+    const int oldAnchorRow = m_selectedRow;
+
+    m_selectedOriginalRows = originals;
+    if (anchor >= 0) {
+        m_selectedRow = anchor;
+        m_selectedOriginalRow = m_model->originalRowForVisibleRow(anchor);
+        if (m_selectedColumn < 0)
+            m_selectedColumn = 0;
+    } else {
+        m_selectedRow = -1;
+        m_selectedOriginalRow = -1;
+    }
+
+    update();
+    if (m_selectedOriginalRows != oldRows || m_selectedRow != oldAnchorRow)
+        emit selectionChanged();
+}
+
 void AgGridWidget::clearSelection()
 {
-    if (m_selectedRow < 0 && m_selectedColumn < 0)
+    if (m_selectedRow < 0 && m_selectedColumn < 0 && m_selectedOriginalRows.isEmpty())
         return;
 
     m_selectedRow = -1;
     m_selectedColumn = -1;
     m_selectedOriginalRow = -1;
+    m_selectedOriginalRows.clear();
     update();
     emit selectionChanged();
 }
 
+QSet<int> AgGridWidget::selectedRows() const
+{
+    if (!m_model || m_selectionMode == SelectionMode::None)
+        return QSet<int>();
+
+    if (m_selectionMode == SelectionMode::Single) {
+        if (m_selectedRow >= 0)
+            return QSet<int>{m_selectedRow};
+        return QSet<int>();
+    }
+
+    QSet<int> rows;
+    for (int original : m_selectedOriginalRows) {
+        const int visible = m_model->visibleRowForOriginalRow(original);
+        if (visible >= 0)
+            rows.insert(visible);
+    }
+    return rows;
+}
+
+QSet<int> AgGridWidget::selectedOriginalRows() const
+{
+    if (m_selectionMode == SelectionMode::None)
+        return QSet<int>();
+
+    if (m_selectionMode == SelectionMode::Single) {
+        if (m_selectedOriginalRow >= 0)
+            return QSet<int>{m_selectedOriginalRow};
+        return QSet<int>();
+    }
+
+    return m_selectedOriginalRows;
+}
+
+bool AgGridWidget::isRowSelected(int row) const
+{
+    if (!m_model || row < 0 || row >= m_model->rowCount())
+        return false;
+    if (m_selectionMode == SelectionMode::None)
+        return false;
+
+    if (m_selectionMode == SelectionMode::Single)
+        return row == m_selectedRow;
+
+    const int original = m_model->originalRowForVisibleRow(row);
+    return original >= 0 && m_selectedOriginalRows.contains(original);
+}
+
 void AgGridWidget::syncSelectionAfterLayoutChange()
 {
-    if (!m_model || m_selectedOriginalRow < 0) {
+    if (!m_model)
+        return;
+
+    // 多选集合按原始行存储：排序 / 过滤 / 树折叠不改变原始行身份，无需重映射；
+    // 仅剔除已越出模型范围的行（行数据被移除 / 模型重载）。
+    if (m_selectionMode == SelectionMode::Multiple && !m_selectedOriginalRows.isEmpty()) {
+        const int originalCount = m_model->originalRowCount();
+        QSet<int> pruned = m_selectedOriginalRows;
+        for (int original : m_selectedOriginalRows) {
+            if (original < 0 || original >= originalCount)
+                pruned.remove(original);
+        }
+        if (pruned.size() != m_selectedOriginalRows.size()) {
+            m_selectedOriginalRows = pruned;
+            emit selectionChanged();
+        }
+    }
+
+    if (m_selectedOriginalRow < 0) {
         m_selectedRow = -1;
         return;
     }
@@ -4414,6 +4735,78 @@ void AgGridWidget::syncSelectionAfterLayoutChange()
         m_selectedOriginalRow = -1;
         emit selectionChanged();
     }
+}
+
+bool AgGridWidget::applyRowSelectionClick(int row, int column, bool ctrl)
+{
+    if (!m_model || row < 0 || row >= m_model->rowCount())
+        return false;
+    if (m_selectionMode == SelectionMode::None)
+        return false;
+
+    const int original = m_model->originalRowForVisibleRow(row);
+    if (original < 0)
+        return false;
+
+    if (m_selectionMode == SelectionMode::Single) {
+        if (ctrl && row == m_selectedRow) {
+            // Ctrl+点击已选中行：取消选中（单选模式的鼠标取消手势）
+            m_selectedRow = -1;
+            m_selectedColumn = -1;
+            m_selectedOriginalRow = -1;
+            return true;
+        }
+        const bool changed = (m_selectedRow != row || m_selectedColumn != column);
+        m_selectedRow = row;
+        m_selectedColumn = column;
+        m_selectedOriginalRow = original;
+        return changed;
+    }
+
+    // 多选：点击与 Ctrl+点击均为切换该行选中——点击未选中行即选中（其它已选行保持），
+    // 再点击同一行取消；两种方式（纯点击累积 / Ctrl+点击累积）并存
+    if (m_selectedOriginalRows.contains(original))
+        m_selectedOriginalRows.remove(original);
+    else
+        m_selectedOriginalRows.insert(original);
+
+    m_selectedRow = row;
+    m_selectedColumn = column;
+    m_selectedOriginalRow = original;
+    return true;
+}
+
+bool AgGridWidget::applyCheckboxClickSelection(int row, int column, bool withColumn)
+{
+    if (!m_model || row < 0 || row >= m_model->rowCount())
+        return false;
+    if (m_selectionMode == SelectionMode::None)
+        return false;
+
+    const int original = m_model->originalRowForVisibleRow(row);
+    if (original < 0)
+        return false;
+
+    if (m_selectionMode == SelectionMode::Single) {
+        const bool changed = (m_selectedRow != row || (withColumn && m_selectedColumn != column));
+        m_selectedRow = row;
+        m_selectedOriginalRow = original;
+        if (withColumn)
+            m_selectedColumn = column;
+        return changed;
+    }
+
+    // 多选：复选框交互语义为切换加入 / 移出（与 Ctrl+点击一致）
+    if (m_selectedOriginalRows.contains(original))
+        m_selectedOriginalRows.remove(original);
+    else
+        m_selectedOriginalRows.insert(original);
+
+    m_selectedRow = row;
+    m_selectedOriginalRow = original;
+    if (withColumn)
+        m_selectedColumn = column;
+    return true;
 }
 
 void AgGridWidget::setRowNumberColumnVisible(bool visible)
@@ -4430,6 +4823,19 @@ void AgGridWidget::setRowNumberColumnVisible(bool visible)
 bool AgGridWidget::isRowNumberColumnVisible() const
 {
     return m_showRowNumberColumn;
+}
+
+void AgGridWidget::setVerticalGridLinesVisible(bool visible)
+{
+    if (m_verticalGridLinesVisible == visible)
+        return;
+    m_verticalGridLinesVisible = visible;
+    update();
+}
+
+bool AgGridWidget::isVerticalGridLinesVisible() const
+{
+    return m_verticalGridLinesVisible;
 }
 
 void AgGridWidget::setCheckboxColumnVisible(bool visible)
@@ -5532,6 +5938,29 @@ void AgGridWidget::updateRowDrag(const QPoint &globalPos)
     m_model->moveRows(oldDragging, targetOriginalIndex);
     updateCheckedRowsAfterMove(oldDragging, targetOriginalIndex);
 
+    // 多选选中集合随行移动重映射（moveRows 会重编号原始行号）
+    if (!m_selectedOriginalRows.isEmpty()) {
+        const int K = oldDragging.size();
+        QSet<int> remapped;
+        for (int oldIdx : m_selectedOriginalRows) {
+            int newIdx;
+            if (draggedSet.contains(oldIdx)) {
+                newIdx = targetOriginalIndex + draggedSorted.indexOf(oldIdx);
+            } else {
+                int removedBefore = 0;
+                for (int d : draggedSorted) {
+                    if (d < oldIdx)
+                        ++removedBefore;
+                }
+                newIdx = oldIdx - removedBefore;
+                if (newIdx >= targetOriginalIndex)
+                    newIdx += K;
+            }
+            remapped.insert(newIdx);
+        }
+        m_selectedOriginalRows = remapped;
+    }
+
     // 记录动画结束偏移并启动插值动画
     if (m_rowOffsetsDirty)
         rebuildRowOffsets();
@@ -5687,6 +6116,277 @@ void AgGridWidget::finishDragReorderAnimation()
     m_dragAnimationOldOrder.clear();
     m_dragAnimationOldOffsets.clear();
     m_dragAnimationProgress = 0.0;
+    captureLayoutSnapshot();   // 行拖拽会重编号原始行，动画基线随之刷新
+    update();
+}
+
+void AgGridWidget::setDataAnimationEnabled(bool enabled)
+{
+    if (m_dataAnimationEnabled == enabled)
+        return;
+    m_dataAnimationEnabled = enabled;
+    if (!enabled) {
+        finishSortMoveAnimation();
+        finishDataResetAnimation();
+        m_dataResetPending = false;
+        m_dataResetSnapshot = QImage();
+    }
+}
+
+bool AgGridWidget::isDataAnimationEnabled() const
+{
+    return m_dataAnimationEnabled;
+}
+
+void AgGridWidget::setSortAnimationDuration(int ms)
+{
+    m_sortAnimationDuration = qMax(0, ms);
+    if (m_sortAnimationDuration <= 0)
+        finishSortMoveAnimation();
+}
+
+int AgGridWidget::sortAnimationDuration() const
+{
+    return m_sortAnimationDuration;
+}
+
+void AgGridWidget::setDataResetAnimationDuration(int ms)
+{
+    m_resetAnimationDuration = qMax(0, ms);
+    if (m_resetAnimationDuration <= 0) {
+        finishDataResetAnimation();
+        m_dataResetPending = false;
+        m_dataResetSnapshot = QImage();
+    }
+}
+
+int AgGridWidget::dataResetAnimationDuration() const
+{
+    return m_resetAnimationDuration;
+}
+
+void AgGridWidget::captureLayoutSnapshot()
+{
+    if (!m_model) {
+        m_animLastOrder.clear();
+        m_animLastOffsets.clear();
+        return;
+    }
+
+    if (m_rowOffsetsDirty)
+        rebuildRowOffsets();
+
+    const int count = m_model->rowCount();
+    m_animLastOrder.resize(count);
+    for (int i = 0; i < count; ++i)
+        m_animLastOrder[i] = m_model->originalRowForVisibleRow(i);
+    m_animLastOffsets = m_rowOffsets;
+}
+
+void AgGridWidget::startSortMoveAnimation()
+{
+    finishSortMoveAnimation();
+    if (!m_dataAnimationEnabled || !m_model || m_loading || !isVisible())
+        return;
+    if (isTreeMode())
+        return;   // 树形结构变化由展开 / 折叠动画负责，避免两套动画叠加
+
+    const int oldCount = m_animLastOrder.size();
+    const int newCount = m_model->rowCount();
+    if (oldCount == 0 || newCount == 0 || m_animLastOffsets.size() != oldCount + 1)
+        return;
+
+    // 行序未变化则无位移可言
+    bool orderChanged = (newCount != oldCount);
+    for (int i = 0; !orderChanged && i < newCount; ++i) {
+        if (m_animLastOrder.at(i) != m_model->originalRowForVisibleRow(i))
+            orderChanged = true;
+    }
+    if (!orderChanged)
+        return;
+
+    if (m_rowOffsetsDirty)
+        rebuildRowOffsets();   // 新布局的行高 / 偏移（WordWrap 行高随数据位置变化）
+
+    QHash<int, int> oldVisibleOf;
+    oldVisibleOf.reserve(oldCount * 2);
+    for (int i = 0; i < oldCount; ++i)
+        oldVisibleOf.insert(m_animLastOrder.at(i), i);
+
+    const int bodyTop = headerHeight();
+    const int bodyBottom = bodyTop + bodyHeight();
+    const int outsideTop = bodyTop - rowHeight();   // 视口上沿外一行（完全不可见处）
+    const int outsideBottom = bodyBottom;
+    const int rowH = rowHeight();
+
+    // 待入队的退场 / 入场行：visibleRow = 新可见行号，inBandY = 视口带内的真实位置，
+    // outY = 视口带外的真实位置（用于排序定队列次序）
+    struct TrainItem { int visibleRow; int inBandY; int outY; };
+    QVector<TrainItem> exitUp, exitDown, enterFromTop, enterFromBottom;
+    m_dataAnimationEntries.clear();
+
+    const int totalOriginals = qMax(oldCount, m_model->originalRowCount());
+    for (int original = 0; original < totalOriginals; ++original) {
+        const int newVis = (original < m_model->originalRowCount())
+                               ? m_model->visibleRowForOriginalRow(original)
+                               : -1;
+        if (newVis < 0)
+            continue;   // 移出可见集合（被过滤等）：无绘制载体，瞬时消失
+
+        const int newY = m_rowOffsets.at(newVis);
+        const int oldVis = oldVisibleOf.value(original, -1);
+        const int oldY = (oldVis >= 0) ? m_animLastOffsets.at(oldVis) : -1;
+
+        const bool oldInBand = (oldVis >= 0 && oldY >= outsideTop && oldY <= outsideBottom);
+        const bool newInBand = (newY >= outsideTop && newY <= outsideBottom);
+
+        if (oldInBand && newInBand) {
+            // 新旧位置都在视口带内：直接从旧位置滑到新位置
+            if (oldY == newY)
+                continue;
+            DataMoveAnimationEntry e;
+            e.visibleRow = newVis;
+            e.startOffset = oldY;
+            e.endOffset = newY;
+            m_dataAnimationEntries.append(e);
+        } else if (oldInBand) {
+            // 可视行移出视口：向新位置方向退场（队列在下方统一排定）
+            if (newY < bodyTop)
+                exitUp.append({ newVis, oldY, newY });
+            else
+                exitDown.append({ newVis, oldY, newY });
+        } else if (newInBand) {
+            // 视口外的行变为可见：从旧位置所在方向入场（oldY < 0 = 新增行，自下方进入）
+            if (oldVis >= 0 && oldY < bodyTop)
+                enterFromTop.append({ newVis, newY, oldY });
+            else
+                enterFromBottom.append({ newVis, newY, oldVis >= 0 ? oldY : outsideBottom });
+        }
+        // 起止都在视口带外（跨视口移动 / 始终不可见）：不参与动画，保持不可见
+    }
+
+    // 退场 / 入场按“距视口边缘的远近”排成间距为一行的队列：
+    // 离边缘最近的行贴边出入，其余依次向视口外排开——保持行间相对间距，
+    // 避免多行同时叠在同一个边缘点上形成色块。
+    const auto byOutDesc = [](const TrainItem &a, const TrainItem &b) { return a.outY > b.outY; };
+    const auto byOutAsc = [](const TrainItem &a, const TrainItem &b) { return a.outY < b.outY; };
+
+    std::sort(exitUp.begin(), exitUp.end(), byOutDesc);
+    for (int k = 0; k < exitUp.size(); ++k) {
+        DataMoveAnimationEntry e;
+        e.visibleRow = exitUp.at(k).visibleRow;
+        e.startOffset = exitUp.at(k).inBandY;
+        e.endOffset = outsideTop - k * rowH;
+        m_dataAnimationEntries.append(e);
+    }
+    std::sort(exitDown.begin(), exitDown.end(), byOutAsc);
+    for (int k = 0; k < exitDown.size(); ++k) {
+        DataMoveAnimationEntry e;
+        e.visibleRow = exitDown.at(k).visibleRow;
+        e.startOffset = exitDown.at(k).inBandY;
+        e.endOffset = outsideBottom + k * rowH;
+        m_dataAnimationEntries.append(e);
+    }
+    std::sort(enterFromTop.begin(), enterFromTop.end(), byOutDesc);
+    for (int k = 0; k < enterFromTop.size(); ++k) {
+        DataMoveAnimationEntry e;
+        e.visibleRow = enterFromTop.at(k).visibleRow;
+        e.startOffset = outsideTop - k * rowH;
+        e.endOffset = enterFromTop.at(k).inBandY;
+        m_dataAnimationEntries.append(e);
+    }
+    std::sort(enterFromBottom.begin(), enterFromBottom.end(), byOutAsc);
+    for (int k = 0; k < enterFromBottom.size(); ++k) {
+        DataMoveAnimationEntry e;
+        e.visibleRow = enterFromBottom.at(k).visibleRow;
+        e.startOffset = outsideBottom + k * rowH;
+        e.endOffset = enterFromBottom.at(k).inBandY;
+        m_dataAnimationEntries.append(e);
+    }
+
+    if (m_dataAnimationEntries.isEmpty())
+        return;
+    if (m_sortAnimationDuration <= 0)
+        return;   // 时长为 0：不播动画，直接呈现终态
+
+    m_dataAnimationProgress = 0.0;
+    m_dataAnimation = new QVariantAnimation(this);
+    m_dataAnimation->setStartValue(0.0);
+    m_dataAnimation->setEndValue(1.0);
+    m_dataAnimation->setDuration(m_sortAnimationDuration);
+    m_dataAnimation->setEasingCurve(QEasingCurve::OutCubic);   // 快出缓停，接近 web 端手感
+    connect(m_dataAnimation, &QVariantAnimation::valueChanged, this, [this](const QVariant &value) {
+        m_dataAnimationProgress = qBound(0.0, value.toReal(), 1.0);
+        update();
+    });
+    connect(m_dataAnimation, &QVariantAnimation::finished, this, [this]() {
+        finishSortMoveAnimation();
+    });
+    m_dataAnimation->start();
+}
+
+void AgGridWidget::finishSortMoveAnimation()
+{
+    if (m_dataAnimation) {
+        m_dataAnimation->stop();
+        delete m_dataAnimation;
+        m_dataAnimation = nullptr;
+    }
+    if (m_dataAnimationEntries.isEmpty() && m_dataAnimationProgress == 0.0)
+        return;
+    m_dataAnimationEntries.clear();
+    m_dataAnimationProgress = 0.0;
+    update();
+}
+
+void AgGridWidget::startDataResetAnimation()
+{
+    m_dataResetPending = false;
+    if (!m_dataAnimationEnabled || m_loading || !isVisible() || m_dataResetSnapshot.isNull())
+        return;
+    if (!m_model || m_model->rowCount() <= 0)
+        return;
+    if (m_resetAnimationDuration <= 0) {
+        m_dataResetSnapshot = QImage();
+        return;   // 时长为 0：不播动画，直接呈现新数据
+    }
+
+    finishSortMoveAnimation();
+    finishDataResetAnimation();
+
+    m_dataResetSlideHeight = bodyHeight();
+    m_dataResetProgress = 0.0;
+    m_dataResetAnimating = true;
+    m_dataResetAnimation = new QVariantAnimation(this);
+    m_dataResetAnimation->setStartValue(0.0);
+    m_dataResetAnimation->setEndValue(1.0);
+    m_dataResetAnimation->setDuration(m_resetAnimationDuration);
+    // 总时长前半为离场、后半为入场，两段各自在 rowY / 绘制处施加 OutCubic 缓动，
+    // 动画驱动本身保持线性
+    m_dataResetAnimation->setEasingCurve(QEasingCurve::Linear);
+    connect(m_dataResetAnimation, &QVariantAnimation::valueChanged, this, [this](const QVariant &value) {
+        m_dataResetProgress = qBound(0.0, value.toReal(), 1.0);
+        update();
+    });
+    connect(m_dataResetAnimation, &QVariantAnimation::finished, this, [this]() {
+        finishDataResetAnimation();
+    });
+    m_dataResetAnimation->start();
+}
+
+void AgGridWidget::finishDataResetAnimation()
+{
+    if (m_dataResetAnimation) {
+        m_dataResetAnimation->stop();
+        delete m_dataResetAnimation;
+        m_dataResetAnimation = nullptr;
+    }
+    if (!m_dataResetAnimating)
+        return;
+    m_dataResetAnimating = false;
+    m_dataResetProgress = 0.0;
+    m_dataResetSlideHeight = 0;
+    m_dataResetSnapshot = QImage();
     update();
 }
 
