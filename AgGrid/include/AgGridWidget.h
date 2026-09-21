@@ -19,7 +19,7 @@
 #include <QVariantAnimation>
 #include <functional>
 
-class AgGridScrollBar;
+class AgScrollBar;
 class QLabel;
 class QTimer;
 
@@ -780,8 +780,8 @@ private:
     SelectionMode m_selectionMode;           ///< 行选中模式（单选 / 多选 / 不可选中）
     QSet<int> m_selectedOriginalRows;        ///< 多选选中行集合（原始行号，跨排序过滤稳定）
 
-    AgGridScrollBar *m_hScrollBar;           ///< 自绘水平滚动条
-    AgGridScrollBar *m_vScrollBar;           ///< 自绘垂直滚动条
+    AgScrollBar *m_hScrollBar;           ///< 自绘水平滚动条
+    AgScrollBar *m_vScrollBar;           ///< 自绘垂直滚动条
     bool m_hScrollBarVisible;
     bool m_vScrollBarVisible;
     AgGridStyle *m_style;                    ///< 当前样式（全局或独立）

@@ -2,6 +2,7 @@
 #include "ui_mainwindow.h"
 
 #include "AgGridStyle.h"
+#include "AgSelectDemoWindow.h"
 #include "BasicDemoWindow.h"
 #include "ColumnDemoWindow.h"
 #include "HeaderCheckDemoWindow.h"
@@ -82,6 +83,8 @@ MainWindow::MainWindow(QWidget *parent)
           [this]() { return static_cast<QDialog *>(new LoadingDemoWindow(this)); } },
         { "dataanimation", QStringLiteral(u"数据切换动画\n排序位移 / 重设数据切换（200ms）"),
           [this]() { return static_cast<QDialog *>(new DataAnimationDemoWindow(this)); } },
+        { "agselect", QStringLiteral(u"AgSelect 下拉选择\n单选 / 分组 / 多选 chips / 过滤 / 主题尺寸"),
+          [this]() { return static_cast<QDialog *>(new AgSelectDemoWindow(this)); } },
     };
 
     const int columns = 3;

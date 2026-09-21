@@ -1,7 +1,7 @@
-#ifndef AGGRIDSCROLLBAR_H
-#define AGGRIDSCROLLBAR_H
+#ifndef AGSCROLLBAR_H
+#define AGSCROLLBAR_H
 
-#include "AgGrid_global.h"
+#include "AgCommon_global.h"
 
 #include <QScrollBar>
 #include <QPropertyAnimation>
@@ -9,15 +9,24 @@
 
 #include <QtGlobal>
 
-class AGGRID_EXPORT AgGridScrollBar : public QScrollBar
+/**
+ * @brief AgWidgets 组件族共用的自绘滚动条（原 AgGridScrollBar，抽取到 AgCommon 供各子项目复用）。
+ *
+ * 特性：
+ *  - 默认极简风格：细滑块常驻，背景与加宽仅在鼠标悬停 / 拖动时淡入展开；
+ *  - 支持滑块颜色、滑轨背景色、分隔线颜色与轨道边距的自定义；
+ *  - 支持点击轨道翻页（按住连续翻页）、拖拽滑块、滚轮与 Shift+滚轮按页滚动；
+ *  - 展开动画通过 Q_PROPERTY 暴露，便于样式系统或外部代码驱动。
+ */
+class AGCOMMON_EXPORT AgScrollBar : public QScrollBar
 {
     Q_OBJECT
     Q_PROPERTY(qreal sliderExtent READ sliderExtent WRITE setSliderExtent)
     Q_PROPERTY(qreal backgroundOpacity READ backgroundOpacity WRITE setBackgroundOpacity)
 
 public:
-    explicit AgGridScrollBar(Qt::Orientation orientation, QWidget *parent = nullptr);
-    ~AgGridScrollBar() override;
+    explicit AgScrollBar(Qt::Orientation orientation, QWidget *parent = nullptr);
+    ~AgScrollBar() override;
 
     QColor sliderColor() const;
     void setSliderColor(const QColor &color);
@@ -81,4 +90,4 @@ private:
     static constexpr int kMinSliderLength = 24;
 };
 
-#endif // AGGRIDSCROLLBAR_H
+#endif // AGSCROLLBAR_H

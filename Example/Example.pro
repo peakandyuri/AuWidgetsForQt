@@ -6,11 +6,11 @@ CONFIG += c++11
 
 # The following define makes your compiler emit warnings if you use
 # any Qt feature that has been marked deprecated (the exact warnings
-# depend on your compiler). Please consult the documentation of the
+# depend on your compiler). Please consult the documentation for the
 # deprecated API in order to know how to port your code away from it.
 DEFINES += QT_DEPRECATED_WARNINGS
 
-# You can also make your code fail to compile if it uses deprecated APIs.
+# You can also make your code fail to compile if you use deprecated APIs.
 # In order to do so, uncomment the following line.
 # You can also select to disable deprecated APIs only up to a certain version of Qt.
 #DEFINES += QT_DISABLE_DEPRECATED_BEFORE=0x060000    # disables all the APIs deprecated before Qt 6.0.0
@@ -33,6 +33,7 @@ SOURCES += \
     demos/LoadingDemoWindow.cpp \
     demos/RowHeightDemoWindow.cpp \
     demos/DataAnimationDemoWindow.cpp \
+    demos/AgSelectDemoWindow.cpp \
     CustomAgGrid/ButtonRenderer.cpp \
     CustomAgGrid/HeaderButtonRenderer.cpp \
     CustomAgGrid/HeaderCheckBoxRenderer.cpp \
@@ -56,6 +57,7 @@ HEADERS += \
     demos/LoadingDemoWindow.h \
     demos/RowHeightDemoWindow.h \
     demos/DataAnimationDemoWindow.h \
+    demos/AgSelectDemoWindow.h \
     CustomAgGrid/ButtonRenderer.h \
     CustomAgGrid/HeaderButtonRenderer.h \
     CustomAgGrid/HeaderCheckBoxRenderer.h \
@@ -66,25 +68,41 @@ FORMS += \
     mainwindow.ui
 
 INCLUDEPATH += \
+    $$PWD/../AgCommon/include \
     $$PWD/../AgGrid/include \
+    $$PWD/../AgSelect/include \
     $$PWD/CustomAgGrid \
     $$PWD/demos
-DEPENDPATH += $$PWD/../AgGrid
+DEPENDPATH += $$PWD/../AgCommon $$PWD/../AgGrid $$PWD/../AgSelect
 
+win32: LIBS += -L$$PWD/../AgCommon/bin/ -lAgCommon
+else:unix: LIBS += -L$$PWD/../AgCommon/bin/ -lAgCommon
 win32: LIBS += -L$$PWD/../AgGrid/bin/ -lAgGrid
 else:unix: LIBS += -L$$PWD/../AgGrid/bin/ -lAgGrid
+win32: LIBS += -L$$PWD/../AgSelect/bin/ -lAgSelect
+else:unix: LIBS += -L$$PWD/../AgSelect/bin/ -lAgSelect
 
-# 让目标依赖 AgGrid 导入库：库重编后自动触发重链接 + POST_LINK 拷贝
-win32: PRE_TARGETDEPS += $$PWD/../AgGrid/bin/libAgGrid.a
+# 让目标依赖导入库：库重编后自动触发重链接 + POST_LINK 拷贝
+win32: PRE_TARGETDEPS += \
+    $$PWD/../AgCommon/bin/libAgCommon.a \
+    $$PWD/../AgGrid/bin/libAgGrid.a \
+    $$PWD/../AgSelect/bin/libAgSelect.a
 
-# 构建完成后把最新 AgGrid.dll 拷贝到可执行文件目录，避免运行时加载到旧版 DLL
-win32 {
-    CONFIG(release, debug|release) {
-        QMAKE_POST_LINK += $$QMAKE_COPY $$shell_path($$PWD/../AgGrid/bin/AgGrid.dll) $$shell_path($$OUT_PWD/release) $$escape_expand(\\n\\t)
-    } else {
-        QMAKE_POST_LINK += $$QMAKE_COPY $$shell_path($$PWD/../AgGrid/bin/AgGrid.dll) $$shell_path($$OUT_PWD/debug) $$escape_expand(\\n\\t)
+# 构建完成后把最新 DLL 拷贝到可执行文件目录，避免运行时加载到旧版 DLL
+defineTest(copyAgDll) {
+    dll = $$1
+    win32 {
+        CONFIG(release, debug|release) {
+            QMAKE_POST_LINK += $$QMAKE_COPY $$shell_path($$dll) $$shell_path($$OUT_PWD/release) $$escape_expand(\\n\\t)
+        } else {
+            QMAKE_POST_LINK += $$QMAKE_COPY $$shell_path($$dll) $$shell_path($$OUT_PWD/debug) $$escape_expand(\\n\\t)
+        }
     }
 }
+
+copyAgDll($$PWD/../AgCommon/bin/AgCommon.dll)
+copyAgDll($$PWD/../AgGrid/bin/AgGrid.dll)
+copyAgDll($$PWD/../AgSelect/bin/AgSelect.dll)
 
 # Default rules for deployment.
 qnx: target.path = /tmp/$${TARGET}/bin

@@ -14,7 +14,16 @@ INCLUDEPATH += \
     $$PWD/style \
     $$PWD/renderers \
     $$PWD/editors \
-    $$PWD/validators
+    $$PWD/validators \
+    $$PWD/../AgCommon/include
+
+DEPENDPATH += $$PWD/../AgCommon
+
+win32: LIBS += -L$$PWD/../AgCommon/bin/ -lAgCommon
+else:unix: LIBS += -L$$PWD/../AgCommon/bin/ -lAgCommon
+
+# 让目标依赖 AgCommon 导入库：公共库重编后自动触发重链接
+win32: PRE_TARGETDEPS += $$PWD/../AgCommon/bin/libAgCommon.a
 
 # The following define makes your compiler emit warnings if you use
 # any Qt feature that has been marked deprecated (the exact warnings
@@ -31,7 +40,6 @@ SOURCES += \
     core/AgColumnDef.cpp \
     core/AgGridModel.cpp \
     widget/AgGridWidget.cpp \
-    widget/AgGridScrollBar.cpp \
     widget/AgGridSyncGroup.cpp \
     style/AgGridStyle.cpp \
     style/AgDarkGridStyle.cpp \
@@ -52,7 +60,6 @@ HEADERS += \
     include/AgTreeRow.h \
     include/AgGridWidget.h \
     include/AgGridSyncGroup.h \
-    widget/AgGridScrollBar.h \
     include/AgGridStyle.h \
     include/AgDarkGridStyle.h \
     include/AgCellRenderer.h \

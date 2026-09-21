@@ -1,9 +1,12 @@
 TEMPLATE = subdirs
 
 SUBDIRS += \
+    AgCommon \
     AgGrid \
     AgSelect \
     AgDatePicker \
     Example
 
-Example.depends += AgGrid
+AgGrid.depends += AgCommon
+AgSelect.depends += AgCommon
+Example.depends += AgGrid AgSelect AgCommon

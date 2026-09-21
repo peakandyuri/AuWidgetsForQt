@@ -1,4 +1,4 @@
-#include "AgGridScrollBar.h"
+#include "AgScrollBar.h"
 
 #include <QPainter>
 #include <QMouseEvent>
@@ -6,12 +6,12 @@
 #include <QCursor>
 #include <QtMath>
 
-constexpr int AgGridScrollBar::kMinSliderLength;
-constexpr qreal AgGridScrollBar::kCollapsedExtent;
-constexpr qreal AgGridScrollBar::kExpandedExtent;
-constexpr qreal AgGridScrollBar::kSliderMargin;
+constexpr int AgScrollBar::kMinSliderLength;
+constexpr qreal AgScrollBar::kCollapsedExtent;
+constexpr qreal AgScrollBar::kExpandedExtent;
+constexpr qreal AgScrollBar::kSliderMargin;
 
-AgGridScrollBar::AgGridScrollBar(Qt::Orientation orientation, QWidget *parent)
+AgScrollBar::AgScrollBar(Qt::Orientation orientation, QWidget *parent)
     : QScrollBar(orientation, parent)
     , m_sliderColor(QColor(150, 150, 150))
     , m_backgroundColor(QColor(220, 220, 220))
@@ -31,6 +31,7 @@ AgGridScrollBar::AgGridScrollBar(Qt::Orientation orientation, QWidget *parent)
     setAttribute(Qt::WA_OpaquePaintEvent, false);
     setAutoFillBackground(false);
     setAttribute(Qt::WA_NativeWindow, false);
+    setFocusPolicy(Qt::NoFocus); // 纯鼠标 / 滚轮驱动，避免在弹层中抢走键盘焦点
 
     m_extentAnimation = new QPropertyAnimation(this, "sliderExtent", this);
     m_extentAnimation->setDuration(150);
@@ -41,63 +42,63 @@ AgGridScrollBar::AgGridScrollBar(Qt::Orientation orientation, QWidget *parent)
     m_opacityAnimation->setEasingCurve(QEasingCurve::InOutSine);
 
     m_repeatTimer->setSingleShot(true);
-    connect(m_repeatTimer, &QTimer::timeout, this, &AgGridScrollBar::onRepeatTimeout);
+    connect(m_repeatTimer, &QTimer::timeout, this, &AgScrollBar::onRepeatTimeout);
 }
 
-AgGridScrollBar::~AgGridScrollBar()
+AgScrollBar::~AgScrollBar()
 {
 }
 
-QColor AgGridScrollBar::sliderColor() const
+QColor AgScrollBar::sliderColor() const
 {
     return m_sliderColor;
 }
 
-void AgGridScrollBar::setSliderColor(const QColor &color)
+void AgScrollBar::setSliderColor(const QColor &color)
 {
     m_sliderColor = color;
     update();
 }
 
-QColor AgGridScrollBar::backgroundColor() const
+QColor AgScrollBar::backgroundColor() const
 {
     return m_backgroundColor;
 }
 
-void AgGridScrollBar::setBackgroundColor(const QColor &color)
+void AgScrollBar::setBackgroundColor(const QColor &color)
 {
     m_backgroundColor = color;
     update();
 }
 
-QColor AgGridScrollBar::separatorColor() const
+QColor AgScrollBar::separatorColor() const
 {
     return m_separatorColor;
 }
 
-void AgGridScrollBar::setSeparatorColor(const QColor &color)
+void AgScrollBar::setSeparatorColor(const QColor &color)
 {
     m_separatorColor = color;
     update();
 }
 
-int AgGridScrollBar::trackMargin() const
+int AgScrollBar::trackMargin() const
 {
     return m_trackMargin;
 }
 
-void AgGridScrollBar::setTrackMargin(int margin)
+void AgScrollBar::setTrackMargin(int margin)
 {
     m_trackMargin = qMax(0, margin);
     update();
 }
 
-void AgGridScrollBar::paintEvent(QPaintEvent * /*event*/)
+void AgScrollBar::paintEvent(QPaintEvent * /*event*/)
 {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
 
-    // 左侧分隔线（纵向滚动条与单元格区域区分）
+    // 分隔线（纵向滚动条与内容区域区分，默认不绘制）
     if (orientation() == Qt::Vertical && m_separatorColor.isValid()) {
         painter.save();
         painter.setPen(m_separatorColor);
@@ -126,21 +127,21 @@ void AgGridScrollBar::paintEvent(QPaintEvent * /*event*/)
 }
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-void AgGridScrollBar::enterEvent(QEnterEvent * /*event*/)
+void AgScrollBar::enterEvent(QEnterEvent * /*event*/)
 #else
-void AgGridScrollBar::enterEvent(QEvent * /*event*/)
+void AgScrollBar::enterEvent(QEvent * /*event*/)
 #endif
 {
     startExpandAnimation(true);
 }
 
-void AgGridScrollBar::leaveEvent(QEvent * /*event*/)
+void AgScrollBar::leaveEvent(QEvent * /*event*/)
 {
     if (!m_isDragging)
         startExpandAnimation(false);
 }
 
-void AgGridScrollBar::mousePressEvent(QMouseEvent *event)
+void AgScrollBar::mousePressEvent(QMouseEvent *event)
 {
     if (event->button() != Qt::LeftButton || maximum() <= minimum())
         return;
@@ -148,7 +149,6 @@ void AgGridScrollBar::mousePressEvent(QMouseEvent *event)
     const QRect slider = sliderRect();
     const int posValue = (orientation() == Qt::Horizontal) ? event->pos().x() : event->pos().y();
     const int sliderStart = (orientation() == Qt::Horizontal) ? slider.left() : slider.top();
-//    const int sliderEnd = (orientation() == Qt::Horizontal) ? slider.right() : slider.bottom();
 
     if (slider.contains(event->pos())) {
         m_isDragging = true;
@@ -162,7 +162,7 @@ void AgGridScrollBar::mousePressEvent(QMouseEvent *event)
     }
 }
 
-void AgGridScrollBar::mouseMoveEvent(QMouseEvent *event)
+void AgScrollBar::mouseMoveEvent(QMouseEvent *event)
 {
     if (m_isDragging) {
         if (maximum() <= minimum())
@@ -190,7 +190,7 @@ void AgGridScrollBar::mouseMoveEvent(QMouseEvent *event)
     }
 }
 
-void AgGridScrollBar::mouseReleaseEvent(QMouseEvent * /*event*/)
+void AgScrollBar::mouseReleaseEvent(QMouseEvent * /*event*/)
 {
     m_isDragging = false;
     stopRepeatTimer();
@@ -198,7 +198,7 @@ void AgGridScrollBar::mouseReleaseEvent(QMouseEvent * /*event*/)
         startExpandAnimation(false);
 }
 
-void AgGridScrollBar::wheelEvent(QWheelEvent *event)
+void AgScrollBar::wheelEvent(QWheelEvent *event)
 {
     const int delta = (orientation() == Qt::Horizontal) ? event->angleDelta().x()
                                                         : event->angleDelta().y();
@@ -211,29 +211,29 @@ void AgGridScrollBar::wheelEvent(QWheelEvent *event)
     event->accept();
 }
 
-qreal AgGridScrollBar::sliderExtent() const
+qreal AgScrollBar::sliderExtent() const
 {
     return m_sliderExtent;
 }
 
-void AgGridScrollBar::setSliderExtent(qreal extent)
+void AgScrollBar::setSliderExtent(qreal extent)
 {
     m_sliderExtent = extent;
     update();
 }
 
-qreal AgGridScrollBar::backgroundOpacity() const
+qreal AgScrollBar::backgroundOpacity() const
 {
     return m_backgroundOpacity;
 }
 
-void AgGridScrollBar::setBackgroundOpacity(qreal opacity)
+void AgScrollBar::setBackgroundOpacity(qreal opacity)
 {
     m_backgroundOpacity = qBound(0.0, opacity, 1.0);
     update();
 }
 
-QRect AgGridScrollBar::sliderRect() const
+QRect AgScrollBar::sliderRect() const
 {
     const QRect track = trackRect();
     if (maximum() <= minimum())
@@ -257,7 +257,7 @@ QRect AgGridScrollBar::sliderRect() const
     }
 }
 
-QRect AgGridScrollBar::trackRect() const
+QRect AgScrollBar::trackRect() const
 {
     if (orientation() == Qt::Horizontal) {
         return rect().adjusted(m_trackMargin, 0, -m_trackMargin, 0);
@@ -266,7 +266,7 @@ QRect AgGridScrollBar::trackRect() const
     }
 }
 
-void AgGridScrollBar::startExpandAnimation(bool expand)
+void AgScrollBar::startExpandAnimation(bool expand)
 {
     m_isExpanded = expand;
 
@@ -281,7 +281,7 @@ void AgGridScrollBar::startExpandAnimation(bool expand)
     m_opacityAnimation->start();
 }
 
-int AgGridScrollBar::pageScrollDirectionAt(const QPoint &pos) const
+int AgScrollBar::pageScrollDirectionAt(const QPoint &pos) const
 {
     const QRect slider = sliderRect();
     if (!slider.isValid() || slider.contains(pos))
@@ -298,7 +298,7 @@ int AgGridScrollBar::pageScrollDirectionAt(const QPoint &pos) const
     return 0;
 }
 
-void AgGridScrollBar::startRepeatTimer(int direction)
+void AgScrollBar::startRepeatTimer(int direction)
 {
     m_repeatDirection = direction;
     m_repeatTimer->stop();
@@ -307,13 +307,13 @@ void AgGridScrollBar::startRepeatTimer(int direction)
     m_repeatTimer->start();
 }
 
-void AgGridScrollBar::stopRepeatTimer()
+void AgScrollBar::stopRepeatTimer()
 {
     m_repeatDirection = 0;
     m_repeatTimer->stop();
 }
 
-void AgGridScrollBar::onRepeatTimeout()
+void AgScrollBar::onRepeatTimeout()
 {
     if (m_repeatDirection == 0 || maximum() <= minimum())
         return;

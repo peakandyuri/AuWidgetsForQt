@@ -1,5 +1,5 @@
 #include "AgGridWidget.h"
-#include "AgGridScrollBar.h"
+#include "AgScrollBar.h"
 #include "AgDefaultCellRenderer.h"
 #include "AgCheckBoxCellRenderer.h"
 #include "AgDefaultCellEditor.h"
@@ -57,8 +57,8 @@ AgGridWidget::AgGridWidget(QWidget *parent)
     , m_sortingEnabled(false)
     , m_selectedOriginalRow(-1)
     , m_selectionMode(SelectionMode::Single)
-    , m_hScrollBar(new AgGridScrollBar(Qt::Horizontal, this))
-    , m_vScrollBar(new AgGridScrollBar(Qt::Vertical, this))
+    , m_hScrollBar(new AgScrollBar(Qt::Horizontal, this))
+    , m_vScrollBar(new AgScrollBar(Qt::Vertical, this))
     , m_hScrollBarVisible(false)
     , m_vScrollBarVisible(false)
     , m_style(AgGridStyle::globalStyle())
