@@ -23,6 +23,7 @@ class AGCOMMON_EXPORT AgScrollBar : public QScrollBar
     Q_OBJECT
     Q_PROPERTY(qreal sliderExtent READ sliderExtent WRITE setSliderExtent)
     Q_PROPERTY(qreal backgroundOpacity READ backgroundOpacity WRITE setBackgroundOpacity)
+    Q_PROPERTY(qreal contentOpacity READ contentOpacity WRITE setContentOpacity)
 
 public:
     explicit AgScrollBar(Qt::Orientation orientation, QWidget *parent = nullptr);
@@ -39,6 +40,9 @@ public:
 
     int trackMargin() const;
     void setTrackMargin(int margin);
+
+    qreal contentOpacity() const;
+    void setContentOpacity(qreal opacity);      ///< 整体内容不透明度乘数（0~1），供宿主随蒙层同步淡入淡出
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -74,6 +78,7 @@ private:
     QColor m_separatorColor;
     qreal m_sliderExtent;
     qreal m_backgroundOpacity;
+    qreal m_contentOpacity;
     bool m_isExpanded;
     bool m_isDragging;
     int m_dragStartValue;

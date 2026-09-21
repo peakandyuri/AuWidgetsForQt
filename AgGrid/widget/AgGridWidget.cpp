@@ -21,6 +21,7 @@
 #include <QDebug>
 #include <QVariantAnimation>
 #include <algorithm>
+#include <limits>
 
 constexpr int AgGridWidget::kResizeHandleTolerance;
 
@@ -157,8 +158,8 @@ AgGridWidget::AgGridWidget(QWidget *parent)
             m_loadingTimer->start();
         else if (opacity <= 0.0 && m_loadingTimer->isActive())
             m_loadingTimer->stop();
-        if (opacity <= 0.0)
-            updateScrollBars();   // 淡出结束：按内容恢复滚动条显隐
+        // 滚动条随蒙层淡入淡出；过渡两端（蒙层全隐 / 全显）交回 updateScrollBars 恢复真实显隐
+        applyLoadingFadeToScrollBars(opacity);
         update();
     });
 
@@ -577,16 +578,39 @@ void AgGridWidget::animateColumnVisibility(int firstLeaf, int lastLeaf, bool vis
     m_columnVisShiftEntries.clear();
 
     if (m_columnVisHiding) {
-        // 隐藏：目标列保持宽度并淡出，右侧列左移（目标列宽度之后才真正移除）
-        int w = 0;
-        for (int col = firstLeaf; col <= lastLeaf; ++col)
-            w += columnWidth(col);
+        // 隐藏：目标列保持宽度并淡出；右侧列滑向真实最终布局位置。
+        // 终点不能简单取"当前位置 - 被隐藏宽度"：Flex/AutoFit 列会在隐藏后重新
+        // 分配宽度（如 Demo 中 E 撑开把 F 顶回），产生先左移后右移的两段式跳动。
+        // 与显示分支对称：先临时应用隐藏重建出最终布局取终点，再恢复现状。
+        QVector<int> oldOffsets;
+        oldOffsets.reserve(shiftColumns.size());
+        for (int col : shiftColumns)
+            oldOffsets.append(columnContentOffset(col));
 
-        for (int col : shiftColumns) {
+        for (int col = firstLeaf; col <= lastLeaf; ++col) {
+            const QString field = m_model->fieldAtColumn(col);
+            if (!field.isEmpty())
+                m_hiddenFields.insert(field);
+        }
+        rebuildColumnOffsets();
+
+        QVector<int> finalOffsets;
+        finalOffsets.reserve(shiftColumns.size());
+        for (int col : shiftColumns)
+            finalOffsets.append(columnContentOffset(col));
+
+        for (int col = firstLeaf; col <= lastLeaf; ++col) {
+            const QString field = m_model->fieldAtColumn(col);
+            if (!field.isEmpty())
+                m_hiddenFields.remove(field);
+        }
+        rebuildColumnOffsets();
+
+        for (int i = 0; i < shiftColumns.size(); ++i) {
             ColumnDragAnimationEntry e;
-            e.column = col;
-            e.startOffset = columnContentOffset(col);
-            e.endOffset = e.startOffset - w;
+            e.column = shiftColumns.at(i);
+            e.startOffset = oldOffsets.at(i);
+            e.endOffset = finalOffsets.at(i);
             m_columnVisShiftEntries.append(e);
         }
     } else {
@@ -940,7 +964,8 @@ void AgGridWidget::paintEvent(QPaintEvent * /*event*/)
         painter.restore();
     }
 
-    // 5. 加载遮罩：最后绘制，盖住表格内容（滚动条/编辑器等子控件由 setLoading 负责隐藏）
+    // 5. 加载遮罩：最后绘制，盖住表格内容（编辑器由 setLoading 关闭；
+    //    滚动条是子控件盖不住，随蒙层反向淡变，见 applyLoadingFadeToScrollBars）
     if (m_loadingOpacity > 0.0)
         drawLoadingOverlay(&painter);
 }
@@ -1777,8 +1802,9 @@ void AgGridWidget::updateScrollBars()
         return;
     }
 
-    // 加载遮罩显示期间强制隐藏滚动条（子控件会盖在蒙层上），结束后由动画回调恢复
-    if (m_loading) {
+    // 加载遮罩完全显示期间强制隐藏滚动条（子控件会盖在蒙层上）；
+    // 淡入 / 淡出过渡中按内容正常显隐，透明度由 applyLoadingFadeToScrollBars 随蒙层淡变
+    if (m_loading && m_loadingOpacity >= 1.0) {
         m_hScrollBar->hide();
         m_vScrollBar->hide();
         m_hScrollBarVisible = false;
@@ -2594,28 +2620,66 @@ int AgGridWidget::baseColumnX(int column) const
         return fixedWidth + m_columnOffsets.at(column) - m_xOffset;
 
     if (region == ColumnRegion::LeftPinned) {
+        // 右停靠区的左边界（按右区未夹紧位置计算，避免两个区域互相引用）
+        int rightLimit = std::numeric_limits<int>::max();
+        if (!m_rightPinnedColumns.isEmpty()) {
+            int nextLeft = viewportWidthForColumns();
+            for (int i = m_rightPinnedColumns.size() - 1; i >= 0; --i) {
+                const int col = m_rightPinnedColumns.at(i);
+                const int naturalRight = fixedWidth + m_columnOffsets.at(col + 1) - m_xOffset;
+                nextLeft = qMin(nextLeft, naturalRight) - columnWidth(col);
+            }
+            rightLimit = nextLeft;
+        }
+        // 让位右移时不得越过右停靠区；预留本列右侧其余左停靠列的宽度，保证整组不重叠
+        int totalLeftWidth = 0;
+        for (int col : m_leftPinnedColumns)
+            totalLeftWidth += columnWidth(col);
         int prevRight = fixedWidth;
-        for (int col : m_leftPinnedColumns) {
+        int widthsBefore = 0;
+        for (int idx = 0; idx < m_leftPinnedColumns.size(); ++idx) {
+            const int col = m_leftPinnedColumns.at(idx);
             const int naturalX = fixedWidth + m_columnOffsets.at(col) - m_xOffset;
-            const int x = qMax(prevRight, naturalX);
+            const int maxX = rightLimit - (totalLeftWidth - widthsBefore - columnWidth(col));
+            const int x = qMax(prevRight, qMin(naturalX, maxX));
             if (col == column)
                 return x;
+            widthsBefore += columnWidth(col);
             prevRight = x + columnWidth(col);
         }
         return 0;
     }
 
     if (region == ColumnRegion::RightPinned) {
+        // 左停靠区的右边缘（按左区未夹紧位置计算）
+        int prevRight = fixedWidth;
+        for (int col : m_leftPinnedColumns) {
+            const int naturalX = fixedWidth + m_columnOffsets.at(col) - m_xOffset;
+            prevRight = qMax(prevRight, naturalX) + columnWidth(col);
+        }
+        const int leftLimit = prevRight;
+
+        // 先按让位规则求最左列位置，得出整组需右移的量，保持右停靠组内部不重叠
         int nextLeft = viewportWidthForColumns();
+        int leftmostX = nextLeft;
+        for (int i = m_rightPinnedColumns.size() - 1; i >= 0; --i) {
+            const int col = m_rightPinnedColumns.at(i);
+            const int naturalRight = fixedWidth + m_columnOffsets.at(col + 1) - m_xOffset;
+            leftmostX = qMin(nextLeft, naturalRight) - columnWidth(col);
+            nextLeft = leftmostX;
+        }
+        int shift = qMax(0, leftLimit - leftmostX);
+
+        nextLeft = viewportWidthForColumns();
         for (int i = m_rightPinnedColumns.size() - 1; i >= 0; --i) {
             const int col = m_rightPinnedColumns.at(i);
             const int naturalRight = fixedWidth + m_columnOffsets.at(col + 1) - m_xOffset;
             const int width = columnWidth(col);
             const int right = qMin(nextLeft, naturalRight);
-            const int x = right - width;
+            const int x = right - width + shift;
             if (col == column)
                 return x;
-            nextLeft = x;
+            nextLeft = x - shift;
         }
         return 0;
     }
@@ -5598,8 +5662,17 @@ void AgGridWidget::setLoading(bool loading)
         finishTreeAnimation();
         clearHoverCell();
         clearHeaderHover();
-        updateScrollBars();
+        // 淡入过渡中滚动条仍短暂显示（随蒙层淡出），禁用交互保证遮罩屏蔽行为不变
+        m_hScrollBar->setEnabled(false);
+        m_vScrollBar->setEnabled(false);
+    } else {
+        m_hScrollBar->setEnabled(true);
+        m_vScrollBar->setEnabled(true);
     }
+
+    // 滚动条显隐与列布局在过渡开始时就位（此时蒙层几乎不透明，布局变化不可见），
+    // 之后透明度随蒙层淡变，避免淡出结束时滚动条 / 列宽突然变化造成闪烁
+    updateScrollBars();
 
     m_loadingAnimation->stop();
     m_loadingAnimation->setDuration(loading ? 200 : 160);
@@ -5607,6 +5680,17 @@ void AgGridWidget::setLoading(bool loading)
     m_loadingAnimation->setEndValue(loading ? 1.0 : 0.0);
     m_loadingAnimation->start();
     update();
+}
+
+void AgGridWidget::applyLoadingFadeToScrollBars(qreal maskOpacity)
+{
+    // 滚动条是子控件，蒙层盖不住；淡入 / 淡出过渡中让其透明度与蒙层反向同步淡变，
+    // 稳态（蒙层全显 / 全隐）时交回 updateScrollBars 按内容与加载状态决定真实显隐
+    const qreal barOpacity = 1.0 - maskOpacity;
+    m_hScrollBar->setContentOpacity(barOpacity);
+    m_vScrollBar->setContentOpacity(barOpacity);
+    if (maskOpacity <= 0.0 || maskOpacity >= 1.0)
+        updateScrollBars();
 }
 
 bool AgGridWidget::isLoading() const
@@ -5882,15 +5966,11 @@ void AgGridWidget::startRowDrag(int visibleRow, const QPoint &globalPos)
     setCursor(Qt::ArrowCursor);
     clearHoverCell();
 
-    if (!m_dragFloatWidget) {
-        m_dragFloatWidget = new QLabel(nullptr);
-        m_dragFloatWidget->setWindowFlags(Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
-        m_dragFloatWidget->setAttribute(Qt::WA_TransparentForMouseEvents);
-        m_dragFloatWidget->setStyleSheet(QStringLiteral("QLabel { background-color: rgba(240, 240, 240, 230); border: 1px solid gray; border-radius: 4px; padding: 4px 8px; }"));
-    }
+    ensureDragFloatWidget();
     updateDragFloatWidgetText();
     m_dragFloatWidget->adjustSize();
     m_dragFloatWidget->show();
+    m_dragFloatWidget->raise();
     updateDragFloatWidgetPosition(globalPos);
 
     startAutoScroll();
@@ -6448,6 +6528,17 @@ int AgGridWidget::targetVisibleIndexForDrag(const QPoint &pos) const
     return blockStart;
 }
 
+void AgGridWidget::ensureDragFloatWidget()
+{
+    if (m_dragFloatWidget)
+        return;
+    // 用子控件覆盖层而非顶层 Qt::Tool 原生窗口：部分 Linux 窗口管理器会给顶层窗口
+    // 再描一圈方形装饰边框（Wayland 下顶层窗口也无法自由定位移动），子控件则无此问题
+    m_dragFloatWidget = new QLabel(this);
+    m_dragFloatWidget->setAttribute(Qt::WA_TransparentForMouseEvents);
+    m_dragFloatWidget->setStyleSheet(QStringLiteral("QLabel { background-color: rgba(240, 240, 240, 230); border: 1px solid gray; border-radius: 4px; padding: 4px 8px; }"));
+}
+
 void AgGridWidget::updateDragFloatWidget(const QPoint &globalPos)
 {
     updateDragFloatWidgetPosition(globalPos);
@@ -6469,7 +6560,7 @@ void AgGridWidget::updateDragFloatWidgetPosition(const QPoint &globalPos)
     target.setX(qMax(globalRect.left(), qMin(maxX, target.x())));
     target.setY(qMax(bodyTop, qMin(maxY, target.y())));
 
-    m_dragFloatWidget->move(target);
+    m_dragFloatWidget->move(mapFromGlobal(target));
 }
 
 void AgGridWidget::updateDragFloatWidgetText()
@@ -6799,15 +6890,11 @@ void AgGridWidget::startColumnDrag(const QVector<int> &parentPath, int index, co
 
     clearHoverCell();
 
-    if (!m_dragFloatWidget) {
-        m_dragFloatWidget = new QLabel(nullptr);
-        m_dragFloatWidget->setWindowFlags(Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
-        m_dragFloatWidget->setAttribute(Qt::WA_TransparentForMouseEvents);
-        m_dragFloatWidget->setStyleSheet(QStringLiteral("QLabel { background-color: rgba(240, 240, 240, 230); border: 1px solid gray; border-radius: 4px; padding: 4px 8px; }"));
-    }
+    ensureDragFloatWidget();
     updateColumnDragFloatWidgetText();
     m_dragFloatWidget->adjustSize();
     m_dragFloatWidget->show();
+    m_dragFloatWidget->raise();
     updateColumnDragFloatWidgetPosition(globalPos);
 
     update();
@@ -7048,11 +7135,11 @@ void AgGridWidget::updateColumnDragFloatWidgetPosition(const QPoint &globalPos)
 
     const QRect globalRect = QRect(mapToGlobal(QPoint(0, 0)), size());
     const int headerTop = globalRect.top();
+    const int maxY = globalRect.bottom() - m_dragFloatWidget->height();
     QPoint target = globalPos - QPoint(m_dragFloatWidget->width() / 2, m_dragFloatWidget->height() / 2);
-    const int maxX = globalRect.right() - m_dragFloatWidget->width();
-    target.setX(qMax(globalRect.left(), qMin(maxX, target.x())));
-    target.setY(qMax(headerTop, target.y()));
-    m_dragFloatWidget->move(target);
+    target.setX(qMax(globalRect.left(), qMin(globalRect.right() - m_dragFloatWidget->width(), target.x())));
+    target.setY(qMax(headerTop, qMin(maxY, target.y())));
+    m_dragFloatWidget->move(mapFromGlobal(target));
 }
 
 void AgGridWidget::updateColumnDragFloatWidgetText()

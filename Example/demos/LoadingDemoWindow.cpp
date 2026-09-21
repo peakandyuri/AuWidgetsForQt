@@ -51,7 +51,7 @@ LoadingDemoWindow::LoadingDemoWindow(QWidget *parent)
     m_contentLayout->addWidget(m_grid, 1);
 
     addNote("遮罩显示期间：鼠标点击 / 双击 / 滚轮 / 键盘 / 右键菜单均被屏蔽，"
-            "悬停高亮与手型光标一并清除；滚动条隐藏，淡出结束后按内容恢复。");
+            "悬停高亮与手型光标一并清除；滚动条随蒙层一起淡入淡出，显隐与列宽过渡无跳变。");
     addNote("打开中的编辑器自动关闭（不提交）；进行中的行 / 列拖拽自动取消。");
     addNote("蒙层 / 圆环 / 文字颜色与默认文字由样式键 Loading* 控制（见文档样式键章节）。");
 }

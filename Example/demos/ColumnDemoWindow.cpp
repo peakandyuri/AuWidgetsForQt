@@ -80,10 +80,10 @@ ColumnDemoWindow::ColumnDemoWindow(QWidget *parent)
     visButtons->addStretch(1);
 
     connect(hideColBtn, &QPushButton::clicked, this, [this]() {
-        m_grid->setColumnVisible(2, false);
+        m_grid->setColumnVisible(QStringLiteral("col2"), false);
     });
     connect(showColBtn, &QPushButton::clicked, this, [this]() {
-        m_grid->setColumnVisible(2, true);
+        m_grid->setColumnVisible(QStringLiteral("col2"), true);
     });
     connect(hideGroupBtn, &QPushButton::clicked, this, [this]() {
         m_grid->setColumnVisible(QStringLiteral("Multi"), false);

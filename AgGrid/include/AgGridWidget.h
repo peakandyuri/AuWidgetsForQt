@@ -464,6 +464,9 @@ private:
     /// 依据内容宽度/高度与视口大小更新滚动条显隐与量程。
     void updateScrollBars();
     void updateScrollBarsCompute();
+    /// 加载遮罩淡入 / 淡出时让滚动条随蒙层反向淡变（滚动条是子控件，蒙层盖不住，
+    /// 只能同步淡变，避免淡出结束时滚动条与列布局突然弹出造成闪烁）。
+    void applyLoadingFadeToScrollBars(qreal maskOpacity);
     /// 根据列宽、停靠、隐藏状态重建列偏移表与列区域分组。
     void rebuildColumnOffsets();
     /// 把样式应用到滚动条（颜色、粗细）。
@@ -569,6 +572,7 @@ private:
     void updateDragFloatWidget(const QPoint &globalPos);
     void updateDragFloatWidgetPosition(const QPoint &globalPos);
     void updateDragFloatWidgetText();
+    void ensureDragFloatWidget();
     void startAutoScroll();
     void stopAutoScroll();
     void onAutoScrollTimeout();

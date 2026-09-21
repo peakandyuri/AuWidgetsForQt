@@ -17,6 +17,7 @@ AgScrollBar::AgScrollBar(Qt::Orientation orientation, QWidget *parent)
     , m_backgroundColor(QColor(220, 220, 220))
     , m_sliderExtent(kCollapsedExtent)
     , m_backgroundOpacity(0.0)
+    , m_contentOpacity(1.0)
     , m_isExpanded(false)
     , m_isDragging(false)
     , m_dragStartValue(0)
@@ -93,10 +94,28 @@ void AgScrollBar::setTrackMargin(int margin)
     update();
 }
 
+qreal AgScrollBar::contentOpacity() const
+{
+    return m_contentOpacity;
+}
+
+void AgScrollBar::setContentOpacity(qreal opacity)
+{
+    const qreal clamped = qBound(0.0, opacity, 1.0);
+    if (m_contentOpacity == clamped)
+        return;
+    m_contentOpacity = clamped;
+    update();
+}
+
 void AgScrollBar::paintEvent(QPaintEvent * /*event*/)
 {
+    if (m_contentOpacity <= 0.0)
+        return;
+
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
+    painter.setOpacity(m_contentOpacity);
 
     // 分隔线（纵向滚动条与内容区域区分，默认不绘制）
     if (orientation() == Qt::Vertical && m_separatorColor.isValid()) {
@@ -109,11 +128,11 @@ void AgScrollBar::paintEvent(QPaintEvent * /*event*/)
     // 背景（鼠标悬停时显示，只绘制可拖动的轨道区域）
     const QRect track = trackRect();
     if (m_backgroundOpacity > 0.0 && track.isValid()) {
-        painter.setOpacity(m_backgroundOpacity);
+        painter.setOpacity(m_contentOpacity * m_backgroundOpacity);
         painter.setPen(Qt::NoPen);
         painter.setBrush(m_backgroundColor);
         painter.drawRoundedRect(track, 6, 6);
-        painter.setOpacity(1.0);
+        painter.setOpacity(m_contentOpacity);
     }
 
     // 滑块
