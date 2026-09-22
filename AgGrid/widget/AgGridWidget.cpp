@@ -130,6 +130,7 @@ AgGridWidget::AgGridWidget(QWidget *parent)
     , m_dataResetProgress(0.0)
     , m_dataResetSlideHeight(0)
     , m_dataResetAnimation(nullptr)
+    , m_rowRemovePending(false)
 {
     AgGridStyle::registerGlobalStyleObserver(this);
 
@@ -938,6 +939,22 @@ void AgGridWidget::paintEvent(QPaintEvent * /*event*/)
         }
     }
 
+    // 行删除消失动画：被删行的像素幽灵带原位淡出并轻微上漂，
+    // 下方行经排序位移动画上滑补位（与排序动画共用进度与缓动，绘制在其之上）
+    if (!m_removedRowGhosts.isEmpty()) {
+        const qreal ghostOpacity = qBound(0.0, 1.0 - m_dataAnimationProgress, 1.0);
+        if (ghostOpacity > 0.0) {
+            painter.save();
+            painter.setClipRect(0, headerHeight(), width(), bodyHeight(), Qt::IntersectClip);
+            painter.setOpacity(ghostOpacity);
+            for (const RemovedRowGhost &ghost : m_removedRowGhosts) {
+                const int drift = qRound(ghost.height * 0.3 * m_dataAnimationProgress);
+                painter.drawImage(QPoint(0, ghost.y - drift), ghost.image);
+            }
+            painter.restore();
+        }
+    }
+
     painter.restore();
 
     // 4. 绘制面板边框：用“外轮廓 - 内轮廓”的环形填充代替画笔描边。
@@ -1699,6 +1716,27 @@ void AgGridWidget::connectModel()
         m_dataResetSnapshot = grab(QRect(0, headerHeight(), width(), bodyHeight())).toImage();
         m_dataResetPending = !m_dataResetSnapshot.isNull();
     });
+    connect(m_model, &AgGridModel::rowsAboutToBeRemoved, this, [this](const QVector<int> &originalRows) {
+        // 删除落地前旧数据 / 旧布局仍完整：捕获被删可见行的像素带供消失动画使用
+        captureRemovedRowGhosts(originalRows);
+    });
+    connect(m_model, &AgGridModel::rowsRemoved, this, [this](const QVector<int> & /*originalRows*/) {
+        // 原始行号按位置存储，删除会使后续行整体前移，保留的选择/勾选必然错位，
+        // 行为与 rowsChanged（数据替换）一致：整体清空并通知
+        const bool hadChecks = !m_checkedOriginalRows.isEmpty() || !m_partialOriginalRows.isEmpty();
+        const bool hadSelection = (m_selectedRow >= 0 || !m_selectedOriginalRows.isEmpty());
+        m_checkedOriginalRows.clear();
+        m_partialOriginalRows.clear();
+        m_selectedRow = -1;
+        m_selectedOriginalRow = -1;
+        m_selectedOriginalRows.clear();
+        if (!m_isRowDragging && !m_isColumnDragging) {
+            if (hadChecks)
+                emit checkedStateChanged();
+            if (hadSelection)
+                emit selectionChanged();
+        }
+    });
     connect(m_model, &AgGridModel::rowsChanged, this, [this]() {
         const bool hadChecks = !m_checkedOriginalRows.isEmpty();
         const bool hadSelection = (m_selectedRow >= 0 || !m_selectedOriginalRows.isEmpty());
@@ -1764,13 +1802,17 @@ void AgGridWidget::connectModel()
         if (!m_isRowDragging && !m_isColumnDragging) {
             updateScrollBars();
             update();
-            // 数据变化动画：重设数据 → 快照切换动画；其余（排序 / 过滤）→ 行位移动画。
-            // 二者之后都刷新布局基线，供下一次布局变化使用。
+            // 数据变化动画：重设数据 → 快照切换动画；删除行 → 专用消失动画；
+            // 其余（排序 / 过滤）→ 行位移动画。之后都刷新布局基线，供下一次布局变化使用。
             if (m_dataResetPending)
                 startDataResetAnimation();
+            else if (m_rowRemovePending)
+                startRowRemoveAnimation();
             else
                 startSortMoveAnimation();
             captureLayoutSnapshot();
+        } else {
+            m_rowRemovePending = false;   // 拖拽期间不播动画：丢弃待演状态，避免污染下次布局变化
         }
     });
     connect(m_model, &AgGridModel::filterChanged, this, [this]() { emit filterChanged(); });
@@ -6263,6 +6305,143 @@ void AgGridWidget::captureLayoutSnapshot()
     m_animLastOffsets = m_rowOffsets;
 }
 
+void AgGridWidget::captureRemovedRowGhosts(const QVector<int> &originalRows)
+{
+    m_removedRowGhosts.clear();
+    m_removedOldVis.clear();
+    m_rowRemovePending = false;
+    if (!m_dataAnimationEnabled || m_loading || !isVisible() || bodyHeight() <= 0)
+        return;
+    if (isTreeMode())
+        return;   // 树形模式不支持按行删除（模型层同样忽略），无消失动画
+    if (m_animLastOrder.isEmpty() || m_animLastOffsets.size() != m_animLastOrder.size() + 1)
+        return;
+
+    // 与进行中的排序 / 位移动画互斥：先落地为终态，再捕获本次删除的幽灵带
+    finishSortMoveAnimation();
+
+    const int bodyTop = headerHeight();
+    const int bodyHeightPx = bodyHeight();
+    // 行偏移表为 body 相对坐标：视口可见带 = [m_yOffset, m_yOffset + bodyHeight)
+    const int viewTop = m_yOffset;
+    const int viewBottom = m_yOffset + bodyHeightPx;
+
+    // 旧可见行号的完整被删集合（含视口外）：新→旧位置映射必须跳过全部被删行
+    QVector<RemovedRowGhost> ghosts;
+    for (int original : originalRows) {
+        const int oldVis = m_animLastOrder.indexOf(original);
+        if (oldVis < 0)
+            continue;   // 行不可见（被过滤 / 折叠）：无外观可捕获，映射同样跳过
+        m_removedOldVis.append(oldVis);
+        const int y = m_animLastOffsets.at(oldVis);
+        const int h = m_animLastOffsets.at(oldVis + 1) - y;
+        if (y + h <= viewTop || y >= viewBottom)
+            continue;   // 完全在视口外：无需幽灵，但参与位置映射
+        RemovedRowGhost ghost;
+        ghost.y = y;
+        ghost.height = h;
+        ghosts.append(ghost);
+    }
+    if (m_removedOldVis.isEmpty())
+        return;
+
+    std::sort(m_removedOldVis.begin(), m_removedOldVis.end());
+    if (!ghosts.isEmpty()) {
+        // 只截内容区宽度：grab 会把子控件（右侧竖向滚动条）一并渲染进来，
+        // 若按整宽快照，每条幽灵带右缘都会带上一段滚动条像素，多行删除时
+        // 叠在实时滚动条上呈现为阶梯状的粗竖线残影
+        const int contentW = viewportWidthForColumns();
+        if (contentW <= 0) {
+            m_removedRowGhosts.clear();
+            return;
+        }
+        // 整个 body 一次快照再裁出行带（此刻模型旧数据仍完整，grab 即旧行内容）
+        const QImage bodySnapshot = grab(QRect(0, bodyTop, contentW, bodyHeightPx)).toImage();
+        if (bodySnapshot.isNull()) {
+            m_removedRowGhosts.clear();
+            return;
+        }
+        const qreal dpr = bodySnapshot.devicePixelRatio() > 0 ? bodySnapshot.devicePixelRatio() : 1.0;
+        for (RemovedRowGhost &ghost : ghosts) {
+            // 快照第 p 像素行对应 body 坐标 viewTop + p；裁出可见带并记录其视口绘制 y
+            const int bandTop = qMax(viewTop, ghost.y);
+            const int cropTop = bandTop - viewTop;
+            const int cropH = qMin(viewBottom, ghost.y + ghost.height) - bandTop;
+            // copy(x, y, w, h)：行带是横向整条、纵向裁剪，勿将纵向偏移误传给 x
+            ghost.image = bodySnapshot.copy(0, qRound(cropTop * dpr),
+                                            qRound(contentW * dpr), qRound(cropH * dpr));
+            ghost.y = bodyTop + cropTop;   // 视口坐标（裁剪过的带从可见处起画）
+        }
+        m_removedRowGhosts = ghosts;
+    }
+    m_rowRemovePending = true;
+}
+
+void AgGridWidget::startRowRemoveAnimation()
+{
+    m_rowRemovePending = false;
+    if (!m_dataAnimationEnabled || m_loading || !isVisible())
+        return;
+    if (m_rowOffsetsDirty)
+        rebuildRowOffsets();   // 删除后的新布局行偏移
+
+    // 新可见行序列 = 旧可见行序列剔除被删行：由此得到每行旧 y → 新 y 的上滑映射。
+    // 不能走排序 FLIP：删除使原始行号前移，按身份映射会把不同数据行错配到一起。
+    const int oldCount = m_animLastOrder.size();
+    const int newCount = m_model ? m_model->rowCount() : 0;
+    if (oldCount == 0 || m_animLastOffsets.size() != oldCount + 1)
+        return;
+
+    m_dataAnimationEntries.clear();
+    const int removedCount = m_removedOldVis.size();
+    // 行偏移为 body 相对坐标：视口带 = [m_yOffset, m_yOffset + bodyHeight)
+    const int viewTop = m_yOffset;
+    const int viewBottom = m_yOffset + bodyHeight();
+    const int bandMargin = rowHeight() * 4;   // 只动画视口邻域的行，远处行直接就位
+    int removedIdx = 0;
+    int newVis = 0;
+    for (int oldVis = 0; oldVis < oldCount && newVis < newCount; ++oldVis) {
+        if (removedIdx < removedCount && m_removedOldVis.at(removedIdx) == oldVis) {
+            ++removedIdx;
+            continue;   // 该旧行被删除：无新载体，由幽灵带负责淡出
+        }
+        const int oldY = m_animLastOffsets.at(oldVis);
+        const int newY = m_rowOffsets.at(newVis);
+        const bool oldNear = (oldY >= viewTop - bandMargin && oldY <= viewBottom + bandMargin);
+        const bool newNear = (newY >= viewTop - bandMargin && newY <= viewBottom + bandMargin);
+        if (oldY != newY && (oldNear || newNear)) {
+            DataMoveAnimationEntry e;
+            e.visibleRow = newVis;
+            e.startOffset = oldY;
+            e.endOffset = newY;
+            m_dataAnimationEntries.append(e);
+        }
+        ++newVis;
+    }
+
+    if (m_dataAnimationEntries.isEmpty() && m_removedRowGhosts.isEmpty())
+        return;
+    if (m_sortAnimationDuration <= 0) {
+        finishSortMoveAnimation();   // 时长为 0：不播动画，直接呈现终态
+        return;
+    }
+
+    m_dataAnimationProgress = 0.0;
+    m_dataAnimation = new QVariantAnimation(this);
+    m_dataAnimation->setStartValue(0.0);
+    m_dataAnimation->setEndValue(1.0);
+    m_dataAnimation->setDuration(m_sortAnimationDuration);
+    m_dataAnimation->setEasingCurve(QEasingCurve::OutCubic);   // 与排序动画一致的快出缓停手感
+    connect(m_dataAnimation, &QVariantAnimation::valueChanged, this, [this](const QVariant &value) {
+        m_dataAnimationProgress = qBound(0.0, value.toReal(), 1.0);
+        update();
+    });
+    connect(m_dataAnimation, &QVariantAnimation::finished, this, [this]() {
+        finishSortMoveAnimation();
+    });
+    m_dataAnimation->start();
+}
+
 void AgGridWidget::startSortMoveAnimation()
 {
     finishSortMoveAnimation();
@@ -6384,10 +6563,12 @@ void AgGridWidget::startSortMoveAnimation()
         m_dataAnimationEntries.append(e);
     }
 
-    if (m_dataAnimationEntries.isEmpty())
+    if (m_dataAnimationEntries.isEmpty() && m_removedRowGhosts.isEmpty())
         return;
-    if (m_sortAnimationDuration <= 0)
-        return;   // 时长为 0：不播动画，直接呈现终态
+    if (m_sortAnimationDuration <= 0) {
+        finishSortMoveAnimation();   // 时长为 0：不播动画，清理条目直接呈现终态
+        return;
+    }
 
     m_dataAnimationProgress = 0.0;
     m_dataAnimation = new QVariantAnimation(this);
@@ -6412,9 +6593,12 @@ void AgGridWidget::finishSortMoveAnimation()
         delete m_dataAnimation;
         m_dataAnimation = nullptr;
     }
-    if (m_dataAnimationEntries.isEmpty() && m_dataAnimationProgress == 0.0)
+    if (m_dataAnimationEntries.isEmpty() && m_removedRowGhosts.isEmpty()
+        && m_dataAnimationProgress == 0.0)
         return;
     m_dataAnimationEntries.clear();
+    m_removedRowGhosts.clear();
+    m_removedOldVis.clear();
     m_dataAnimationProgress = 0.0;
     update();
 }

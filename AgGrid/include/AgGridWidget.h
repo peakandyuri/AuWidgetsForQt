@@ -582,6 +582,8 @@ private:
     // 数据变化动画：排序 FLIP（行按旧布局位置 → 新布局位置位移）+ 重设数据切换
     /// 快照当前 可见行→原始行 顺序与行偏移，作为下一次布局变化的动画起点。
     void captureLayoutSnapshot();
+    void captureRemovedRowGhosts(const QVector<int> &originalRows);
+    void startRowRemoveAnimation();
     /// 布局变化（排序 / 过滤）后按快照计算各行位移并播放 200ms 位移动画；
     /// 移出视口的行夹取到视口外沿退场，新进入视口的行从所属方向的外沿入场。
     void startSortMoveAnimation();
@@ -913,6 +915,16 @@ private:
     qreal m_dataResetProgress;               ///< 切换动画进度 0~1
     int m_dataResetSlideHeight;              ///< 切换动画滑动距离（开演时的 body 高度）
     QVariantAnimation *m_dataResetAnimation; ///< 切换动画驱动
+
+    // 行删除消失动画（独立于排序 FLIP：删除使原始行号前移，无法按身份做新旧映射）
+    struct RemovedRowGhost {
+        QImage image;                        ///< 删除前该行可见部分的像素带
+        int y;                               ///< 幽灵带绘制基准 y（视口坐标，已夹到 body 顶）
+        int height;                          ///< 删除前行高（用于上漂距离）
+    };
+    QVector<RemovedRowGhost> m_removedRowGhosts;  ///< 淡出中的被删行幽灵带（按 y 升序）
+    QVector<int> m_removedOldVis;                 ///< 被删行的旧可见行号（升序，新→旧位置映射用）
+    bool m_rowRemovePending;                      ///< 已捕获删除快照，待 layoutChanged 开演
 
     static constexpr int kResizeHandleTolerance = 4;  ///< 列宽调整热区容差（像素）
 };

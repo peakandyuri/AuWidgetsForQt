@@ -612,6 +612,38 @@ void AgGridModel::moveRows(const QVector<int> &fromOriginalIndices, int targetOr
     emit layoutChanged();
 }
 
+void AgGridModel::removeRows(const QVector<int> &originalIndices)
+{
+    // 树形模式行由父子结构描述，按扁平索引删除会破坏层级，直接忽略
+    if (m_treeMode)
+        return;
+
+    if (originalIndices.isEmpty())
+        return;
+
+    const int originalCount = m_originalRowData.size();
+    if (originalCount == 0)
+        return;
+
+    QVector<int> victims = originalIndices;
+    std::sort(victims.begin(), victims.end());
+    victims.erase(std::unique(victims.begin(), victims.end()), victims.end());
+    for (int idx : victims) {
+        if (idx < 0 || idx >= originalCount)
+            return;   // 与 moveRows 一致：任一索引非法则整体不生效
+    }
+
+    // 先通知视图捕获旧行外观（此时旧数据 / 旧布局仍完整），再真正删除
+    emit rowsAboutToBeRemoved(victims);
+
+    for (int i = victims.size() - 1; i >= 0; --i)
+        m_originalRowData.removeAt(victims.at(i));
+
+    applyFilterAndSort();
+    emit rowsRemoved(victims);
+    emit layoutChanged();
+}
+
 void AgGridModel::applyFilterAndSort()
 {
     m_rowData.clear();

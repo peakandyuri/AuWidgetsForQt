@@ -189,16 +189,27 @@ public:
     /// 触发 rowsMoved + rowsChanged + layoutChanged。树形模式下忽略（行序由父子结构决定）。
     void moveRows(const QVector<int> &fromOriginalIndices, int targetOriginalIndex);
 
+    /// 删除一批数据行（入参为删除前的原始行号，可乱序、可重复，内部自动去重校验）。
+    /// 触发 rowsAboutToBeRemoved（删除前，旧数据仍可读取）+ rowsRemoved + layoutChanged。
+    /// 注意：删除会使后续行的原始行号整体前移，跨删除保留的行号引用会失效；
+    /// 树形模式下忽略（行序由父子结构决定，需直接操作树数据后 setTreeData）。
+    void removeRows(const QVector<int> &originalIndices);
+
 signals:
     /// 单元格数据变化（可见行坐标，闭区间范围）。
     void dataChanged(int topRow, int leftColumn, int bottomRow, int rightColumn);
     /// 整体重设行数据之前发出（setRowData / setTreeData / clear）。
     /// 此时旧数据仍可读取，视图可据此捕获数据切换动画所需的旧内容快照。
     void rowsAboutToReset();
+    /// 删除一批行之前发出（removeRows），入参为删除前的原始行号。
+    /// 此时旧数据仍可读取，视图可据此捕获行删除消失动画所需的旧行像素。
+    void rowsAboutToBeRemoved(const QVector<int> &originalRows);
     /// 可见行集合内容变化（数据替换、过滤、排序、移动行）。
     void rowsChanged();
     /// 行拖拽移动完成（原始行号）。
     void rowsMoved(const QVector<int> &fromOriginalIndices, int targetOriginalIndex);
+    /// 一批行已被删除（removeRows），入参为删除前的原始行号（随后续删除操作递减漂移）。
+    void rowsRemoved(const QVector<int> &originalRows);
     /// 列定义被整体替换。
     void columnsChanged();
     /// 列宽变化。
