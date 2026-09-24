@@ -34,6 +34,7 @@ SOURCES += \
     demos/RowHeightDemoWindow.cpp \
     demos/DataAnimationDemoWindow.cpp \
     demos/AgSelectDemoWindow.cpp \
+    demos/AgDatePickerDemoWindow.cpp \
     CustomAgGrid/ButtonRenderer.cpp \
     CustomAgGrid/HeaderButtonRenderer.cpp \
     CustomAgGrid/HeaderCheckBoxRenderer.cpp \
@@ -58,6 +59,7 @@ HEADERS += \
     demos/RowHeightDemoWindow.h \
     demos/DataAnimationDemoWindow.h \
     demos/AgSelectDemoWindow.h \
+    demos/AgDatePickerDemoWindow.h \
     CustomAgGrid/ButtonRenderer.h \
     CustomAgGrid/HeaderButtonRenderer.h \
     CustomAgGrid/HeaderCheckBoxRenderer.h \
@@ -71,9 +73,10 @@ INCLUDEPATH += \
     $$PWD/../AgCommon/include \
     $$PWD/../AgGrid/include \
     $$PWD/../AgSelect/include \
+    $$PWD/../AgDatePicker/include \
     $$PWD/CustomAgGrid \
     $$PWD/demos
-DEPENDPATH += $$PWD/../AgCommon $$PWD/../AgGrid $$PWD/../AgSelect
+DEPENDPATH += $$PWD/../AgCommon $$PWD/../AgGrid $$PWD/../AgSelect $$PWD/../AgDatePicker
 
 win32: LIBS += -L$$PWD/../AgCommon/bin/ -lAgCommon
 else:unix: LIBS += -L$$PWD/../AgCommon/bin/ -lAgCommon
@@ -81,12 +84,15 @@ win32: LIBS += -L$$PWD/../AgGrid/bin/ -lAgGrid
 else:unix: LIBS += -L$$PWD/../AgGrid/bin/ -lAgGrid
 win32: LIBS += -L$$PWD/../AgSelect/bin/ -lAgSelect
 else:unix: LIBS += -L$$PWD/../AgSelect/bin/ -lAgSelect
+win32: LIBS += -L$$PWD/../AgDatePicker/bin/ -lAgDatePicker
+else:unix: LIBS += -L$$PWD/../AgDatePicker/bin/ -lAgDatePicker
 
 # 让目标依赖导入库：库重编后自动触发重链接 + POST_LINK 拷贝
 win32: PRE_TARGETDEPS += \
     $$PWD/../AgCommon/bin/libAgCommon.a \
     $$PWD/../AgGrid/bin/libAgGrid.a \
-    $$PWD/../AgSelect/bin/libAgSelect.a
+    $$PWD/../AgSelect/bin/libAgSelect.a \
+    $$PWD/../AgDatePicker/bin/libAgDatePicker.a
 
 # 构建完成后把最新 DLL 拷贝到可执行文件目录，避免运行时加载到旧版 DLL
 defineTest(copyAgDll) {
@@ -103,6 +109,7 @@ defineTest(copyAgDll) {
 copyAgDll($$PWD/../AgCommon/bin/AgCommon.dll)
 copyAgDll($$PWD/../AgGrid/bin/AgGrid.dll)
 copyAgDll($$PWD/../AgSelect/bin/AgSelect.dll)
+copyAgDll($$PWD/../AgDatePicker/bin/AgDatePicker.dll)
 
 # Default rules for deployment.
 qnx: target.path = /tmp/$${TARGET}/bin

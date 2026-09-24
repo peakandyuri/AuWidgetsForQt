@@ -11,10 +11,10 @@
 | **AgCommon** | 公共基础库：极简风格自绘滚动条 `AgScrollBar`、带投影的通用弹层容器 `AgPopupPanel` |
 | **AgGrid** | 核心控件：基于 QPainter 自绘的高性能数据表格 `AgGridWidget` |
 | **AgSelect** | 下拉选择控件 `AgSelect`（替代 QComboBox） |
-| **AgDatePicker** | 日期选择控件 `AgDatePicker`（替代 QCalendarWidget，目前为骨架版本，API 开发中） |
+| **AgDatePicker** | 日期选择控件 `AgDatePicker`（替代 QCalendarWidget） |
 | **Example** | 示例程序：按功能拆分的多个演示窗口，覆盖各控件的主要特性 |
 
-依赖关系：AgGrid、AgSelect 依赖 AgCommon；AgDatePicker 无依赖；Example 依赖以上全部库。
+依赖关系：AgGrid、AgSelect、AgDatePicker 依赖 AgCommon；Example 依赖以上全部库。
 
 ## 主要特性
 
@@ -38,6 +38,17 @@
 - 单选与多选（chips 标签块）模式，支持分组标题与禁用项
 - 可编辑模式支持输入实时过滤，命中文字高亮
 - 弹层带投影与展开动画，下方空间不足自动翻转，键盘完整导航（Up/Down/PageUp/Enter/Esc 等）
+
+### AgDatePicker 日期选择
+
+- 默认 `yyyy-MM-dd` 格式化显示，`setDisplayFormat()` 自定义；年 / 月 / 日三种选择粒度（`yyyy` / `yyyy-MM` / `yyyy-MM-dd`）
+- **日期范围选择**（`SelectDateRange`）：左右双日历面板（右侧晚一个月、翻月联动），两次点击选起止日期，起点前后均可选（选之前的日期自动交换），淡蓝色范围带实时预览，编辑框开始 / 结束日期下方主色调下划线提示（带滑动动画），起止占位文本可自定义（`setRangePlaceholderText()`）
+- **键盘操作**：面板展开时方向键上下左右移动焦点日期（跨月自动翻页）、PageUp / PageDown 切月、回车选中；月 / 年九宫格页同样支持；**Tab 在表单控件间切换，焦点控件显示明显焦点边框与淡色底**（AgSelect 一致）
+- 日历面板 head / body / footer 三段式："xxxx年xx月" 年月分段可点击，Win10 风格年份 / 月份九宫格选择页，年份页整屏滚动动画（无滚动条）
+- `setDateRange()` 限制可选范围，范围外日期灰显无悬停；前后月补齐日期灰显可点选
+- 悬停编辑框出现实心圆圈 × 一键清除；footer 默认"今天 / 当月 / 今年"快捷项，支持左中右自定义链接与整体替换
+- 亮 / 暗主题、小 / 中 / 大尺寸预设，编辑框高度可逐控件微调（`setEditorHeight()`）
+- 默认字体微软雅黑（Ag 控件统一约定，样式 `setFont()` 可覆盖）
 
 ## 快速开始
 
@@ -66,7 +77,7 @@ AgWidgetsForQt/
 ├── AgCommon/            # 公共基础部件（滚动条、弹层面板）
 ├── AgGrid/              # 数据表格控件（core / renderers / editors / style 等）
 ├── AgSelect/            # 下拉选择控件
-├── AgDatePicker/        # 日期选择控件（开发中）
+├── AgDatePicker/        # 日期选择控件
 ├── Example/             # 示例程序（demos / CustomAgGrid 自定义扩展示例）
 └── docs/                # 帮助文档
 ```
@@ -75,6 +86,7 @@ AgWidgetsForQt/
 
 - [docs/AgGrid-帮助文档.md](docs/AgGrid-帮助文档.md)：AgGrid 控件详细用法
 - [docs/AgSelect-帮助文档.md](docs/AgSelect-帮助文档.md)：AgSelect 控件详细用法
+- [docs/AgDatePicker-帮助文档.md](docs/AgDatePicker-帮助文档.md)：AgDatePicker 控件详细用法
 
 ## 许可证
 

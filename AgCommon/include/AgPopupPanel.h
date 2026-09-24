@@ -52,6 +52,16 @@ public:
     QColor backgroundColor() const;
     void setBackgroundColor(const QColor &color);
 
+    /// 弹出时是否把内容区宽度拉伸到不小于宿主宽度（默认 true，与编辑框同宽语义）；
+    /// false 时内容区保持期望宽度（仍收敛到屏幕可用区内），适合日历等固定宽度面板。
+    bool isMatchOwnerWidth() const;
+    void setMatchOwnerWidth(bool match);
+
+    /// 按下 Esc 时是否自动收起面板（默认 true）；false 时仅发出 escapePressed()
+    /// 并消费按键，由宿主决定收起或返回上一级视图（如日历的年 / 月选择页）。
+    bool isEscapeCloses() const;
+    void setEscapeCloses(bool closes);
+
     QColor borderColor() const;                 ///< 无效 QColor = 不绘制边框
     void setBorderColor(const QColor &color);
 
@@ -76,7 +86,8 @@ public:
 
 public Q_SLOTS:
     /// 以 owner 为锚点弹出面板。preferredSize 为【内容区】期望尺寸（不含投影边距），
-    /// 内容区与 owner 的边缘对齐：宽度不小于 owner 宽度、不超过所在屏幕可用区；
+    /// 内容区与 owner 的边缘对齐：matchOwnerWidth 为 true（默认）时宽度不小于 owner
+    /// 宽度，为 false 时保持期望宽度（如日历面板）；均不超过所在屏幕可用区；
     /// 高度收敛到所在一侧的可用空间。位置优先下方，空间不足自动翻转到上方。
     void popupOver(QWidget *owner, const QSize &preferredSize);
     /// 收起面板（带收起动画）。
@@ -119,6 +130,8 @@ private:
     int m_shadowRadius;
     int m_gap;
     bool m_placedAbove;
+    bool m_matchOwnerWidth;
+    bool m_escapeCloses;
 
     QImage m_shadowTiles[4];    ///< 9-slice 投影角块缓存（左上 / 右上 / 左下 / 右下）
     int m_tileBoxRadius;        ///< 生成缓存时的参数（变化后重建）

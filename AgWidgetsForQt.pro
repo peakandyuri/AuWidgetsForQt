@@ -9,4 +9,5 @@ SUBDIRS += \
 
 AgGrid.depends += AgCommon
 AgSelect.depends += AgCommon
-Example.depends += AgGrid AgSelect AgCommon
+AgDatePicker.depends += AgCommon
+Example.depends += AgGrid AgSelect AgDatePicker AgCommon

@@ -63,6 +63,8 @@ AgPopupPanel::AgPopupPanel(QWidget *parent)
     , m_shadowRadius(10)
     , m_gap(4)
     , m_placedAbove(false)
+    , m_matchOwnerWidth(true)
+    , m_escapeCloses(true)
     , m_tileBoxRadius(0)
     , m_tileCornerRadius(0)
     , m_tileColorKey(0)
@@ -145,6 +147,26 @@ void AgPopupPanel::setCornerRadius(int radius)
 {
     m_cornerRadius = qMax(0, radius);
     update();
+}
+
+bool AgPopupPanel::isMatchOwnerWidth() const
+{
+    return m_matchOwnerWidth;
+}
+
+void AgPopupPanel::setMatchOwnerWidth(bool match)
+{
+    m_matchOwnerWidth = match;
+}
+
+bool AgPopupPanel::isEscapeCloses() const
+{
+    return m_escapeCloses;
+}
+
+void AgPopupPanel::setEscapeCloses(bool closes)
+{
+    m_escapeCloses = closes;
 }
 
 QColor AgPopupPanel::backgroundColor() const
@@ -237,9 +259,14 @@ void AgPopupPanel::popupOver(QWidget *owner, const QSize &preferredSize)
     const QRect ownerRect(owner->mapToGlobal(QPoint(0, 0)), owner->size());
     const int outer = shadowMargin() + 1; // 投影边距 + 边框线宽
 
-    // 内容区宽度：不小于宿主宽度、不超过屏幕可用区（减去两侧投影）
+    // 内容区宽度：默认拉伸到不小于宿主宽度（matchOwnerWidth，与编辑框同宽语义）；
+    // 固定宽度面板（matchOwnerWidth=false）保持期望宽度；均不超过屏幕可用区（减去两侧投影）
     const int minHeight = 8;
-    int width = qBound(ownerRect.width(), preferredSize.width(), qMax(ownerRect.width(), avail.width() - 2 * outer));
+    int width;
+    if (m_matchOwnerWidth)
+        width = qBound(ownerRect.width(), preferredSize.width(), qMax(ownerRect.width(), avail.width() - 2 * outer));
+    else
+        width = qBound(minHeight, preferredSize.width(), qMax(minHeight, avail.width() - 2 * outer));
     int height = qMax(preferredSize.height(), minHeight);
 
     // 垂直：优先下方；下方放不下且上方放得下则翻转到上方；都放不下取空间更大的一侧收敛
@@ -396,7 +423,8 @@ bool AgPopupPanel::eventFilter(QObject *watched, QEvent *event)
     case QEvent::KeyPress: {
         if (static_cast<QKeyEvent *>(event)->key() == Qt::Key_Escape) {
             emit escapePressed();
-            closePopup();
+            if (m_escapeCloses)
+                closePopup(); // escapeCloses=false 时由宿主在 escapePressed 里决定收起或返回上一级
             return true;
         }
         break;

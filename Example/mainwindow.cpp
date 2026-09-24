@@ -3,6 +3,7 @@
 
 #include "AgGridStyle.h"
 #include "AgSelectDemoWindow.h"
+#include "AgDatePickerDemoWindow.h"
 #include "BasicDemoWindow.h"
 #include "ColumnDemoWindow.h"
 #include "HeaderCheckDemoWindow.h"
@@ -85,6 +86,8 @@ MainWindow::MainWindow(QWidget *parent)
           [this]() { return static_cast<QDialog *>(new DataAnimationDemoWindow(this)); } },
         { "agselect", QStringLiteral(u"AgSelect 下拉选择\n单选 / 分组 / 多选 chips / 过滤 / 主题尺寸"),
           [this]() { return static_cast<QDialog *>(new AgSelectDemoWindow(this)); } },
+        { "agdatepicker", QStringLiteral(u"AgDatePicker 日期选择\n日 / 月 / 年粒度 / 范围 / 清除 / footer"),
+          [this]() { return static_cast<QDialog *>(new AgDatePickerDemoWindow(this)); } },
     };
 
     const int columns = 3;
