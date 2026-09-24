@@ -73,6 +73,35 @@ private:
 };
 
 // ---------------------------------------------------------------------------
+// 清除图标绘制（与 AgDatePicker 一致）：实心圆圈 + ×
+
+namespace {
+
+/// 清除图标：实心圆圈 + ×。
+void drawClearIcon(QPainter &painter, const QRect &rect, const QColor &circleColor,
+                   const QColor &crossColor)
+{
+    painter.save();
+    painter.setRenderHint(QPainter::Antialiasing);
+
+    const QPointF center = QRectF(rect).center();
+    const qreal radius = qMin(rect.width(), rect.height()) / 2.0;
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(circleColor);
+    painter.drawEllipse(center, radius, radius);
+
+    QPen pen(crossColor, qMax(1.4, radius * 0.28), Qt::SolidLine, Qt::RoundCap);
+    painter.setPen(pen);
+    const qreal arm = radius * 0.5;
+    painter.drawLine(center + QPointF(-arm, -arm), center + QPointF(arm, arm));
+    painter.drawLine(center + QPointF(-arm, arm), center + QPointF(arm, -arm));
+
+    painter.restore();
+}
+
+} // namespace
+
+// ---------------------------------------------------------------------------
 
 AgSelect::AgSelect(QWidget *parent)
     : QWidget(parent)
@@ -89,8 +118,10 @@ AgSelect::AgSelect(QWidget *parent)
     , m_arrowAnimation(nullptr)
     , m_multiSelection(false)
     , m_editable(false)
+    , m_clearButtonEnabled(false)
     , m_areaHovered(false)
     , m_lineHovered(false)
+    , m_iconHovered(false)
     , m_currentIndex(-1)
     , m_activeGroupId(-1)
     , m_popupWidthMode(PopupMatchEditor)
@@ -293,6 +324,44 @@ QString AgSelect::currentText() const
 QVariant AgSelect::currentData() const
 {
     return itemData(m_currentIndex);
+}
+
+bool AgSelect::hasSelection() const
+{
+    if (m_multiSelection)
+        return !m_model->checkedRows().isEmpty();
+    return m_currentIndex >= 0;
+}
+
+// ---------------------------------------------------------------------------
+// 清除按钮
+
+bool AgSelect::isClearButtonEnabled() const
+{
+    return m_clearButtonEnabled;
+}
+
+void AgSelect::setClearButtonEnabled(bool enabled)
+{
+    if (m_clearButtonEnabled == enabled)
+        return;
+    m_clearButtonEnabled = enabled;
+    update();
+}
+
+void AgSelect::clearSelection()
+{
+    if (m_multiSelection) {
+        if (m_model->checkedRows().isEmpty())
+            return; // 无选择项：无动作也不发信号
+        clearChecked();
+    } else {
+        if (m_currentIndex < 0)
+            return;
+        setCurrentIndex(-1);
+    }
+    emit cleared();
+    update();
 }
 
 bool AgSelect::isMultiSelection() const
@@ -617,6 +686,7 @@ void AgSelect::paintEvent(QPaintEvent * /*event*/)
 
     const bool enabled = isEnabled();
     const bool active = isPopupVisible() || m_lineEdit->hasFocus();
+    const bool focusVisible = enabled && m_lineEdit->hasFocus(); // Tab / 点击获得的键盘焦点
     const bool hovered = m_areaHovered || m_lineHovered;
     const int border = s->editorBorderWidth();
     const qreal radius = s->editorBorderRadius();
@@ -626,6 +696,9 @@ void AgSelect::paintEvent(QPaintEvent * /*event*/)
     QColor borderColor;
     if (!enabled)
         borderColor = s->editorDisabledBorderColor();
+    else if (focusVisible)
+        borderColor = s->editorFocusBorderColor().isValid()
+                          ? s->editorFocusBorderColor() : s->editorActiveBorderColor();
     else if (active)
         borderColor = s->editorActiveBorderColor();
     else if (hovered)
@@ -637,6 +710,15 @@ void AgSelect::paintEvent(QPaintEvent * /*event*/)
     painter.setBrush(background);
     painter.drawRoundedRect(rect(), radius, radius);
 
+    // 键盘焦点淡色底（内部整体着色，Tab 切换时一眼可见）
+    if (focusVisible && s->editorFocusBackgroundColor().isValid()) {
+        painter.setBrush(s->editorFocusBackgroundColor());
+        const qreal inset = border;
+        painter.drawRoundedRect(QRectF(rect()).adjusted(inset, inset, -inset, -inset),
+                                qMax<qreal>(0.0, radius - border),
+                                qMax<qreal>(0.0, radius - border));
+    }
+
     if (border > 0 && borderColor.isValid()) {
         QPen pen(borderColor, qreal(border));
         painter.setPen(pen);
@@ -644,6 +726,21 @@ void AgSelect::paintEvent(QPaintEvent * /*event*/)
         const qreal inset = border / 2.0;
         painter.drawRoundedRect(QRectF(rect()).adjusted(inset, inset, -inset, -inset),
                                 radius, radius);
+    }
+
+    // 右侧槽位：已有选择项且悬停且清除开关打开时，箭头切换为清除图标（参考 AgDatePicker）
+    const bool clearActive = clearIconActive();
+    if (m_arrowWidget && m_arrowWidget->isVisible() == clearActive)
+        m_arrowWidget->setVisible(!clearActive);
+    if (clearActive) {
+        const QRect iconRect = arrowIconRect();
+        if (iconRect.width() >= 6) {
+            const QColor circle = m_iconHovered ? s->clearIconCircleHoverColor()
+                                                : s->clearIconCircleColor();
+            drawClearIcon(painter, iconRect,
+                          enabled ? circle : s->editorDisabledForegroundColor(),
+                          enabled ? s->clearIconCrossColor() : s->editorBackgroundColor());
+        }
     }
 
     if (!m_multiSelection)
@@ -698,6 +795,16 @@ void AgSelect::resizeEvent(QResizeEvent *event)
     relayoutEditor();
 }
 
+void AgSelect::enterEvent(QEvent * /*event*/)
+{
+    // 进入控件本体（行编辑框悬停由 eventFilter 的 HoverEnter/Leave 单独跟踪：
+    // Qt 中光标移入子控件时父控件会收到 Leave，两侧状态需合并判断）
+    if (!m_areaHovered) {
+        m_areaHovered = true;
+        update();
+    }
+}
+
 void AgSelect::mousePressEvent(QMouseEvent *event)
 {
     if (!isEnabled()) {
@@ -705,6 +812,12 @@ void AgSelect::mousePressEvent(QMouseEvent *event)
         return;
     }
     const QPoint pos = event->pos();
+
+    // 清除图标激活时点击槽位即清除（不弹出面板），参考 AgDatePicker
+    if (clearIconActive() && arrowSlotRect().contains(pos)) {
+        clearSelection();
+        return;
+    }
 
     if (m_multiSelection) {
         const int chipIndex = chipAt(pos);
@@ -732,9 +845,7 @@ void AgSelect::mousePressEvent(QMouseEvent *event)
         return;
     }
 
-    const int slot = arrowSlotWidth();
-    const QRect arrowRect(innerRect().right() - slot, 0, slot + borderSpan(), height());
-    if (arrowRect.contains(pos) || !m_lineEdit->geometry().contains(pos)) {
+    if (arrowSlotRect().contains(pos) || !m_lineEdit->geometry().contains(pos)) {
         m_lineEdit->setFocus();
         showPopup();
     }
@@ -743,6 +854,14 @@ void AgSelect::mousePressEvent(QMouseEvent *event)
 
 void AgSelect::mouseMoveEvent(QMouseEvent *event)
 {
+    // 清除图标悬停（切换实心圆底色加深）与手型光标
+    const bool iconHovered = arrowSlotRect().contains(event->pos());
+    if (iconHovered != m_iconHovered) {
+        m_iconHovered = iconHovered;
+        update();
+    }
+    updateIconCursor(event->pos());
+
     if (m_multiSelection) {
         const int chipIndex = chipAt(event->pos());
         const bool removeHover = chipIndex >= 0
@@ -765,8 +884,10 @@ void AgSelect::leaveEvent(QEvent * /*event*/)
 {
     m_areaHovered = false;
     m_lineHovered = false;
+    m_iconHovered = false;
     m_hoverChip = -1;
     m_hoverRemove = false;
+    setCursor(Qt::ArrowCursor);
     update();
 }
 
@@ -826,7 +947,12 @@ bool AgSelect::eventFilter(QObject *watched, QEvent *event)
                 update();
             }
             break;
+        case QEvent::FocusAboutToChange:
+        case QEvent::FocusIn:
+            update(); // 焦点边框 / 淡色底随焦点获得立即刷新
+            break;
         case QEvent::FocusOut:
+            update(); // 失焦后焦点底色立即清除（无鼠标移动等其它重绘契机）
             revertUnmatchedText(); // 需求 1：失焦后清掉不匹配的输入
             break;
         case QEvent::KeyPress: {
@@ -1058,13 +1184,9 @@ void AgSelect::relayoutEditor()
         m_preferredHeight = 2 * border + 2 * vPad + lines * chipH + (lines - 1) * gap;
     }
 
-    // 箭头槽位
-    if (m_arrowWidget) {
-        const int arrowW = qMin(slot - 4, 16);
-        const int arrowH = qMin(editorHeight() - 2 * border - 4, 16);
-        m_arrowWidget->setGeometry(inner.right() - slot + (slot - arrowW) / 2,
-                                   inner.center().y() - arrowH / 2, arrowW, arrowH);
-    }
+    // 箭头槽位（几何与清除图标一致，见 arrowIconRect）
+    if (m_arrowWidget)
+        m_arrowWidget->setGeometry(arrowIconRect());
 
     if (minimumHeight() != m_preferredHeight)
         setMinimumHeight(m_preferredHeight);
@@ -1091,6 +1213,34 @@ QRect AgSelect::innerRect() const
 int AgSelect::arrowSlotWidth() const
 {
     return style()->arrowSlotWidth();
+}
+
+QRect AgSelect::arrowSlotRect() const
+{
+    const int slot = arrowSlotWidth();
+    return QRect(innerRect().right() - slot, 0, slot + borderSpan(), height());
+}
+
+QRect AgSelect::arrowIconRect() const
+{
+    AgSelectStyle *s = style();
+    const int slot = s->arrowSlotWidth();
+    const int w = qMin(slot - 4, 16);
+    const int h = qMin(editorHeight() - 2 * s->editorBorderWidth() - 4, 16);
+    const QRect inner = innerRect();
+    return QRect(inner.right() - slot + (slot - w) / 2, inner.center().y() - h / 2, w, h);
+}
+
+bool AgSelect::clearIconActive() const
+{
+    // 悬停编辑框（本体或行编辑框）且已有选择项时，箭头切换为实心圆圈 ×
+    return m_clearButtonEnabled && (m_areaHovered || m_lineHovered) && hasSelection();
+}
+
+void AgSelect::updateIconCursor(const QPoint &pos)
+{
+    setCursor(clearIconActive() && arrowSlotRect().contains(pos) ? Qt::PointingHandCursor
+                                                                 : Qt::ArrowCursor);
 }
 
 void AgSelect::updateEditorText(const QString &text)

@@ -1,8 +1,8 @@
 # AgSelect 帮助文档
 
 `AgSelect` 是替代 `QComboBox` 的下拉选择控件，支持单选 / 多选（chips）、分组、禁用项、
-可编辑过滤、亮暗主题、三种尺寸预设与展开动画。依赖公共库 **AgCommon**（自绘滚动条与
-投影弹层容器）。
+可编辑过滤、清除按钮、亮暗主题、三种尺寸预设与展开动画。依赖公共库 **AgCommon**（自绘
+滚动条与投影弹层容器）。
 
 ## 1. 快速上手
 
@@ -70,7 +70,29 @@ select->checkedData();
   拖动或按 Esc 才收起；
 - 多选模式的过滤输入始终可用（与 ant-design 一致）。
 
-## 5. 样式系统（AgSelectStyle）
+## 5. 清除按钮（清除选择项）
+
+参考 `AgDatePicker` 的清除交互，**默认关闭，需手动开启**：
+
+```cpp
+select->setClearButtonEnabled(true);     // 开启清除按钮（默认关闭）
+connect(select, &AgSelect::cleared, []() { /* 用户清空了选择项 */ });
+
+select->hasSelection();                  // 是否已有选择项（单选已选中 / 多选存在勾选）
+select->clearSelection();                // 程序化清除（与点击按钮同效；无选择时无动作）
+```
+
+- 开启后，**已有选择项时**鼠标悬停编辑框，右侧箭头图标切换为实心圆圈 ×（悬停图标本体
+  时圆底加深），点击即清除选择，且不会弹出下拉面板；
+- 单选：还原为未选中（`currentIndex(-1)`），编辑框清空显示占位文本；多选：清空全部
+  勾选（chips 全部移除），等价于 `clearChecked()`；
+- 清除后立即移开鼠标，箭头图标恢复；条目本身不受影响（不会清空下拉选项，区别于
+  `clear()`）；
+- 无选择项时不显示清除图标；`setEnabled(false)` 时按钮同样不可用；
+- 配色由样式 `clearIconCircleColor`（圆底）/ `clearIconCircleHoverColor`（悬停圆底）/
+  `clearIconCrossColor`（×）控制，亮暗主题各有预设。
+
+## 6. 样式系统（AgSelectStyle）
 
 三种用法：
 
@@ -105,14 +127,15 @@ sizeHint 严格决定（垂直 Fixed），不会被布局拉伸。
 | 分组 | 字段 |
 | --- | --- |
 | 字体 | `font`（编辑框 / chip / 下拉项共用，随尺寸档位重置） |
-| 编辑框 | `editorHeight`、`editorBorderRadius`（圆角可设）、`editorBorderWidth`、`editorBorderColor / Hover / Active`、`editorBackgroundColor`、`editorForegroundColor`、`editorPlaceholderColor`、`editorDisabled*`、`editorHorizontalPadding` |
+| 编辑框 | `editorHeight`、`editorBorderRadius`（圆角可设）、`editorBorderWidth`、`editorBorderColor / Hover / Active / Focus`、`editorFocusBackgroundColor`（键盘焦点内部淡色底，无效色=不绘制）、`editorBackgroundColor`、`editorForegroundColor`、`editorPlaceholderColor`、`editorDisabled*`、`editorHorizontalPadding` |
 | chip | `chipBackgroundColor / Hover`、`chipForegroundColor`、`chipBorderColor`（无效色=无边框）、`chipRemoveIconColor / Hover`、`chipHeight`、`chipSpacing` |
 | 面板 | `panelBackgroundColor`、`panelBorderColor`、`panelBorderRadius`、`panelShadowColor`、`panelShadowRadius`、`panelMaxHeight` |
 | 下拉项 | `itemHeight`、`itemSpacing`（间距）、`itemHorizontalPadding`、`itemIndentWidth`、`itemBorderRadius`、`itemForegroundColor`、`itemDisabledForegroundColor`、`itemHoverBackgroundColor`、`itemSelectedBackgroundColor / ForegroundColor`、`itemHoverSelectedBackgroundColor`、`itemCheckmarkColor`、`matchHighlightForegroundColor` |
 | 组名 | `groupHeaderHeight`、`groupHeaderForegroundColor` |
 | 箭头 | `arrowColor`、`arrowSlotWidth` |
+| 清除图标 | `clearIconCircleColor`（实心圆底）、`clearIconCircleHoverColor`（悬停圆底）、`clearIconCrossColor`（×） |
 
-## 6. 下拉面板行为
+## 7. 下拉面板行为
 
 - **定位**：默认显示在编辑框下方（内容区顶边紧随编辑框 4px），下方空间不足时自动
   翻转到上方；整体收敛在所在屏幕的可用区内；
@@ -132,7 +155,7 @@ sizeHint 严格决定（垂直 Fixed），不会被布局拉伸。
 - **投影**：面板四周绘制 9-slice 预模糊投影（AgCommon::AgPopupPanel），颜色 / 强度可调，
   Windows 与 Linux 表现一致。
 
-## 7. 事件回调
+## 8. 事件回调
 
 | 信号 | 时机 |
 | --- | --- |
@@ -143,11 +166,12 @@ sizeHint 严格决定（垂直 Fixed），不会被布局拉伸。
 | `activated(int)` | 用户激活选项（单选点选 / 回车；多选勾选、取消、chip 移除） |
 | `currentIndexChanged(int)` / `currentTextChanged(QString)` | 当前项变化 |
 | `checkedChanged(QList<int>)` | 多选勾选集合变化 |
+| `cleared()` | 用户通过清除按钮 / `clearSelection()` 清空选择项 |
 | `textEdited(QString)` | 可编辑输入（用户输入触发） |
 
 展开时自动定位：单选滚动到当前选中项，多选滚动到第一个选中项。
 
-## 8. 自定义渲染与自定义箭头
+## 9. 自定义渲染与自定义箭头
 
 ### 自定义委托（绘制图标、角标等）
 
@@ -177,9 +201,10 @@ select->setArrowWidget(arrow);      // 所有权转移给控件；传 nullptr �
 ```
 
 内置箭头是一个随面板展开旋转 180° 的 chevron；替换后的箭头部件由用户自绘，可结合
-第 7 节的面板回调实现自己的动效。
+第 8 节的面板回调实现自己的动效。开启清除按钮后，悬停已选项时右侧（含自定义箭头部件）
+会被清除图标临时替换，点击清除后恢复。
 
-## 9. 键盘交互
+## 10. 键盘交互
 
 | 按键 | 行为 |
 | --- | --- |
@@ -188,8 +213,13 @@ select->setArrowWidget(arrow);      // 所有权转移给控件；传 nullptr �
 | `PageUp` / `PageDown` / `Home` / `End` | 翻页 / 首尾 |
 | `Enter` | 面板展开时激活高亮项，未展开时打开面板 |
 | `Esc` | 关闭面板（并还原不匹配的输入） |
+| `Tab` | 焦点移到表单下一个控件（面板展开时先收起） |
 
-## 10. AgCommon 公共库
+**焦点效果**：控件获得键盘焦点（Tab 切换或点击）时显示焦点边框 + 内部淡色底
+（`editorFocusBorderColor` / `editorFocusBackgroundColor`），Tab 在表单控件间切换时
+焦点位置一目了然。
+
+## 11. AgCommon 公共库
 
 AgSelect 与 AgGrid 共用的基础部件库（后续公共类统一放这里）：
 

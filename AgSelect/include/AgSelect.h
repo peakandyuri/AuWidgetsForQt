@@ -40,6 +40,9 @@ class AgSelectListView;
  *    Esc 关闭，不会误操作其它焦点控件；
  *  - 多选：点击选项切换勾选（已勾选项右侧显示对勾），编辑区以 chip（标签块）
  *    呈现已选项，chip 右侧 × 可移除，支持换行；
+ *  - 清除：setClearButtonEnabled(true) 后，已有选择项时悬停编辑框，右侧箭头切换为
+ *    实心圆圈 ×，点击即清除选择（单选还原为未选中，多选清空全部勾选），
+ *    通过 cleared() 回调，参考 AgDatePicker；
  *  - 支持分组（组名行不可选中、无 hover）、禁用项（灰显不可选）、自定义委托渲染；
  *  - setEnabled(false) 整体禁用；键盘支持 Up/Down/Home/End/PageUp/PageDown/
  *    Enter 选择、Esc 关闭。
@@ -91,6 +94,11 @@ public:
     int currentIndex() const;
     QString currentText() const;
     QVariant currentData() const;
+    /// 是否已有选择项：单选 = 已选中某项；多选 = 存在勾选项。
+    bool hasSelection() const;
+
+    // ---- 清除按钮 ----
+    bool isClearButtonEnabled() const;
 
     // ---- 多选 ----
     bool isMultiSelection() const;
@@ -121,11 +129,15 @@ public:
 public Q_SLOTS:
     void setCurrentIndex(int index);
     void setCurrentText(const QString &text);
+    /// 清除选择项（单选还原为未选中；多选清空全部勾选），条目保留；无选择时无动作。
+    void clearSelection();
     void setMultiSelection(bool multi);
     void setCheckedIndexes(const QList<int> &indexes);   ///< 仅多选模式生效
     void clearChecked();
     void setEditable(bool editable);
     void setPlaceholderText(const QString &text);
+    /// 开启清除按钮（默认关闭）：已有选择项时悬停编辑框，箭头切换为清除图标。
+    void setClearButtonEnabled(bool enabled);
     /// 设置控件独立样式（所有权转移给控件）；传 nullptr 恢复使用全局样式。
     void setStyle(AgSelectStyle *style);
     /// 切换尺寸档位（样式实例的尺寸类字段随之重置）。
@@ -149,6 +161,8 @@ Q_SIGNALS:
     void textEdited(const QString &text);
     /// 多选勾选集合变化。
     void checkedChanged(const QList<int> &indexes);
+    /// 用户通过清除按钮 / clearSelection() 清空选择项。
+    void cleared();
     /// 面板显示 / 隐藏回调（About = 动画开始前，完成 = 动画结束后）。
     void popupAboutToShow();
     void popupShown();
@@ -158,6 +172,7 @@ Q_SIGNALS:
 protected:
     void paintEvent(QPaintEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
+    void enterEvent(QEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
@@ -180,6 +195,12 @@ private:
     int borderSpan() const;                 ///< 边框总宽（2 * width）
     QRect innerRect() const;
     int arrowSlotWidth() const;
+    QRect arrowSlotRect() const;            ///< 右侧箭头 / 清除图标热区
+    QRect arrowIconRect() const;            ///< 箭头 / 清除图标几何（与箭头部件一致）
+
+    // 清除按钮
+    bool clearIconActive() const;           ///< 当前悬停状态下应显示清除图标
+    void updateIconCursor(const QPoint &pos);
 
     // 编辑文本 / 过滤
     void updateEditorText(const QString &text);
@@ -221,8 +242,10 @@ private:
 
     bool m_multiSelection;
     bool m_editable;
+    bool m_clearButtonEnabled;              ///< 清除按钮开关（默认关闭，手动开启）
     bool m_areaHovered;                     ///< 鼠标悬停在控件区域（不含行编辑框）
     bool m_lineHovered;                     ///< 鼠标悬停在行编辑框上
+    bool m_iconHovered;                     ///< 鼠标悬停在右侧箭头 / 清除图标槽位
     int m_currentIndex;
     int m_activeGroupId;                    ///< addGroup() 后的当前分组
 

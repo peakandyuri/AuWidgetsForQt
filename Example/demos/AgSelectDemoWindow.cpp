@@ -58,6 +58,7 @@ AgSelectDemoWindow::AgSelectDemoWindow(QWidget *parent)
     m_basicSelect->addItem(QStringLiteral(u"香菜（缺货）"));
     m_basicSelect->setItemEnabled(m_basicSelect->count() - 1, false);
     m_basicSelect->setCurrentIndex(1);
+    m_basicSelect->setClearButtonEnabled(true); // 已选时悬停编辑框，箭头切换为清除图标
     QFont yaHei(QStringLiteral("Microsoft YaHei"));
     yaHei.setPointSize(9);
     m_basicSelect->setFont(yaHei); // 自定义字体：控件级 setFont 优先于样式字体
@@ -86,6 +87,7 @@ AgSelectDemoWindow::AgSelectDemoWindow(QWidget *parent)
     m_multiSelect->setMultiSelection(true);
     m_multiSelect->setCheckedIndexes({1, 3});
     m_multiSelect->setPlaceholderText(QStringLiteral(u"多选技术栈…"));
+    m_multiSelect->setClearButtonEnabled(true); // 悬停一键清空全部勾选
     addRow(2, QStringLiteral(u"多选（chips / × 移除）"), m_multiSelect);
 
     // ---- 4. 三种尺寸 ----
@@ -163,6 +165,9 @@ AgSelectDemoWindow::AgSelectDemoWindow(QWidget *parent)
                 list.append(QString::number(index));
             log(QStringLiteral(u"[%1] checkedChanged([%2])").arg(name, list.join(QStringLiteral(", "))));
         });
+        connect(select, &AgSelect::cleared, this, [this, name]() {
+            log(QStringLiteral(u"[%1] cleared()").arg(name));
+        });
         connect(select, &AgSelect::popupAboutToShow, this, [this, name]() {
             log(QStringLiteral(u"[%1] popupAboutToShow").arg(name));
         });
@@ -203,6 +208,8 @@ AgSelectDemoWindow::AgSelectDemoWindow(QWidget *parent)
                            u"· 可编辑：输入即过滤并高亮命中文字；与选项不匹配的内容在失焦 / 面板隐藏后被清空。\n"
                            u"· 多选：点击切换勾选（右侧对勾），编辑区以 chip 呈现，chip 上的 × 可移除；"
                            u"展开时点击编辑区收起面板，× 移除不受影响。\n"
+                           u"· 清除按钮：单选与多选已开启 setClearButtonEnabled(true)；已有选择项时悬停"
+                           u"编辑框，右侧箭头切换为圆圈 ×，点击清除选择并回调 cleared()。\n"
                            u"· 主题切换影响所有未单独 setStyle() 的下拉框（含已切尺寸档位的派生样式）。\n"
                            u"· 面板默认与编辑框同宽，下方空间不足自动翻转到上方；展开 / 收起有 100ms 动画。"));
 }

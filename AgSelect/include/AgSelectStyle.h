@@ -68,6 +68,10 @@ public:
     void setEditorHoverBorderColor(const QColor &color);
     QColor editorActiveBorderColor() const;             ///< 获得焦点 / 面板展开时
     void setEditorActiveBorderColor(const QColor &color);
+    QColor editorFocusBorderColor() const;              ///< 键盘焦点（Tab 切换）边框色
+    void setEditorFocusBorderColor(const QColor &color);
+    QColor editorFocusBackgroundColor() const;          ///< 键盘焦点内部淡色底（无效色 = 不绘制）
+    void setEditorFocusBackgroundColor(const QColor &color);
     QColor editorDisabledBackgroundColor() const;
     void setEditorDisabledBackgroundColor(const QColor &color);
     QColor editorDisabledForegroundColor() const;
@@ -153,6 +157,14 @@ public:
     int arrowSlotWidth() const;                         ///< 编辑框右侧箭头槽位宽度
     void setArrowSlotWidth(int width);
 
+    // ---- 清除图标（箭头槽位，悬停已选项时切换显示）----
+    QColor clearIconCircleColor() const;                ///< 清除图标实心圆底色
+    void setClearIconCircleColor(const QColor &color);
+    QColor clearIconCircleHoverColor() const;           ///< 悬停清除图标实心圆底色
+    void setClearIconCircleHoverColor(const QColor &color);
+    QColor clearIconCrossColor() const;                 ///< 清除图标 × 颜色
+    void setClearIconCrossColor(const QColor &color);
+
 private:
     friend class AgSelect;
     static void registerGlobalObserver(AgSelect *widget);
@@ -172,6 +184,8 @@ private:
     QColor m_editorBorderColor;
     QColor m_editorHoverBorderColor;
     QColor m_editorActiveBorderColor;
+    QColor m_editorFocusBorderColor;
+    QColor m_editorFocusBackgroundColor;
     QColor m_editorDisabledBackgroundColor;
     QColor m_editorDisabledForegroundColor;
     QColor m_editorDisabledBorderColor;
@@ -219,6 +233,11 @@ private:
     // 箭头
     QColor m_arrowColor;
     int m_arrowSlotWidth;
+
+    // 清除图标
+    QColor m_clearIconCircleColor;
+    QColor m_clearIconCircleHoverColor;
+    QColor m_clearIconCrossColor;
 
     static AgSelectStyle *s_globalStyle;
     static QVector<AgSelect *> s_observers;

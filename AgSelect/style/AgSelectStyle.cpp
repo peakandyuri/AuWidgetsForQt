@@ -20,6 +20,8 @@ AgSelectStyle::AgSelectStyle()
     m_editorBorderColor = QColor(0xd9, 0xd9, 0xd9);
     m_editorHoverBorderColor = QColor(0x40, 0x96, 0xff);
     m_editorActiveBorderColor = QColor(0x16, 0x77, 0xff);
+    m_editorFocusBorderColor = QColor(0x16, 0x77, 0xff);
+    m_editorFocusBackgroundColor = QColor(0x16, 0x77, 0xff, 26);
     m_editorDisabledBackgroundColor = QColor(0, 0, 0, 10);
     m_editorDisabledForegroundColor = QColor(0, 0, 0, 64);
     m_editorDisabledBorderColor = QColor(0xd9, 0xd9, 0xd9);
@@ -51,6 +53,11 @@ AgSelectStyle::AgSelectStyle()
     // 组名 / 箭头
     m_groupHeaderForegroundColor = QColor(0, 0, 0, 115);
     m_arrowColor = QColor(0, 0, 0, 115);
+
+    // 清除图标
+    m_clearIconCircleColor = QColor(0, 0, 0, 96);
+    m_clearIconCircleHoverColor = QColor(0, 0, 0, 150);
+    m_clearIconCrossColor = QColor(Qt::white);
 }
 
 AgSelectStyle::~AgSelectStyle()
@@ -76,6 +83,8 @@ AgSelectStyle *AgSelectStyle::createDarkStyle(SizeMode mode)
     style->m_editorBorderColor = QColor(0x42, 0x42, 0x42);
     style->m_editorHoverBorderColor = QColor(0x40, 0x96, 0xff);
     style->m_editorActiveBorderColor = QColor(0x16, 0x77, 0xff);
+    style->m_editorFocusBorderColor = QColor(0x40, 0x96, 0xff);
+    style->m_editorFocusBackgroundColor = QColor(0x40, 0x96, 0xff, 42);
     style->m_editorDisabledBackgroundColor = QColor(255, 255, 255, 20);
     style->m_editorDisabledForegroundColor = QColor(255, 255, 255, 64);
     style->m_editorDisabledBorderColor = QColor(0x42, 0x42, 0x42);
@@ -106,6 +115,11 @@ AgSelectStyle *AgSelectStyle::createDarkStyle(SizeMode mode)
     // 组名 / 箭头
     style->m_groupHeaderForegroundColor = QColor(255, 255, 255, 115);
     style->m_arrowColor = QColor(255, 255, 255, 115);
+
+    // 清除图标
+    style->m_clearIconCircleColor = QColor(255, 255, 255, 96);
+    style->m_clearIconCircleHoverColor = QColor(255, 255, 255, 150);
+    style->m_clearIconCrossColor = QColor(0x14, 0x14, 0x14);
 
     return style;
 }
@@ -191,6 +205,7 @@ void AgSelectStyle::applySizeModePreset(SizeMode mode)
     }
 
     m_font = QApplication::font();
+    m_font.setFamily(QStringLiteral("Microsoft YaHei")); // Ag 控件默认字体族
     m_font.setPixelSize(fontPixelSize);
 
     m_editorBorderWidth = 1;
@@ -223,6 +238,10 @@ QColor AgSelectStyle::editorHoverBorderColor() const { return m_editorHoverBorde
 void AgSelectStyle::setEditorHoverBorderColor(const QColor &color) { m_editorHoverBorderColor = color; }
 QColor AgSelectStyle::editorActiveBorderColor() const { return m_editorActiveBorderColor; }
 void AgSelectStyle::setEditorActiveBorderColor(const QColor &color) { m_editorActiveBorderColor = color; }
+QColor AgSelectStyle::editorFocusBorderColor() const { return m_editorFocusBorderColor; }
+void AgSelectStyle::setEditorFocusBorderColor(const QColor &color) { m_editorFocusBorderColor = color; }
+QColor AgSelectStyle::editorFocusBackgroundColor() const { return m_editorFocusBackgroundColor; }
+void AgSelectStyle::setEditorFocusBackgroundColor(const QColor &color) { m_editorFocusBackgroundColor = color; }
 QColor AgSelectStyle::editorDisabledBackgroundColor() const { return m_editorDisabledBackgroundColor; }
 void AgSelectStyle::setEditorDisabledBackgroundColor(const QColor &color) { m_editorDisabledBackgroundColor = color; }
 QColor AgSelectStyle::editorDisabledForegroundColor() const { return m_editorDisabledForegroundColor; }
@@ -307,6 +326,14 @@ QColor AgSelectStyle::arrowColor() const { return m_arrowColor; }
 void AgSelectStyle::setArrowColor(const QColor &color) { m_arrowColor = color; }
 int AgSelectStyle::arrowSlotWidth() const { return m_arrowSlotWidth; }
 void AgSelectStyle::setArrowSlotWidth(int width) { m_arrowSlotWidth = qMax(12, width); }
+
+// ---- 清除图标 ----
+QColor AgSelectStyle::clearIconCircleColor() const { return m_clearIconCircleColor; }
+void AgSelectStyle::setClearIconCircleColor(const QColor &color) { m_clearIconCircleColor = color; }
+QColor AgSelectStyle::clearIconCircleHoverColor() const { return m_clearIconCircleHoverColor; }
+void AgSelectStyle::setClearIconCircleHoverColor(const QColor &color) { m_clearIconCircleHoverColor = color; }
+QColor AgSelectStyle::clearIconCrossColor() const { return m_clearIconCrossColor; }
+void AgSelectStyle::setClearIconCrossColor(const QColor &color) { m_clearIconCrossColor = color; }
 
 void AgSelectStyle::registerGlobalObserver(AgSelect *widget)
 {
