@@ -168,6 +168,13 @@ AgSelect::AgSelect(QWidget *parent)
 AgSelect::~AgSelect()
 {
     AgSelectStyle::unregisterGlobalObserver(this);
+    // 面板仍处于弹出 / 收起动画中就销毁控件时，子对象按创建顺序先于面板销毁，
+    // 面板基类析构阶段 dismiss() 发出的 closed 会回调 revertUnmatchedText() 访问
+    // 已销毁的 m_lineEdit（切页 / 父窗口销毁时崩溃）。这里先断开面板回调并安全收起。
+    if (m_panel) {
+        QObject::disconnect(m_panel, nullptr, this, nullptr);
+        m_panel->dismiss();
+    }
     delete m_ownStyle;
 }
 
