@@ -31,12 +31,12 @@
 - **多级表头**：列定义支持树形分组，自动展开为多级表头
 - **列宽模式**：固定像素（Fixed）/ 内容自适应（AutoFit）/ 按权重分配剩余空间（Flex）
 - **列停靠（Pin）**：列可停靠到左侧 / 右侧，滚动时保持可见
-- **排序 / 过滤**：单列排序、多规则逻辑排序、自定义过滤回调
+- **排序 / 过滤**：单列排序、多规则逻辑排序、整行自定义比较函数排序、自定义过滤回调
 - **单元格编辑**：双击 / 回车 / 直接输入字符进入编辑；内置单行、多行、下拉三种编辑器；支持自定义编辑器与提交校验
 - **行选中模式**：单选（默认）/ 多选 / 不可选中三种模式；多选支持点击切换与 Ctrl+点击累积
 - **数据切换动画**：排序 / 过滤时行从旧位置移向新位置（默认 100ms）；重设数据时旧内容上移出场、新内容下移入场（默认 200ms）；时长可调，0 关闭
 - **单元格合并**：类似 `QTableView::setSpan` 的行列合并能力
-- **内置辅助列**：可选的行号列、复选框列、行拖拽手柄列
+- **内置辅助列**：可选的行号列（排序 / 过滤后跟随可见顺序重新编号）、复选框列、行拖拽手柄列；显隐带与列显隐一致的动画
 - **行拖拽排序**：拖动手柄整行拖动重排，带动画与自动滚动
 - **树形表格**：`setTreeData()` 载入层级数据，首列层级缩进 + 展开 / 折叠箭头（参考 QTreeView 多列即表格树）；内置复选框列支持父子级联勾选与三态（半选）
 - **列拖拽排序 / 显隐动画**：任意层级的列可拖动重排，列显隐带位移动画
@@ -158,7 +158,7 @@ m_rowData（可见行，索引称 visibleRow，通过 m_visibleToOriginal / m_or
 | Ctrl+单击 | 多选模式：切换该行选中（与单击一致）；单选模式：点击已选中行时取消选中 |
 | 双击 / Enter / F2 | 开始编辑（可编辑列） |
 | 直接输入可打印字符 | 以该字符为初始值开始编辑 |
-| 方向键 | 移动选中格（自动跳过隐藏列与合并覆盖格；不可选中模式无效） |
+| 方向键 | 移动选中格（自动跳过隐藏列、不可聚焦列与合并覆盖格；不可选中模式无效） |
 | Tab / Backtab | 跳到下一个 / 上一个可编辑格 |
 | Ctrl+C | 复制当前选中格内容 |
 | Space | 复选框列 / 复选框单元格切换勾选 |
@@ -227,7 +227,10 @@ m_rowData（可见行，索引称 visibleRow，通过 m_visibleToOriginal / m_or
 |---|---|
 | `void sort(int column, Qt::SortOrder order)` | 单列排序 |
 | `void sort(const QList<AgSortRule> &rules)` | 多规则逻辑排序（按顺序依次比较）；空列表等价 `clearSort()` |
-| `void clearSort()` | 清除排序（恢复原始顺序） |
+| `void clearSort()` | 清除排序（含自定义比较函数，恢复原始顺序） |
+| `void setSortComparator(const AgRowComparator &comparator)` | 整行自定义比较函数：`int(const QVariantMap &a, const QVariantMap &b)`，返回 <0 表示 a 排前、>0 表示 b 排前、0 保持原顺序（稳定排序）。生效期间**优先于排序规则**，可在函数内自由读取任意列组合判断（树形模式作用于同级兄弟）；传 `nullptr` 等价 `clearSortComparator()` |
+| `void clearSortComparator()` | 清除自定义比较函数（保留排序规则） |
+| `bool hasSortComparator() const` | 是否设置了自定义比较函数 |
 | `void setFilterCallback(const std::function<bool(const QVariantMap &row)> &callback)` | 设置过滤回调：**返回 true 保留该行** |
 | `void clearFilterCallback()` | 清除过滤 |
 | `bool hasFilterCallback() const` | 是否设置了过滤回调 |
@@ -338,6 +341,7 @@ enum class TextWrapMode   { NoWrap, NoWrapTruncate, NoWrapOverflow, WordWrap };
 | flexWeight | `flexWeight()` / `setFlexWeight()` | 1 | Flex 权重 |
 | sortable | `isSortable()` / `setSortable()` | false | 点击表头排序 |
 | editable | `isEditable()` / `setEditable()` | false | 允许编辑（复选框列表示可点击切换） |
+| focusable | `isFocusable()` / `setFocusable()` | true | 单元格可否成为键盘 / 选中锚点（当前格）。false：方向键与 Tab 导航跳过该列、点击 / 程序选中不把锚点（焦点框）落到该格，行选中、`cellClicked` 与渲染器交互照常。适合放操作按钮的自定义列；逐格动态裁决用 `AgGridWidget::setCellFocusableCallback` |
 | filterable | `isFilterable()` / `setFilterable()` | false | 预留 |
 | visible | `isVisible()` / `setVisible()` | true | 初始可见性（运行时用 `AgGridWidget::setColumnVisible`） |
 | resizable | `isResizable()` / `setResizable()` | true | 允许拖动调宽 / 参与 AutoFit |
@@ -522,12 +526,14 @@ bool hasSpans() const;
 
 | 函数 | 说明 |
 |---|---|
-| `void setRowNumberColumnVisible(bool visible)` / `bool isRowNumberColumnVisible() const` | 行号列开关；显示"原始行号 + 1" |
+| `void setRowNumberColumnVisible(bool visible)` / `bool isRowNumberColumnVisible() const` | 行号列开关；显示"可见行号 + 1"（排序 / 过滤 / 拖拽重排后跟随可见顺序重新编号） |
 | `void setCheckboxColumnVisible(bool visible)` / `bool isCheckboxColumnVisible() const` | 复选框列开关；隐藏时清空全部勾选 |
 | `void setRowDragEnabled(bool enabled)` / `bool isRowDragEnabled() const` | 行拖拽手柄列开关（行拖拽总开关） |
 | `void setDragPreviewTextCallback(const std::function<QString(const AgGridModel *, const QVector<int> &)> &callback)` | 自定义拖动时浮动提示文字（默认显示行数） |
 
 复选框列与拖拽手柄列同时开启时合并为一个固定列单元格，中间无分隔线。表头复选框支持全选 / 半选状态。
+
+三个辅助列的显示 / 隐藏均带与列显隐一致的动画（180ms 缓动 + 淡入淡出，主体列随固定区宽度增减平滑移位）；行拖拽时浮动提示的高度与当前尺寸模式的默认行高保持一致。
 
 ### 7.12 勾选（注意：按原始行）
 
@@ -552,7 +558,9 @@ bool hasSpans() const;
 | `int sortedColumn() const` / `Qt::SortOrder sortOrder() const` | 当前排序列与方向（-1 表示未排序） |
 | `void setSortRules(const QList<AgSortRule> &rules)` | 多规则逻辑排序 |
 | `QList<AgSortRule> sortRules() const` | 当前排序规则 |
-| `void clearSort()` | 清除排序 |
+| `void setSortComparator(const AgRowComparator &comparator)` | 整行自定义比较函数（生效期间优先于规则；不指向具体列，表头排序箭头随之清除） |
+| `void clearSortComparator()` | 清除自定义比较函数（保留规则） |
+| `void clearSort()` | 清除排序（含比较函数） |
 | `void setFilterCallback(const std::function<bool(const QVariantMap &row)> &callback)` | 过滤回调（返回 true 保留） |
 | `void clearFilter()` | 清除过滤 |
 | `bool isFiltered() const` | 是否设置了过滤回调 |
@@ -565,6 +573,15 @@ bool hasSpans() const;
 |---|---|
 | `void setCellEditValidator(QSharedPointer<AgCellEditValidator> validator)` | 设置全局提交校验器（见第 14 节） |
 | `void setCellEditableCallback(const std::function<bool(const AgGridModel *, int row, int column)> &callback)` | 动态可编辑回调：在列 `editable` 基础上按行/列最终裁决 |
+| `bool isCellFocusable(int row, int column) const` | 单元格是否可成为键盘 / 选中锚点（列 `focusable` × 动态回调，默认 true） |
+| `void setCellFocusableCallback(const std::function<bool(const AgGridModel *, int row, int column)> &callback)` | 动态可聚焦回调：在列 `focusable=true` 基础上按行/列最终裁决（进一步收紧） |
+
+**不可聚焦单元格的行为**（列 `setFocusable(false)` 或回调返回 false）：
+
+- 方向键导航直接跳过该列（左右移动不落入；动态回调使锚点列失焦后，上下移动会自动横向跳出）；Tab / Backtab 编辑导航同样跳过；
+- 点击该格：行选中照常（含 Ctrl 取消手势）、`cellClicked` 照常发出、自定义渲染器的按钮交互照常，但锚点（焦点框）保持原位不移动；`selectCell()` 定位到该格时退化为按行选中；
+- 焦点框不会绘制在不可聚焦格上；
+- 编辑入口不受影响（双击仍可编辑设置了 `editable=true` 的不可聚焦格；不希望编辑可再设 `editable=false`）。
 
 ### 7.15 交互状态查询（渲染器辅助）
 
@@ -676,7 +693,7 @@ void setVerticalGridLinesVisible(bool visible);   // 默认显示
 bool isVerticalGridLinesVisible() const;
 ```
 
-隐藏后 body 区的**数据列**（含合并单元格）只绘制上下（行方向）边框线，左右分隔线消失，呈现纯行分隔样式。表格自带的**行号列 / 复选框列 / 拖拽手柄列始终绘制完整边框**（不受开关影响），表头边框与底部收尾线同样不变。
+隐藏后 body 区的**数据列**（含合并单元格）只绘制上下（行方向）边框线，左右分隔线消失，呈现纯行分隔样式。列未铺满表格宽度时，自动在**内容右边缘**补画一条竖线——x 随内容右边缘（即滚动后的当前最右侧列）移动，避免最右侧列的右侧缺边框。表格自带的**行号列 / 复选框列 / 拖拽手柄列始终绘制完整边框**（不受开关影响），表头边框与底部收尾线同样不变。
 
 **停靠边界不受开关影响**：存在停靠列时，停靠区与 body 区之间的交界竖线始终绘制（使用表头边框色 `HeaderBorderColor`，贯穿表头与 body，滚动时跟随停靠列的粘性位置）；同侧多列停靠之间的分隔线则跟随本开关隐藏。
 
@@ -991,6 +1008,75 @@ def.setCellEditor("combo");    // 该列使用下拉编辑
 def.setEditable(true);         // 必须可编辑
 ```
 
+### 13.4 集成任意 QWidget 编辑器（如 AgSelect / AgDatePicker，外部代码、零改 AgGrid）
+
+`AgCellEditor` 是纯插件接口：把任意 QWidget 包装进 `createEditor(parent)`（`parent` 即宿主
+`AgGridWidget`），注册后按列引用即可。包装类用 `QObject + AgCellEditor` 多继承承载信号连接
+（`QObject::connect` 是静态函数，无需 Q_OBJECT / moc）。选择完成后通过**公开 API**
+`closeEditor(true)` 主动提交；Esc 取消、点击其它单元格提交、Tab 跳转等编辑生命周期全部照常。
+
+```cpp
+class AgSelectCellEditor : public QObject, public AgCellEditor {
+public:
+    explicit AgSelectCellEditor(const QStringList &items) : m_items(items) {}
+    QWidget *createEditor(QWidget *parent) const override {
+        AgSelect *select = new AgSelect(parent);          // parent 即宿主 AgGridWidget
+        select->addItems(m_items);
+        select->setFocusPolicy(Qt::StrongFocus);          // 让 editCell 的 setFocus 生效
+        QObject::connect(select, &AgSelect::activated, select, [select]() {
+            if (AgGridWidget *grid = qobject_cast<AgGridWidget *>(select->parent()))
+                grid->closeEditor(true);                  // 选择即提交（公开 API）
+        });
+        return select;
+    }
+    void setEditorValue(QWidget *editor, const QVariant &value) const override {
+        AgSelect *select = static_cast<AgSelect *>(editor);
+        select->setCurrentIndex(select->findText(value.toString(), Qt::MatchExactly));
+    }
+    QVariant editorValue(QWidget *editor) const override {
+        return static_cast<AgSelect *>(editor)->currentText();
+    }
+private:
+    QStringList m_items;
+};
+
+grid->registerCellEditor("agSelect",
+    QSharedPointer<AgCellEditor>(new AgSelectCellEditor({"A", "B"})));
+def.setCellEditor("agSelect");
+def.setEditable(true);
+```
+
+注意：通过 `closeEditor(true)` 主动提交的路径**不经过校验器**（Esc / 点击其它单元格 /
+Enter 等标准路径仍走校验）；提交后宿主会把焦点还给表格（编辑器销毁前焦点仍在其子树时），
+Tab / 方向键可继续导航。弹层面板（下拉 / 日历）是顶层窗口，跟随单元格全局定位，
+无需额外处理。AgDatePicker 同理：`activated` 提交选中值（QDate）、`cleared` 提交空值。
+
+**推荐的两个体验增强**（同样纯外部实现）：
+
+1. **编辑框高度贴合单元格**：AgSelect / AgDatePicker 默认编辑框高度（小 / 中 / 大档位）
+   可能高于行高导致溢出，按宿主行高定制即可贴合：
+
+```cpp
+if (AgGridWidget *grid = qobject_cast<AgGridWidget *>(parent)) {
+    AgSelectStyle *style = new AgSelectStyle(*AgSelectStyle::globalStyle());
+    style->setEditorHeight(grid->rowHeight());
+    select->setStyle(style);                 // AgDatePicker 用 picker->setEditorHeight(...)
+}
+```
+
+2. **打开编辑器即自动展开面板**（延迟一拍），交互闭环最顺滑：
+   Enter / 双击编辑 → 面板直接就位 → Enter / 点击确认 → 提交并把焦点还给表格 →
+   Tab 跳下一可编辑格 / 方向键移动：
+
+```cpp
+QTimer::singleShot(0, select, [select]() {
+    if (select->isEnabled())
+        select->showPopup();
+});
+```
+
+完整可运行示例见 FeatureDemo「集成 AgSelect / AgDatePicker」页。
+
 ---
 
 ## 14. 编辑校验器
@@ -1015,6 +1101,8 @@ public:
 ```
 
 通过 `AgGridWidget::setCellEditValidator()` 设置，对全部编辑提交生效。`errorMessage` 用于提示（校验未通过时编辑器保持打开）。示例见 `Example/CustomAgGrid/DemoValidator`。
+
+**错误提示的展示方式**：校验未通过（`RejectKeepEditing`）时，编辑框加红色边框，并在**编辑框正下方 2px** 处弹出常驻错误提示浮层；提示在**校验通过前持续显示**（编辑期间按键会即时复查，通过即自动消失；悬停编辑框会重新定位显示；滚动 / 布局变化时始终贴住编辑框，贴近底部时自动翻转到上方），编辑结束（提交 / 取消 / 失焦）时清除。
 
 ---
 

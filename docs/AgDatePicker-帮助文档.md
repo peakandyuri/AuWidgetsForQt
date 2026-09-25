@@ -23,16 +23,18 @@ connect(picker, &AgDatePicker::activated, [](const QDate &date) { /* 用户选�
 - 无值时面板定位到当前月份；已选值时定位到所选日期所在月并高亮选中；
 - `date()` 返回当前日期，无效 `QDate` 表示未选择；`hasSelection()` 便捷判断。
 
-**固定尺寸**：控件为固定尺寸（Fixed 尺寸策略），不随父布局拉伸。默认宽度按显示
-格式的最长文本计算（日期完整显示不截断），需要调整时：
+**宽度模式**：默认宽度按显示格式的最长文本自适应（`WidthFitContent`，固定尺寸策略，
+不随父布局拉伸）；需要跟随布局水平拉伸时切换 `WidthStretch`（最小宽度仍为格式自适应
+宽度，文本不截断）。两种模式下都可用 `setFixedWidth()` / `setMinimumWidth()` 手动调整：
 
 ```cpp
-picker->setFixedWidth(260);        // 固定宽度
+picker->setEditorWidthMode(AgDatePicker::WidthStretch);  // 跟随布局水平拉伸
+picker->setFixedWidth(260);        // 固定宽度（两种模式下均可手动固定）
 picker->setMinimumWidth(200);      // 最小宽度
 picker->setEditorHeight(42);       // 高度（或用 setSizeMode 切换档位）
 ```
 
-弹层面板宽度同样固定（按内容计算，中档约 230px），**不随编辑框宽度拉伸**。
+弹层面板宽度始终固定（按内容计算，中档约 230px），**不随编辑框宽度拉伸或收缩**。
 
 ## 2. 显示格式
 
@@ -192,7 +194,20 @@ picker->resetFooterLink(AgDatePicker::FooterCenter);      // 恢复内置"今天
 ```
 
 三个槽位（`FooterLeft / FooterCenter / FooterRight`）可分别配置文本与点击回调，
-覆盖该槽位的内置项；回调内可继续操作控件（如 setDate、hidePopup）。
+覆盖该槽位的内置项；回调内可继续操作控件（如 setDate）。
+
+**footer 回调可控制面板收起**：回调里调用 `hidePopup()` 即可（例如自定义"完成"
+按钮选中值后关闭面板）：
+
+```cpp
+picker->setFooterLink(AgDatePicker::FooterRight, QStringLiteral("完成"), [picker]() {
+    picker->hidePopup();   // 点击 footer 链接后收起面板
+});
+```
+
+**范围模式（双日历面板）的 footer**：同样支持 `setFooterLink` 三槽位自定义链接
+（无内置快捷项；未配置任何链接时不显示 footer 条，配置后自动显示）。`setFooterWidget`
+整体部件替换仅对单日历面板生效。
 
 ### 7.3 完全自定义 footer
 
