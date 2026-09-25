@@ -6,6 +6,7 @@
 
 #include <QWidget>
 #include <QDate>
+#include <functional>
 
 class AgDatePickerPanel;
 
@@ -23,6 +24,11 @@ class AgDatePickerPanel;
  * 面板内部：两个 AgDatePickerPanel 均为范围模式（单一选中高亮关闭）、隐藏
  * footer、关闭 head 年 / 月九宫格跳转；左侧只显示 "<<" "<" 箭头，右侧只显示
  * ">" ">>" 箭头。键盘焦点（方向键移动、回车激活）由持有焦点日期的一侧承载。
+ *
+ * footer：与单日历面板一致的三槽位（左 / 中 / 右）快捷链接，默认隐藏（无内置
+ * 快捷项）；setFooterLink 配置过自定义链接后自动显示（分隔线 + 链接文字），
+ * 也可 setFooterVisible(false) 强制隐藏。回调中可调用 AgDatePicker::hidePopup()
+ * 控制面板收起。
  */
 class AGDATEPICKER_EXPORT AgDateRangePanel : public QWidget
 {
@@ -34,6 +40,16 @@ public:
 
     // ---- 样式（非持有，转发给两个子日历）----
     void setStyle(AgDatePickerStyle *style);
+
+    // ---- footer ----
+    /// 显示 / 隐藏 footer（默认隐藏；配置过自定义链接后自动显示）。
+    void setFooterVisible(bool visible);
+    bool isFooterVisible() const;
+    /// 配置槽位快捷链接（slot: 0 左 / 1 中 / 2 右；custom=false 等价 resetFooterLink）。
+    void setFooterLink(int slot, const QString &text,
+                       const std::function<void()> &callback, bool custom = true);
+    /// 恢复槽位为空（取消自定义链接）。
+    void resetFooterLink(int slot);
 
     // ---- 已提交范围（无效 QDate = 无）----
     void setSelectedRange(const QDate &start, const QDate &end);
@@ -68,9 +84,17 @@ Q_SIGNALS:
 private:
     AgDatePickerPanel *focusPanel() const;      ///< 焦点日期所在（或应属）的一侧
     void syncPeer(AgDatePickerPanel *sender);   ///< 保持右侧 = 左侧 + 1 月
+    /// footer 实际绘制条件：显式可见且至少配置过一个自定义链接（无内容时不出空条）。
+    bool footerEffectiveVisible() const;
+    QRect footerRect() const;
+    QRect footerLinkRect(int slot) const;
 
 protected:
     void resizeEvent(QResizeEvent *event) override;
+    void paintEvent(QPaintEvent *event) override;
+    void mouseMoveEvent(QMouseEvent *event) override;
+    void mousePressEvent(QMouseEvent *event) override;
+    void leaveEvent(QEvent *event) override;
 
 private:
     AgDatePickerStyle *m_style;
@@ -81,6 +105,16 @@ private:
     QDate m_committedStart;                 ///< 已提交范围（endPicking 恢复用）
     QDate m_committedEnd;
     bool m_picking;
+
+    // footer（三槽位快捷链接，默认隐藏）
+    struct FooterLinkData {
+        QString text;
+        std::function<void()> callback;
+        bool custom = false;
+    };
+    bool m_footerVisible = false;
+    FooterLinkData m_footerLinks[3];
+    int m_hoverFooterSlot = -1;             ///< 悬停槽位（-1 无）
 };
 
 #endif // AGDATERANGEPANEL_H

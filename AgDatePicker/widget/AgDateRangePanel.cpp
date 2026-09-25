@@ -1,6 +1,8 @@
 #include "AgDateRangePanel.h"
 #include "AgDatePickerPanel.h"
 
+#include <QMouseEvent>
+#include <QPainter>
 #include <QResizeEvent>
 
 namespace {
@@ -61,6 +63,82 @@ void AgDateRangePanel::setStyle(AgDatePickerStyle *style)
     m_right->setStyle(style);
     updateGeometry();
     update();
+}
+
+// ---------------------------------------------------------------------------
+// footer（三槽位快捷链接；回调中可调用 AgDatePicker::hidePopup() 收起面板）
+
+void AgDateRangePanel::setFooterVisible(bool visible)
+{
+    if (m_footerVisible == visible)
+        return;
+    m_footerVisible = visible;
+    updateGeometry();
+    update();
+}
+
+bool AgDateRangePanel::isFooterVisible() const
+{
+    return m_footerVisible;
+}
+
+void AgDateRangePanel::setFooterLink(int slot, const QString &text,
+                                     const std::function<void()> &callback, bool custom)
+{
+    if (slot < 0 || slot > 2)
+        return;
+    if (!custom) {
+        resetFooterLink(slot);
+        return;
+    }
+    m_footerLinks[slot].text = text;
+    m_footerLinks[slot].callback = callback;
+    m_footerLinks[slot].custom = true;
+    update();
+}
+
+void AgDateRangePanel::resetFooterLink(int slot)
+{
+    if (slot < 0 || slot > 2)
+        return;
+    m_footerLinks[slot] = FooterLinkData();
+    update();
+}
+
+bool AgDateRangePanel::footerEffectiveVisible() const
+{
+    if (!m_footerVisible)
+        return false;
+    for (const FooterLinkData &link : m_footerLinks) {
+        if (link.custom && !link.text.isEmpty())
+            return true;
+    }
+    return false;
+}
+
+QRect AgDateRangePanel::footerRect() const
+{
+    if (!footerEffectiveVisible())
+        return QRect();
+    return QRect(0, height() - m_style->footerHeight(), width(), m_style->footerHeight());
+}
+
+QRect AgDateRangePanel::footerLinkRect(int slot) const
+{
+    if (slot < 0 || slot > 2)
+        return QRect();
+    const FooterLinkData &link = m_footerLinks[slot];
+    if (!link.custom || link.text.isEmpty())
+        return QRect();
+    const QFontMetrics fm(m_style->font());
+    const QRect footer = footerRect();
+    const int w = fm.horizontalAdvance(link.text) + 16;
+    switch (slot) {
+    case 0: return QRect(m_style->panelHorizontalPadding() + 4, footer.top(), w, footer.height());
+    case 1: return QRect((width() - w) / 2, footer.top(), w, footer.height());
+    default: return QRect(width() - m_style->panelHorizontalPadding() - 4 - w,
+                          footer.top(), w, footer.height());
+    }
 }
 
 void AgDateRangePanel::setSelectedRange(const QDate &start, const QDate &end)
@@ -176,7 +254,9 @@ void AgDateRangePanel::activateFocus()
 QSize AgDateRangePanel::sizeHint() const
 {
     const QSize single = m_left->sizeHint();
-    return QSize(2 * single.width() + kCalendarGap, single.height());
+    // footer 生效时面板高度增加一条 footer 条（两个子日历保持原高度）
+    const int footerH = footerEffectiveVisible() ? m_style->footerHeight() : 0;
+    return QSize(2 * single.width() + kCalendarGap, single.height() + footerH);
 }
 
 void AgDateRangePanel::syncPeer(AgDatePickerPanel *sender)
@@ -197,6 +277,77 @@ void AgDateRangePanel::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
     const QSize single = m_left->sizeHint();
-    m_left->setGeometry(0, 0, single.width(), height());
-    m_right->setGeometry(single.width() + kCalendarGap, 0, single.width(), height());
+    const int footerH = footerEffectiveVisible() ? m_style->footerHeight() : 0;
+    m_left->setGeometry(0, 0, single.width(), height() - footerH);
+    m_right->setGeometry(single.width() + kCalendarGap, 0, single.width(), height() - footerH);
+}
+
+void AgDateRangePanel::paintEvent(QPaintEvent * /*event*/)
+{
+    if (!footerEffectiveVisible())
+        return;
+
+    QPainter painter(this);
+    const QRect footer = footerRect();
+
+    // 顶部分隔线（与单日历 footer 一致）
+    if (m_style->footerTopLineColor().isValid()) {
+        painter.setPen(QPen(m_style->footerTopLineColor(), 1.0));
+        painter.drawLine(QPointF(m_style->panelHorizontalPadding() / 2.0, footer.top() + 0.5),
+                         QPointF(width() - m_style->panelHorizontalPadding() / 2.0,
+                                 footer.top() + 0.5));
+    }
+
+    for (int slot = 0; slot < 3; ++slot) {
+        const QRect rect = footerLinkRect(slot);
+        if (rect.isNull())
+            continue;
+        const bool hovered = m_hoverFooterSlot == slot;
+        painter.setPen(hovered ? m_style->footerLinkHoverColor() : m_style->footerLinkColor());
+        painter.drawText(rect, Qt::AlignCenter, m_footerLinks[slot].text);
+    }
+}
+
+void AgDateRangePanel::mouseMoveEvent(QMouseEvent *event)
+{
+    int slot = -1;
+    if (footerEffectiveVisible() && footerRect().contains(event->pos())) {
+        for (int i = 0; i < 3; ++i) {
+            if (footerLinkRect(i).contains(event->pos())) {
+                slot = i;
+                break;
+            }
+        }
+    }
+    if (slot != m_hoverFooterSlot) {
+        m_hoverFooterSlot = slot;
+        update();
+    }
+    setCursor(slot >= 0 ? Qt::PointingHandCursor : Qt::ArrowCursor);
+    QWidget::mouseMoveEvent(event);
+}
+
+void AgDateRangePanel::mousePressEvent(QMouseEvent *event)
+{
+    // footer 链接点击（区域不被两个子日历覆盖，事件天然落到本面板）
+    if (footerEffectiveVisible() && footerRect().contains(event->pos())) {
+        for (int slot = 0; slot < 3; ++slot) {
+            if (!footerLinkRect(slot).contains(event->pos()))
+                continue;
+            if (m_footerLinks[slot].callback)
+                m_footerLinks[slot].callback();
+            return;
+        }
+    }
+    QWidget::mousePressEvent(event);
+}
+
+void AgDateRangePanel::leaveEvent(QEvent *event)
+{
+    if (m_hoverFooterSlot != -1) {
+        m_hoverFooterSlot = -1;
+        update();
+    }
+    setCursor(Qt::ArrowCursor);
+    QWidget::leaveEvent(event);
 }

@@ -24,10 +24,11 @@ class AgDateRangePanel;
  * 日历面板（AgPopupPanel 内嵌 AgDatePickerPanel）。亮 / 暗两套内置主题，
  * 小 / 中 / 大三种尺寸预设（高度可逐控件微调）。
  *
- * 尺寸约定：控件为固定尺寸（Fixed 尺寸策略），不随父布局拉伸；默认宽度按显示
- * 格式的最长文本计算，可通过 setFixedWidth() / setMinimumWidth() / resize() 调整，
- * 高度用 setEditorHeight() 或 setSizeMode() 调整。弹层面板宽度固定（约 230px，
- * 中档），不随编辑框宽度变化。
+ * 尺寸约定：默认宽度按显示格式的最长文本自适应（WidthFitContent，固定尺寸策略），
+ * setEditorWidthMode(WidthStretch) 可切换为跟随布局水平拉伸（最小宽度仍为格式
+ * 自适应宽度，文本不截断）；两种模式下都可用 setFixedWidth() / setMinimumWidth() /
+ * resize() 手动调整，高度用 setEditorHeight() 或 setSizeMode() 调整。
+ * 弹层面板宽度始终固定（约 230px，中档），不随编辑框宽度变化。
  *
  * 交互约定：
  *  - 文本默认以 yyyy-MM-dd 格式化显示，setDisplayFormat() 可自定义
@@ -64,6 +65,8 @@ class AgDateRangePanel;
  *  - footer：默认居中显示 "今天" / "当月" / "今年"（无下划线超链接效果，点击选择
  *    当前日期），setFooterVisible(false) 可隐藏；setFooterLink() 可配置左 / 中 /
  *    右三个超链接位（文本 + 点击回调），setFooterWidget() 可整体替换为自定义部件；
+ *    范围模式（双日历面板）同样支持 setFooterLink 三槽位自定义链接（无内置快捷项，
+ *    setFooterWidget 不生效），回调里调用 hidePopup() 可控制面板收起；
  *  - 面板展开 / 收起带动画，通过 popupAboutToShow()/popupShown()/
  *    popupAboutToHide()/popupHidden() 回调；Esc 关闭面板；
  *  - setEnabled(false) 整体禁用。
@@ -93,6 +96,12 @@ public:
         FooterRight    ///< 右侧
     };
 
+    /// 编辑框宽度模式。
+    enum EditorWidthMode {
+        WidthFitContent,  ///< 默认：宽度按显示格式自适应（固定尺寸，不随父布局拉伸）
+        WidthStretch      ///< 跟随父布局水平拉伸（最小宽度 = 格式自适应宽度，文本不截断）
+    };
+
     explicit AgDatePicker(QWidget *parent = nullptr);
     ~AgDatePicker() override;
 
@@ -116,6 +125,9 @@ public:
     // ---- 编辑框 ----
     QString placeholderText() const;
     int editorHeight() const;
+    /// 编辑框宽度模式（默认 WidthFitContent；两种模式下都可用 setFixedWidth 手动固定宽度，
+    /// 弹层面板宽度始终固定，不随编辑框宽度变化）。
+    EditorWidthMode editorWidthMode() const;
 
     // ---- 范围模式占位文本（SelectDateRange）----
     /// 配置两侧占位文本（编辑框整体为空时灰显 "start ~ end"；起始已选而结束为空时
@@ -161,6 +173,8 @@ public Q_SLOTS:
     // ---- 编辑框 ----
     void setPlaceholderText(const QString &text);
     void setEditorHeight(int height);               ///< 覆盖尺寸档位编辑框高度（派生独立样式）
+    /// 设置编辑框宽度模式（见 EditorWidthMode）。
+    void setEditorWidthMode(EditorWidthMode mode);
 
     // ---- 清除按钮 ----
     void setClearButtonEnabled(bool enabled);
@@ -277,6 +291,7 @@ private:
     SelectionMode m_selectionMode;
     QDate m_minimumDate;
     QDate m_maximumDate;
+    EditorWidthMode m_editorWidthMode;      ///< 编辑框宽度模式（默认按格式自适应）
 
     // 范围选择过程状态（仅面板展开期间有效）
     bool m_picking;                         ///< 已选起点、待选终点

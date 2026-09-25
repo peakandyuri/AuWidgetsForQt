@@ -104,6 +104,7 @@ AgDatePicker::AgDatePicker(QWidget *parent)
     , m_overrideSizeMode(AgDatePickerStyle::SizeMode::Medium)
     , m_formatCustom(false)
     , m_selectionMode(SelectDay)
+    , m_editorWidthMode(WidthFitContent)
     , m_picking(false)
     , m_rangePlaceholderAuto(false)
     , m_rangeStartPlaceholder(kRangeStartPlaceholder)
@@ -151,6 +152,13 @@ AgDatePicker::AgDatePicker(QWidget *parent)
 AgDatePicker::~AgDatePicker()
 {
     AgDatePickerStyle::unregisterGlobalObserver(this);
+    // 面板仍处于弹出 / 收起动画中就销毁控件时，面板基类析构阶段 dismiss() 发出的
+    // closed 会在半析构状态下回调本控件的槽（切页 / 父窗口销毁时存在隐患）。
+    // 这里先断开面板回调并安全收起。
+    if (m_panel) {
+        QObject::disconnect(m_panel, nullptr, this, nullptr);
+        m_panel->dismiss();
+    }
     delete m_ownStyle;
 }
 
@@ -416,6 +424,28 @@ void AgDatePicker::setEditorHeight(int height)
 }
 
 // ---------------------------------------------------------------------------
+// 宽度模式
+
+AgDatePicker::EditorWidthMode AgDatePicker::editorWidthMode() const
+{
+    return m_editorWidthMode;
+}
+
+void AgDatePicker::setEditorWidthMode(EditorWidthMode mode)
+{
+    if (m_editorWidthMode == mode)
+        return;
+    m_editorWidthMode = mode;
+    // WidthFitContent：固定尺寸（默认，宽度按显示格式自适应）；
+    // WidthStretch：水平跟随布局拉伸，最小宽度取格式自适应宽度保证文本不截断。
+    // 两种模式下都可用 setFixedWidth 手动固定；弹层面板宽度始终固定不变
+    setSizePolicy(mode == WidthStretch ? QSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed)
+                                       : QSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed));
+    updateGeometry();
+    update();
+}
+
+// ---------------------------------------------------------------------------
 // 清除按钮
 
 bool AgDatePicker::isClearButtonEnabled() const
@@ -488,13 +518,22 @@ void AgDatePicker::setFooterWidget(QWidget *widget)
 
 void AgDatePicker::pushFooterConfig()
 {
-    if (!m_dayContent)
-        return;
-    m_dayContent->setFooterVisible(m_footerVisible);
-    for (int slot = 0; slot < 3; ++slot)
-        m_dayContent->setFooterLink(slot, m_footerLinks[slot].text,
-                                    m_footerLinks[slot].callback, m_footerLinks[slot].custom);
-    m_dayContent->setFooterWidget(m_footerWidget);
+    if (m_dayContent) {
+        m_dayContent->setFooterVisible(m_footerVisible);
+        for (int slot = 0; slot < 3; ++slot)
+            m_dayContent->setFooterLink(slot, m_footerLinks[slot].text,
+                                        m_footerLinks[slot].callback, m_footerLinks[slot].custom);
+        m_dayContent->setFooterWidget(m_footerWidget);
+    }
+    if (m_rangeContent) {
+        // 范围面板（双日历）：同样支持三槽位自定义链接；无内置快捷项、
+        // 不支持整体部件替换（footerWidget 仅单日历生效），
+        // 未配置任何链接时不出空 footer 条
+        m_rangeContent->setFooterVisible(m_footerVisible);
+        for (int slot = 0; slot < 3; ++slot)
+            m_rangeContent->setFooterLink(slot, m_footerLinks[slot].text,
+                                          m_footerLinks[slot].callback, m_footerLinks[slot].custom);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -590,6 +629,7 @@ void AgDatePicker::showPopup()
         m_rangeContent->setStyle(style());
         m_rangeContent->setDateRange(m_minimumDate, m_maximumDate);
         m_rangeContent->setSelectedRange(m_date, m_endDate);
+        pushFooterConfig();
         m_rangeContent->resetView();
         m_panel->popupOver(this, m_rangeContent->sizeHint());
         // 展开期间提示当前选择的是开始日期（无动画直接就位）
@@ -1121,6 +1161,9 @@ QSize AgDatePicker::sizeHint() const
 
 QSize AgDatePicker::minimumSizeHint() const
 {
+    // WidthStretch 模式下最小宽度取格式自适应宽度，布局再窄也不截断日期文本
+    if (m_editorWidthMode == WidthStretch)
+        return QSize(fixedEditorWidth(), m_preferredHeight);
     return QSize(60, m_preferredHeight);
 }
 
