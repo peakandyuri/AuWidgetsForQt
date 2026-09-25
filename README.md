@@ -12,9 +12,11 @@
 | **AgGrid** | 核心控件：基于 QPainter 自绘的高性能数据表格 `AgGridWidget` |
 | **AgSelect** | 下拉选择控件 `AgSelect`（替代 QComboBox） |
 | **AgDatePicker** | 日期选择控件 `AgDatePicker`（替代 QCalendarWidget） |
+| **AgPlot** | 曲线绘制控件 `AgPlot`：双轴坐标、大/小刻度、背景网格、曲线/点/线/面图元、拖动缩放，支持百万级数据 |
 | **Example** | 示例程序：按功能拆分的多个演示窗口，覆盖各控件的主要特性 |
+| **FeatureDemo** | 功能细化演示程序：左侧互斥切换控件，右侧按“一个功能一个 Tab”拆分演示，每页配套实现代码（PlainText），上手最直观 |
 
-依赖关系：AgGrid、AgSelect、AgDatePicker 依赖 AgCommon；Example 依赖以上全部库。
+依赖关系：AgGrid、AgSelect、AgDatePicker 依赖 AgCommon；AgPlot 独立无依赖；Example、FeatureDemo 依赖以上全部库。
 
 ## 主要特性
 
@@ -50,12 +52,27 @@
 - 亮 / 暗主题、小 / 中 / 大尺寸预设，编辑框高度可逐控件微调（`setEditorHeight()`）
 - 默认字体微软雅黑（Ag 控件统一约定，样式 `setFont()` 可覆盖）
 
+### AgPlot 曲线绘制
+
+- **双轴支持**：底部 X1 / 左侧 Y1 默认显示（单轴），顶部 X2 / 右侧 Y2 通过 `setDualAxisEnabled()` 开启，四条轴独立配置
+- **刻度系统**：大 / 小刻度两级（小刻度为相邻大刻度间平分），刻度数量按轴像素长度自动控制或 `setTickCount()` 固定；支持 `setLabelFormatter()` 自定义显示值（如 1~7 显示星期）、`setTickLabelsVisible(false)` 隐藏数值
+- **背景网格**：横向 / 纵向 / 两者，默认虚线，可配置实线、点线等（线型 / 颜色 / 线宽逐轴可调），支持更密的小刻度网格
+- **大数据量**：x 升序数据二分定位可见区间 + 按像素列 min/max 抽稀（保留峰谷极值），百万级点流畅绘制
+- **点线面图元**：`AgPlotCurve`（曲线）/ `AgPlotPoints`（散点）/ `AgPlotLine`（参考线）/ `AgPlotArea`（多边形面），坐标按轴数据值，`setZLevel()` 控制层级（默认曲线 0，负值在曲线下方，先画层级低的）
+- **内置点样式**：实心 / 空心圆、方块、菱形、三角、十字架、X、带圈十字架等
+- **线型**：实线 / 虚线 / 点线，虚线间隔与相位可用 `setDashPattern()` / `setDashOffset()` 精细控制
+- **面填充**：内部填充色支持透明度，边框实线 / 虚线可选
+- **交互**（默认关闭）：拖动平移（可精细化只允许横向或纵向）、鼠标滚轮以光标为中心缩放（灵敏度 `setZoomFactor()` 可调，默认每格 1.2）；轴 `setRange()` / `setLimits()` 后拖动缩放被钳制在该范围内
+- **追踪器与十字线**：`setTrackerEnabled()` 鼠标移入吸附最近曲线点（升序曲线二分查找，百万级数据流畅），绘制空心圆标记 + 引导线 + x/y 值 tooltip（值文本使用轴刻度格式化），`trackerChanged()` 信号实时回调；`setCrosshairEnabled()` 横贯绘图区的十字线跟随鼠标；tooltip / 十字线颜色字体在样式中独立配置
+- **参考线**：`AgPlotRefLine` 横贯绘图区的水平 / 垂直全幅标线（阈值线、报警线），只需一个数据值，不参与自适应量程
+- **样式**：白底默认，背景支持透明与任意颜色（含透明度），轴色 / 刻度值 / 网格 / 曲线 / 点线面颜色独立可控，新曲线按调色板自动取色；亮 / 暗主题工厂 + 全局样式 + 控件独立样式
+
 ## 快速开始
 
 环境要求：Qt 5.x（Widgets 模块）、qmake、支持 C++11 的编译器（Windows 下建议使用 MinGW 工具链）。
 
 1. 用 Qt Creator 打开根目录的 `AgWidgetsForQt.pro`，工程会自动加载全部子项目；
-2. 构建并运行 `Example`，即可通过各演示窗口查看控件功能；
+2. 构建并运行 `FeatureDemo`，可按“控件 → 功能 Tab → 演示 + 代码”逐个功能上手；运行 `Example` 可查看各控件特性的综合演示窗口；
 3. 在自己的工程中引用时，将各模块的 `include` 目录加入头文件搜索路径，并链接对应 `bin` 目录下的库，具体写法可参考 `Example/Example.pro`。
 
 基本用法示例：
@@ -78,7 +95,9 @@ AgWidgetsForQt/
 ├── AgGrid/              # 数据表格控件（core / renderers / editors / style 等）
 ├── AgSelect/            # 下拉选择控件
 ├── AgDatePicker/        # 日期选择控件
+├── AgPlot/              # 曲线绘制控件（坐标轴 / 曲线 / 点线面图元 / 样式）
 ├── Example/             # 示例程序（demos / CustomAgGrid 自定义扩展示例）
+├── FeatureDemo/         # 功能细化演示（一个功能一个 Tab + 实现代码）
 └── docs/                # 帮助文档
 ```
 
