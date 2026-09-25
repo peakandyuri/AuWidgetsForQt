@@ -75,6 +75,7 @@ AgGridWidget::AgGridWidget(QWidget *parent)
     , m_editRow(-1)
     , m_editColumn(-1)
     , m_committing(false)
+    , m_editErrorTip(nullptr)
     , m_isResizing(false)
     , m_resizeColumn(-1)
     , m_resizeStartX(0)
@@ -115,6 +116,11 @@ AgGridWidget::AgGridWidget(QWidget *parent)
     , m_columnVisHiding(false)
     , m_columnVisProgress(0.0)
     , m_columnVisAnimation(nullptr)
+    , m_specialVisAnimating(false)
+    , m_specialVisHiding(false)
+    , m_specialVisProgress(0.0)
+    , m_specialVisMask(0)
+    , m_specialVisAnimation(nullptr)
     , m_loading(false)
     , m_loadingOpacity(0.0)
     , m_loadingSpinnerAngle(0)
@@ -123,6 +129,7 @@ AgGridWidget::AgGridWidget(QWidget *parent)
     , m_dataAnimationEnabled(true)
     , m_sortAnimationDuration(100)
     , m_resetAnimationDuration(200)
+    , m_suppressBottomLineForCapture(false)
     , m_dataAnimationProgress(0.0)
     , m_dataAnimation(nullptr)
     , m_dataResetPending(false)
@@ -183,15 +190,32 @@ AgGridWidget::AgGridWidget(QWidget *parent)
         emit verticalScrollChanged(value);
     });
 
+    // 复合编辑器的失焦提交：编辑器内部子控件（如 AgSelect / AgDatePicker 的行编辑框）
+    // 持有焦点时，焦点移出编辑器子树只会向子控件发 FocusOut，编辑器本体收不到，
+    // eventFilter 的失焦提交路径感知不到——这里按全局焦点变化补一条等价裁决。
+    // 焦点在编辑器子树内部挪动（展开面板把焦点交给内部行编辑框）不触发提交。
+    connect(qApp, &QApplication::focusChanged, this, [this](QWidget *old, QWidget *now) {
+        if (!m_activeEditor || m_committing)
+            return;
+        const bool fromEditor = old && (old == m_activeEditor
+                                        || m_activeEditor->isAncestorOf(old));
+        const bool toEditor = now && (now == m_activeEditor
+                                      || m_activeEditor->isAncestorOf(now));
+        if (fromEditor && !toEditor)
+            tryFinishCurrentEdit(true);
+    });
+
     applyStyleToScrollBars();
 }
 
 AgGridWidget::~AgGridWidget()
 {
     AgGridStyle::unregisterGlobalStyleObserver(this);
+    finishSpecialColumnVisibilityAnimation();
     if (m_ownStyle)
         delete m_style;
     delete m_dragFloatWidget;
+    delete m_editErrorTip;
 }
 
 void AgGridWidget::setModel(AgGridModel *model)
@@ -205,6 +229,7 @@ void AgGridWidget::setModel(AgGridModel *model)
     cancelColumnDrag();
     finishTreeAnimation();
     finishColumnVisibilityAnimation();
+    finishSpecialColumnVisibilityAnimation();
     finishSortMoveAnimation();
     finishDataResetAnimation();
     m_dataResetPending = false;
@@ -698,6 +723,114 @@ qreal AgGridWidget::columnOpacity(int column) const
     return m_columnVisHiding ? (1.0 - m_columnVisProgress) : m_columnVisProgress;
 }
 
+// ---------------------------------------------------------------------------
+// 辅助列（行号 / 复选框 / 拖拽手柄）显隐动画：与列显隐动画同观感
+// （180ms InOutCubic 缓动 + 淡入淡出）。显示路径先应用最终状态再让宽度从 0
+// 插值到全宽（主体列随之右移）；隐藏路径动画结束后才真正应用隐藏（宽度从
+// 全宽插值到 0，主体列左移），避免动画期间布局跳变。
+
+void AgGridWidget::animateSpecialColumnVisibility(SpecialColumnKind kind, bool visible)
+{
+    finishSpecialColumnVisibilityAnimation();
+
+    m_specialVisAnimating = true;
+    m_specialVisHiding = !visible;
+    m_specialVisProgress = 0.0;
+    m_specialVisMask = 1u << kind;
+
+    if (!m_specialVisHiding) {
+        // 显示：立即应用最终状态并按最终布局重建列偏移 / 滚动条，
+        // 动画期间宽度插值从 0 长到全宽
+        applySpecialColumnVisibility(kind, visible);
+        rebuildColumnOffsets();
+        updateScrollBars();
+    }
+
+    m_specialVisAnimation = new QVariantAnimation(this);
+    m_specialVisAnimation->setStartValue(0.0);
+    m_specialVisAnimation->setEndValue(1.0);
+    m_specialVisAnimation->setDuration(180);
+    m_specialVisAnimation->setEasingCurve(QEasingCurve::InOutCubic);
+    connect(m_specialVisAnimation, &QVariantAnimation::valueChanged, this, [this](const QVariant &value) {
+        m_specialVisProgress = value.toReal();
+        update();
+    });
+    connect(m_specialVisAnimation, &QVariantAnimation::finished, this, [this]() {
+        finishSpecialColumnVisibilityAnimation();
+    });
+
+    update();
+    m_specialVisAnimation->start();
+}
+
+void AgGridWidget::finishSpecialColumnVisibilityAnimation()
+{
+    if (m_specialVisAnimation) {
+        QVariantAnimation *anim = m_specialVisAnimation;
+        m_specialVisAnimation = nullptr;
+        QObject::disconnect(anim, nullptr, this, nullptr);
+        anim->stop();
+        anim->deleteLater();
+    }
+
+    if (m_specialVisAnimating) {
+        const unsigned mask = m_specialVisMask;
+        const bool hiding = m_specialVisHiding;
+        m_specialVisAnimating = false;
+        m_specialVisHiding = false;
+        m_specialVisProgress = 0.0;
+        m_specialVisMask = 0;
+
+        if (hiding) {
+            // 隐藏动画结束（或被打断）：真正应用隐藏
+            for (const unsigned bit : {1u, 2u, 4u}) {
+                if (mask & bit)
+                    applySpecialColumnVisibility(SpecialColumnKind(bit - 1), false);
+            }
+            rebuildColumnOffsets();
+            updateScrollBars();
+        }
+    }
+
+    update();
+}
+
+void AgGridWidget::applySpecialColumnVisibility(SpecialColumnKind kind, bool visible)
+{
+    switch (kind) {
+    case SpecialRowNumber:
+        m_showRowNumberColumn = visible;
+        break;
+    case SpecialCheckbox:
+        m_showCheckboxColumn = visible;
+        if (!visible) {
+            m_checkedOriginalRows.clear();
+            m_partialOriginalRows.clear();
+        }
+        break;
+    case SpecialDragHandle:
+        m_rowDragEnabled = visible;
+        if (!visible)
+            cancelRowDrag();
+        break;
+    }
+}
+
+qreal AgGridWidget::specialColumnOpacity(SpecialColumnKind kind) const
+{
+    if (!m_specialVisAnimating || !(m_specialVisMask & (1u << kind)))
+        return 1.0;
+    return m_specialVisHiding ? (1.0 - m_specialVisProgress) : m_specialVisProgress;
+}
+
+int AgGridWidget::specialColumnAnimatedWidth(SpecialColumnKind kind, int baseWidth) const
+{
+    if (!m_specialVisAnimating || baseWidth <= 0 || !(m_specialVisMask & (1u << kind)))
+        return baseWidth;
+    const qreal t = m_specialVisHiding ? (1.0 - m_specialVisProgress) : m_specialVisProgress;
+    return qRound(baseWidth * t);
+}
+
 AgGridStyle *AgGridWidget::style() const
 {
     return m_style;
@@ -807,10 +940,11 @@ void AgGridWidget::paintEvent(QPaintEvent * /*event*/)
 
     // 绘制行号列单元格
     if (m_showRowNumberColumn) {
+        const qreal columnFade = specialColumnOpacity(SpecialRowNumber);
         painter.save();
         painter.setClipRect(0, headerHeight(), rowNumberColumnWidth(), bodyHeight(), Qt::IntersectClip);
         for (int row = rowRange.first; row <= rowRange.second; ++row) {
-            const qreal rowOpacity = rowAnimationOpacity(row);
+            const qreal rowOpacity = rowAnimationOpacity(row) * columnFade;
             if (rowOpacity < 1.0) {
                 painter.save();
                 painter.setOpacity(rowOpacity);
@@ -829,16 +963,25 @@ void AgGridWidget::paintEvent(QPaintEvent * /*event*/)
             // 数据列竖线隐藏时该边线由本循环独立绘制
             painter.setClipRect(0, headerHeight(), rnW + 1, bodyHeight(), Qt::IntersectClip);
             painter.setPen(gridLineColor);
+            // 与 drawGridLines 一致：重设动画期间末行底边线不绘制（见 drawGridLines 内注释）
+            const bool suppressLastRowBottom = m_dataResetAnimating || m_suppressBottomLineForCapture;
+            const int lastDataRow = m_model->rowCount() - 1;
             for (int row = rowRange.first; row <= rowRange.second; ++row) {
                 const int y = rowY(row);
                 const int h = rowHeight(row);
-                const qreal rowOpacity = rowAnimationOpacity(row);
+                const qreal rowOpacity = rowAnimationOpacity(row) * columnFade;
                 if (rowOpacity < 1.0) {
                     painter.save();
                     painter.setOpacity(rowOpacity);
                 }
-                // 行号列始终画完整边框，不受列边框开关影响
-                painter.drawRect(0, y, rnW, h);
+                // 行号列始终画完整边框，不受列边框开关影响；动画期间末行只画上 / 左 / 右
+                if (suppressLastRowBottom && row == lastDataRow) {
+                    painter.drawLine(0, y, rnW, y);
+                    painter.drawLine(0, y, 0, y + h);
+                    painter.drawLine(rnW, y, rnW, y + h);
+                } else {
+                    painter.drawRect(0, y, rnW, h);
+                }
                 if (rowOpacity < 1.0)
                     painter.restore();
             }
@@ -850,21 +993,33 @@ void AgGridWidget::paintEvent(QPaintEvent * /*event*/)
     if (m_showCheckboxColumn || m_rowDragEnabled) {
         const int fixedX = rowNumberColumnWidth();
         const int fixedW = checkboxColumnWidth() + dragHandleColumnWidth();
+        const qreal checkboxFade = specialColumnOpacity(SpecialCheckbox);
+        const qreal dragFade = specialColumnOpacity(SpecialDragHandle);
 
         painter.save();
         painter.setClipRect(fixedX, headerHeight(), fixedW, bodyHeight(), Qt::IntersectClip);
         for (int row = rowRange.first; row <= rowRange.second; ++row) {
             const qreal rowOpacity = rowAnimationOpacity(row);
-            if (rowOpacity < 1.0) {
-                painter.save();
-                painter.setOpacity(rowOpacity);
-            }
-            if (m_showCheckboxColumn)
+            if (m_showCheckboxColumn) {
+                const qreal opacity = rowOpacity * checkboxFade;
+                if (opacity < 1.0) {
+                    painter.save();
+                    painter.setOpacity(opacity);
+                }
                 drawCheckboxCell(&painter, row);
-            if (m_rowDragEnabled)
+                if (opacity < 1.0)
+                    painter.restore();
+            }
+            if (m_rowDragEnabled) {
+                const qreal opacity = rowOpacity * dragFade;
+                if (opacity < 1.0) {
+                    painter.save();
+                    painter.setOpacity(opacity);
+                }
                 drawDragHandleCell(&painter, row);
-            if (rowOpacity < 1.0)
-                painter.restore();
+                if (opacity < 1.0)
+                    painter.restore();
+            }
         }
         painter.restore();
 
@@ -875,6 +1030,9 @@ void AgGridWidget::paintEvent(QPaintEvent * /*event*/)
             // 裁剪含右边界像素（同行号列：保证右边线在数据列竖线隐藏时仍由本循环绘制）
             painter.setClipRect(fixedX, headerHeight(), fixedW + 1, bodyHeight(), Qt::IntersectClip);
             painter.setPen(gridLineColor);
+            // 与 drawGridLines 一致：重设动画期间末行底边线不绘制（见 drawGridLines 内注释）
+            const bool suppressLastRowBottom = m_dataResetAnimating || m_suppressBottomLineForCapture;
+            const int lastDataRow = m_model->rowCount() - 1;
             for (int row = rowRange.first; row <= rowRange.second; ++row) {
                 const int y = rowY(row);
                 const int h = rowHeight(row);
@@ -883,8 +1041,15 @@ void AgGridWidget::paintEvent(QPaintEvent * /*event*/)
                     painter.save();
                     painter.setOpacity(rowOpacity);
                 }
-                // 复选框 / 拖拽手柄列始终画完整边框，不受列边框开关影响
-                painter.drawRect(fixedX, y, fixedW, h);
+                // 复选框 / 拖拽手柄列始终画完整边框，不受列边框开关影响；
+                // 动画期间末行只画上 / 左 / 右
+                if (suppressLastRowBottom && row == lastDataRow) {
+                    painter.drawLine(fixedX, y, fixedX + fixedW, y);
+                    painter.drawLine(fixedX, y, fixedX, y + h);
+                    painter.drawLine(fixedX + fixedW, y, fixedX + fixedW, y + h);
+                } else {
+                    painter.drawRect(fixedX, y, fixedW, h);
+                }
                 if (rowOpacity < 1.0)
                     painter.restore();
             }
@@ -913,7 +1078,10 @@ void AgGridWidget::paintEvent(QPaintEvent * /*event*/)
     drawRegionSeparators(&painter);
 
     // 数据行未填满可视区时，在最后一条数据行底部画一条贯穿线，避免底部看起来缺边框。
-    if (m_model && m_model->rowCount() > 0 && !m_vScrollBarVisible) {
+    // 重设数据切换动画期间（及为其捕获快照时）不画：内容整体平移时，这条静止的
+    // 贯穿线与内容自身的底部边框分离，会在空视口中单独晃动；动画结束后再补画。
+    if (m_model && m_model->rowCount() > 0 && !m_vScrollBarVisible
+        && !m_dataResetAnimating && !m_suppressBottomLineForCapture) {
         const QColor gridLineColor = m_style->color(AgGridStyle::GridLineColor, m_model);
         if (gridLineColor.isValid()) {
             const int contentBottom = headerHeight() + totalContentHeight() - m_yOffset;
@@ -1162,7 +1330,9 @@ void AgGridWidget::mousePressEvent(QMouseEvent *event)
             return;
         toggleCheckboxCellValue(cell.y(), cell.x());
 
-        const bool changed = applyCheckboxClickSelection(cell.y(), cell.x(), true);
+        // 不可聚焦格不抢占锚点列（withColumn=false），行选中仍生效
+        const bool changed = applyCheckboxClickSelection(cell.y(), cell.x(),
+                                                         isCellFocusable(cell.y(), cell.x()));
         update();
         emit cellClicked(cell.y(), cell.x());
         if (changed)
@@ -1175,7 +1345,10 @@ void AgGridWidget::mousePressEvent(QMouseEvent *event)
     if (m_activeEditor && !tryFinishCurrentEdit())
         return;
 
-    const bool changed = applyRowSelectionClick(cell.y(), cell.x(), ctrlPressed);
+    // 不可聚焦的单元格（如放操作按钮的自定义列）：点击仍触发行选中与 cellClicked，
+    // 但锚点（焦点框）不落到该格——保持原锚点列
+    const bool changed = applyRowSelectionClick(cell.y(), cell.x(), ctrlPressed,
+                                                isCellFocusable(cell.y(), cell.x()));
     update();
     emit cellClicked(cell.y(), cell.x());
     if (changed)
@@ -1713,7 +1886,17 @@ void AgGridWidget::connectModel()
             return;
         finishSortMoveAnimation();
         finishDataResetAnimation();
-        m_dataResetSnapshot = grab(QRect(0, headerHeight(), width(), bodyHeight())).toImage();
+        // 快照中不携带底部边框线（与动画期间的绘制规则一致）：
+        // 旧内容上移出场时，其底部边框会在逐渐变空的视口中单独滑动，非常出戏。
+        // grab() 对可见控件直接从后备缓冲区取像素（其中是带线的旧画面），
+        // 需先 repaint() 强制同步重绘一次，让压制标志真正作用到画面上；
+        // 另外抓取矩形去掉最底部 1px——那里是面板外边框，烘焙进快照后同样会
+        // 随旧内容上移、在空视口中形成一条晃动的灰线（用户反馈的正是它）
+        m_suppressBottomLineForCapture = true;
+        repaint(QRect(0, headerHeight(), width(), bodyHeight()));
+        m_dataResetSnapshot = grab(QRect(0, headerHeight(), width(),
+                                         qMax(0, bodyHeight() - 1))).toImage();
+        m_suppressBottomLineForCapture = false;
         m_dataResetPending = !m_dataResetSnapshot.isNull();
     });
     connect(m_model, &AgGridModel::rowsAboutToBeRemoved, this, [this](const QVector<int> &originalRows) {
@@ -2451,7 +2634,7 @@ int AgGridWidget::rowNumberColumnWidth() const
         font.setBold(true);
     const QFontMetrics fm(font);
     const int textWidth = fm.horizontalAdvance(QString::number(m_model->originalRowCount()));
-    return 2 * padding + textWidth;
+    return specialColumnAnimatedWidth(SpecialRowNumber, 2 * padding + textWidth);
 }
 
 bool AgGridWidget::isRowNumberColumn(int column) const
@@ -2473,8 +2656,7 @@ void AgGridWidget::drawRowNumberCell(QPainter *painter, int row)
     if (rect.isEmpty() || !m_model)
         return;
 
-    const int originalRow = m_model->originalRowForVisibleRow(row);
-    if (originalRow < 0)
+    if (row < 0 || row >= m_model->rowCount())
         return;
 
     QFont font = m_style->font(m_model);
@@ -2487,7 +2669,8 @@ void AgGridWidget::drawRowNumberCell(QPainter *painter, int row)
     painter->setPen(fgColor.isValid() ? fgColor : palette().text().color());
     const int padding = specialColumnPadding();
     const QRect textRect = rect.adjusted(padding, 0, -padding, 0);
-    painter->drawText(textRect, Qt::AlignRight | Qt::AlignVCenter, QString::number(originalRow + 1));
+    // 行号 = 可见行号 + 1：排序 / 过滤 / 拖拽重排后跟随可见顺序重新编号
+    painter->drawText(textRect, Qt::AlignRight | Qt::AlignVCenter, QString::number(row + 1));
     painter->restore();
 }
 
@@ -2513,7 +2696,7 @@ int AgGridWidget::checkboxColumnWidth() const
     const int size = m_style->integer(AgGridStyle::CheckboxSize, m_model);
     const int padding = specialColumnPadding();
     const int rightPadding = m_rowDragEnabled ? padding / 2 : padding;
-    return padding + size + rightPadding;
+    return specialColumnAnimatedWidth(SpecialCheckbox, padding + size + rightPadding);
 }
 
 bool AgGridWidget::isCheckboxColumn(int column) const
@@ -2545,7 +2728,7 @@ int AgGridWidget::dragHandleColumnWidth() const
     const int iconWidth = dotSize * 3 + (3 - 1) * dotSize;
     const int padding = specialColumnPadding();
     const int leftPadding = m_showCheckboxColumn ? padding / 2 : padding;
-    return leftPadding + iconWidth + padding;
+    return specialColumnAnimatedWidth(SpecialDragHandle, leftPadding + iconWidth + padding);
 }
 
 bool AgGridWidget::isDragHandleColumn(int column) const
@@ -2799,17 +2982,19 @@ QPair<int, int> AgGridWidget::visibleColumnRange() const
     if (m_bodyColumns.isEmpty())
         return qMakePair(0, -1);
 
-    int firstBodyIdx = 0;
-    int lastBodyIdx = m_bodyColumns.size() - 1;
+    int firstBodyIdx = -1;
+    int lastBodyIdx = -1;
 
-    const int bodyVisibleWidth = qMax(0, viewportWidthForColumns()
-                                         - fixedColumnsWidth()
-                                         - m_leftPinnedWidth
-                                         - m_rightPinnedWidth);
-    // body 列的全局偏移从左停靠列宽之后开始（停靠列占据偏移表前段），
-    // 可视窗口需整体右移 m_leftPinnedWidth，否则尾列会被误判为不可见
-    const int viewLeft = m_leftPinnedWidth + m_xOffset;
-    const int viewRight = viewLeft + bodyVisibleWidth;
+    // body 列按自然位置绘制（sticky 停靠列绘制在其上层，遮挡由绘制顺序保证），
+    // 这里只做保守裁剪：自然跨度与视口完全不相交的列才剔除。
+    // 旧实现假设左停靠组始终覆盖内容坐标 [0, 左停靠总宽]；当被停靠列位于叶子序列
+    // 中部且未发生 sticky 位移时（如仅停靠中间列），该假设不成立，会把停靠列之前、
+    // 实际未被遮挡的 body 列误判为视口外而漏绘（表现为该列内容消失）。
+    const int fixedWidth = fixedColumnsWidth();
+    const int viewportW = viewportWidthForColumns();
+    // 内容坐标：widget x = fixedWidth + 内容x - m_xOffset，body 裁剪区为 [fixedWidth, viewportW]
+    const int viewLeft = m_xOffset;
+    const int viewRight = m_xOffset + viewportW - fixedWidth;
 
     for (int i = 0; i < m_bodyColumns.size(); ++i) {
         const int col = m_bodyColumns.at(i);
@@ -2818,16 +3003,17 @@ QPair<int, int> AgGridWidget::visibleColumnRange() const
             break;
         }
     }
+    if (firstBodyIdx < 0)
+        return qMakePair(0, -1);
 
-    for (int i = firstBodyIdx; i < m_bodyColumns.size(); ++i) {
+    for (int i = m_bodyColumns.size() - 1; i >= firstBodyIdx; --i) {
         const int col = m_bodyColumns.at(i);
-        if (m_columnOffsets.at(col) >= viewRight) {
-            lastBodyIdx = i - 1;
+        if (m_columnOffsets.at(col) < viewRight) {
+            lastBodyIdx = i;
             break;
         }
     }
-
-    if (firstBodyIdx > lastBodyIdx)
+    if (lastBodyIdx < 0)
         return qMakePair(0, -1);
 
     return qMakePair(m_bodyColumns.at(firstBodyIdx), m_bodyColumns.at(lastBodyIdx));
@@ -3816,6 +4002,22 @@ void AgGridWidget::drawGridLines(QPainter *painter, int firstColumn, int lastCol
     // 动画中每个单元格自带完整边框，避免掉线。
     // 隐藏左右（列方向）边框时只画上下两条横线（行分隔线保留）。
     const bool drawVertical = m_verticalGridLinesVisible;
+    // 隐藏列方向边框且 body 内容未铺满区域宽度时，在内容右边缘补一条竖线，
+    // 否则最右侧列的右侧缺边框观感不佳。x 取 body 区最后一列的右边缘（随滚动移动），
+    // 始终描住“当前最右侧列”的右边界，而非停留在某个固定列上。
+    int bodyContentRightX = -1;
+    if (!drawVertical && region == ColumnRegion::Body && !m_bodyColumns.isEmpty()
+        && m_columnOffsets.size() == m_model->columnCount() + 1) {
+        const int lastBodyCol = m_bodyColumns.last();
+        const int contentRight = fixedWidth + m_columnOffsets.at(lastBodyCol + 1) - m_xOffset;
+        if (contentRight < viewportW)
+            bodyContentRightX = contentRight;
+    }
+    // 重设数据切换动画期间（及为其捕获快照时），最后一行的底边线不绘制：
+    // 内容整体平移时，这条线会在逐渐变空的视口中单独滑动，非常出戏；
+    // 动画结束（或快照捕获完毕回到稳态）后按最终布局补画。
+    const bool suppressLastRowBottom = m_dataResetAnimating || m_suppressBottomLineForCapture;
+    const int lastDataRow = m_model->rowCount() - 1;
     for (int row = paintFirstRow; row <= lastRow; ++row) {
         if (!treeLayerAcceptRow(row))
             continue;
@@ -3827,6 +4029,8 @@ void AgGridWidget::drawGridLines(QPainter *painter, int firstColumn, int lastCol
             painter->save();
             painter->setOpacity(rowOpacity);
         }
+        // 末行且压制底边线时：竖线可见时画上 / 左 / 右三边，竖线隐藏时只画顶边
+        const bool skipRowBottom = suppressLastRowBottom && row == lastDataRow;
         for (int col = paintFirstColumn; col <= lastColumn; ++col) {
             if (columnRegion(col) != region)
                 continue;
@@ -3843,7 +4047,13 @@ void AgGridWidget::drawGridLines(QPainter *painter, int firstColumn, int lastCol
                     painter->setOpacity(spanOpacity);
                 }
                 if (drawVertical) {
-                    painter->drawRect(spanArea);
+                    if (skipRowBottom) {
+                        painter->drawLine(spanArea.left(), spanArea.top(), spanArea.right(), spanArea.top());
+                        painter->drawLine(spanArea.left(), spanArea.top(), spanArea.left(), spanArea.bottom());
+                        painter->drawLine(spanArea.right(), spanArea.top(), spanArea.right(), spanArea.bottom());
+                    } else {
+                        painter->drawRect(spanArea);
+                    }
                 } else {
                     painter->drawLine(spanArea.left(), spanArea.top(), spanArea.right(), spanArea.top());
                     painter->drawLine(spanArea.left(), spanArea.bottom(), spanArea.right(), spanArea.bottom());
@@ -3862,14 +4072,23 @@ void AgGridWidget::drawGridLines(QPainter *painter, int firstColumn, int lastCol
                 painter->setOpacity(opacity);
             }
             if (drawVertical) {
-                painter->drawRect(x, y, w, h);
+                if (skipRowBottom) {
+                    painter->drawLine(x, y, x + w, y);
+                    painter->drawLine(x, y, x, y + h);
+                    painter->drawLine(x + w, y, x + w, y + h);
+                } else {
+                    painter->drawRect(x, y, w, h);
+                }
             } else {
                 painter->drawLine(x, y, x + w, y);
-                painter->drawLine(x, y + h, x + w, y + h);
+                if (!skipRowBottom)
+                    painter->drawLine(x, y + h, x + w, y + h);
             }
             if (fade)
                 painter->restore();
         }
+        if (bodyContentRightX >= 0)
+            painter->drawLine(bodyContentRightX, y, bodyContentRightX, y + h);
         if (rowOpacity < 1.0)
             painter->restore();
     }
@@ -3886,6 +4105,11 @@ void AgGridWidget::drawCellFocus(QPainter *painter)
         return;
 
     if (m_activeEditor && m_editRow == m_selectedRow && m_editColumn == m_selectedColumn)
+        return;
+
+    // 锚点落在不可聚焦格上（动态回调生效后可能出现）时不绘制焦点框；
+    // 锚点会在下一次导航时自动跳到就近可聚焦列
+    if (!isCellFocusable(m_selectedRow, m_selectedColumn))
         return;
 
     const QColor borderColor = m_style->color(AgGridStyle::FocusedCellBorderColor, m_model, m_selectedRow, m_selectedColumn);
@@ -4002,6 +4226,7 @@ bool AgGridWidget::editCell(int row, int column)
 
 bool AgGridWidget::editCell(int row, int column, const QString &initialText)
 {
+
     if (!m_model || row < 0 || row >= m_model->rowCount()
         || column < 0 || column >= m_model->columnCount())
         return false;
@@ -4048,6 +4273,7 @@ bool AgGridWidget::editCell(int row, int column, const QString &initialText)
 
     editorWidget->installEventFilter(this);
     editorWidget->setAutoFillBackground(true);
+    editorWidget->setAttribute(Qt::WA_Hover, true); // 校验失败时悬停编辑框可重新唤起错误提示
     QPalette pal = editorWidget->palette();
     const QColor bgColor = m_style->color(AgGridStyle::CellBackgroundColor, m_model, row, column);
     pal.setColor(QPalette::Base, bgColor.isValid() ? bgColor : palette().base().color());
@@ -4083,6 +4309,9 @@ void AgGridWidget::closeEditor(bool commit)
     if (!m_activeEditor)
         return;
 
+    // 编辑结束即清除错误提示（编辑器红框 + 提示浮层）
+    clearEditError();
+
     QWidget *editor = m_activeEditor;
     const int row = m_editRow;
     const int column = m_editColumn;
@@ -4107,6 +4336,11 @@ void AgGridWidget::closeEditor(bool commit)
 
     emit cellEditingFinished(row, column);
     editor->deleteLater();
+    // 编辑器子树仍持有焦点时（如 AgSelect / AgDatePicker 选择后主动提交），
+    // 把焦点还给表格：否则编辑器销毁后焦点悬空，Tab / Enter / 方向键等键盘导航失效
+    QWidget *focused = QApplication::focusWidget();
+    if (focused && (focused == editor || editor->isAncestorOf(focused)))
+        setFocus();
     m_committing = false;
     update();
 }
@@ -4119,6 +4353,50 @@ void AgGridWidget::setCellEditValidator(QSharedPointer<AgCellEditValidator> vali
 void AgGridWidget::setCellEditableCallback(const std::function<bool(const AgGridModel *, int, int)> &callback)
 {
     m_cellEditableCallback = callback;
+}
+
+bool AgGridWidget::isCellFocusable(int row, int column) const
+{
+    // 辅助列（行号 / 复选框 / 拖拽手柄）不参与该控制：其点击路径本就不落锚点列
+    if (!m_model || column < 0 || column >= m_model->columnCount())
+        return true;
+
+    if (!m_model->columnDefAt(column).isFocusable())
+        return false;
+
+    if (m_cellFocusableCallback)
+        return m_cellFocusableCallback(m_model, row, column);
+
+    return true;
+}
+
+void AgGridWidget::setCellFocusableCallback(const std::function<bool(const AgGridModel *, int, int)> &callback)
+{
+    m_cellFocusableCallback = callback;
+    update();
+}
+
+int AgGridWidget::nearestFocusableColumn(int row, int column) const
+{
+    if (!m_model || column < 0 || column >= m_model->columnCount())
+        return -1;
+
+    // 就近向两侧搜索第一个可落锚点的列（跳过隐藏 / 合并覆盖 / 不可聚焦）；
+    // 两侧等距时优先取右侧（与向右导航的自然延伸一致）
+    const int colCount = m_model->columnCount();
+    for (int dist = 1; dist < colCount; ++dist) {
+        const int left = column - dist;
+        const int right = column + dist;
+        const bool leftOk = left >= 0 && !isColumnHidden(left)
+                            && !isSpanCoveredCell(row, left) && isCellFocusable(row, left);
+        const bool rightOk = right < colCount && !isColumnHidden(right)
+                             && !isSpanCoveredCell(row, right) && isCellFocusable(row, right);
+        if (rightOk)
+            return right;
+        if (leftOk)
+            return left;
+    }
+    return -1;
 }
 
 void AgGridWidget::setCellTooltipTextCallback(const std::function<QString(const AgGridModel *, int, int, const QString &)> &callback)
@@ -4166,14 +4444,7 @@ bool AgGridWidget::tryFinishCurrentEdit(bool focusOut)
 
     const int row = m_editRow;
     const int column = m_editColumn;
-    const AgColumnDef def = m_model->columnDefAt(column);
-    QSharedPointer<AgCellEditor> editorImpl = m_defaultCellEditor;
-    const QString editorName = def.cellEditor();
-    if (!editorName.isEmpty()) {
-        auto it = m_cellEditors.find(editorName);
-        if (it != m_cellEditors.end())
-            editorImpl = it.value();
-    }
+    QSharedPointer<AgCellEditor> editorImpl = editorImplForColumn(column);
 
     const QVariant oldValue = m_model->cellValue(row, column);
     const QVariant newValue = editorImpl->editorValue(m_activeEditor);
@@ -4215,17 +4486,101 @@ void AgGridWidget::showEditError(const QString &message)
         return;
 
     m_activeEditor->setStyleSheet("border: 2px solid red;");
-    QToolTip::showText(m_activeEditor->mapToGlobal(QPoint(0, m_activeEditor->height())),
-                       message, m_activeEditor);
+
+    // 常驻错误提示浮层：紧贴编辑框正下方（间隙 2px），持续显示到校验通过
+    //（替代 QToolTip：只弹一次、约 20px 悬浮间距、超时自动消失的观感都不符合需求）
+    if (!m_editErrorTip) {
+        m_editErrorTip = new QLabel(this);
+        m_editErrorTip->setTextFormat(Qt::PlainText);
+        m_editErrorTip->setStyleSheet(QStringLiteral(
+            "QLabel { background-color: #fff1f0; color: #cf1322;"
+            " border: 1px solid #ffa39e; border-radius: 4px; padding: 3px 8px; }"));
+    }
+    m_editErrorTip->setText(message);
+    m_editErrorTip->adjustSize();
+    updateEditErrorTipGeometry();
+    m_editErrorTip->show();
+    m_editErrorTip->raise();
 }
 
 void AgGridWidget::clearEditError()
 {
+    // 编辑器已被 closeEditor 清空时也要把残留的提示浮层收掉
+    if (m_editErrorTip && m_editErrorTip->isVisible())
+        m_editErrorTip->hide();
+
     if (!m_activeEditor)
         return;
 
     m_activeEditor->setStyleSheet(QString());
-    QToolTip::hideText();
+}
+
+void AgGridWidget::refreshEditError()
+{
+    // 校验失败期间（提示浮层可见）按键时即时复查：
+    // 通过则清除提示，不通过则按最新输入刷新提示内容与位置
+    if (!m_editErrorTip || !m_editErrorTip->isVisible())
+        return;
+    if (!m_activeEditor || !m_model || !m_cellEditValidator) {
+        clearEditError();
+        return;
+    }
+
+    const int row = m_editRow;
+    const int column = m_editColumn;
+    const QSharedPointer<AgCellEditor> editorImpl = editorImplForColumn(column);
+    if (!editorImpl) {
+        clearEditError();
+        return;
+    }
+
+    const QVariant oldValue = m_model->cellValue(row, column);
+    const QVariant newValue = editorImpl->editorValue(m_activeEditor);
+    QString errorMessage;
+    const AgEditValidationResult result = m_cellEditValidator->validate(
+        m_model, row, column, oldValue, newValue, errorMessage);
+
+    if (result == AgEditValidationResult::RejectKeepEditing) {
+        if (!errorMessage.isEmpty())
+            m_editErrorTip->setText(errorMessage);
+        m_editErrorTip->adjustSize();
+        updateEditErrorTipGeometry();
+        m_editErrorTip->raise();
+    } else {
+        clearEditError();
+    }
+}
+
+void AgGridWidget::updateEditErrorTipGeometry()
+{
+    if (!m_editErrorTip || !m_activeEditor)
+        return;
+
+    const QRect editorRect = m_activeEditor->geometry();
+    const int gap = 2;
+    const int scrollBarExtent = m_style ? m_style->integer(AgGridStyle::ScrollBarExtent, m_model) : 0;
+    const int bottomLimit = height() - (m_hScrollBarVisible ? scrollBarExtent : 0);
+
+    // 优先贴编辑框下方；编辑框贴近表格底部放不下时翻转到上方
+    int y = editorRect.bottom() + 1 + gap;
+    if (y + m_editErrorTip->height() > bottomLimit)
+        y = editorRect.top() - gap - m_editErrorTip->height();
+    const int x = qBound(0, editorRect.left(), qMax(0, width() - m_editErrorTip->width()));
+    m_editErrorTip->setGeometry(x, y, m_editErrorTip->width(), m_editErrorTip->height());
+}
+
+QSharedPointer<AgCellEditor> AgGridWidget::editorImplForColumn(int column) const
+{
+    if (!m_model || column < 0 || column >= m_model->columnCount())
+        return m_defaultCellEditor;
+
+    const QString editorName = m_model->columnDefAt(column).cellEditor();
+    if (!editorName.isEmpty()) {
+        auto it = m_cellEditors.find(editorName);
+        if (it != m_cellEditors.end())
+            return it.value();
+    }
+    return m_defaultCellEditor;
 }
 
 QString AgGridWidget::cellTooltipText(const QPoint &pos) const
@@ -4330,6 +4685,10 @@ void AgGridWidget::updateEditorGeometry()
                 rect.setRight(viewportW);
         }
 
+        // 四边各留 1px 给单元格边框线：编辑框若完全覆盖单元格，会把与上一行 /
+        // 下一行之间的分隔线一并盖住，视觉上与相邻行粘连（尤其无边框的文本编辑框）
+        rect.adjust(1, 1, -1, -1);
+
         if (rect.width() > 0 && rect.height() > 0) {
             m_activeEditor->setGeometry(rect);
             if (!m_activeEditor->isVisible())
@@ -4340,6 +4699,12 @@ void AgGridWidget::updateEditorGeometry()
     } else {
         if (m_activeEditor->isVisible())
             m_activeEditor->hide();
+    }
+
+    // 编辑器几何跟随（滚动 / 布局变化）时，错误提示浮层保持贴住编辑框
+    if (m_editErrorTip && m_editErrorTip->isVisible()) {
+        updateEditErrorTipGeometry();
+        m_editErrorTip->raise();
     }
 }
 
@@ -4357,6 +4722,7 @@ bool AgGridWidget::findNextEditableCell(int &row, int &column, int dColumn) cons
     while (r >= 0 && r < rowCount) {
         while (c >= 0 && c < colCount) {
             if (!isColumnHidden(c) && !isSpanCoveredCell(r, c)
+                && isCellFocusable(r, c)
                 && isCellEditable(r, c) && !m_model->columnDefAt(c).isCheckbox()) {
                 row = r;
                 column = c;
@@ -4384,12 +4750,19 @@ void AgGridWidget::moveSelection(int dRow, int dColumn)
     row = qBound(0, row, m_model->rowCount() - 1);
     column = qBound(0, column, m_model->columnCount() - 1);
 
-    // 水平方向移动时跳过隐藏列
+    // 水平方向移动时跳过隐藏列与不可聚焦列（如放操作按钮的自定义列）
     if (dColumn != 0) {
-        while (column >= 0 && column < m_model->columnCount() && isColumnHidden(column))
+        while (column >= 0 && column < m_model->columnCount()
+               && (isColumnHidden(column) || !isCellFocusable(row, column)))
             column += dColumn;
         if (column < 0 || column >= m_model->columnCount())
             return;
+    } else if (!isCellFocusable(row, column)) {
+        // 垂直移动落在不可聚焦列（动态回调生效后锚点列可能失焦）：横向就近跳出
+        const int fallback = nearestFocusableColumn(row, column);
+        if (fallback < 0)
+            return;
+        column = fallback;
     }
 
     // 与隐藏列同样处理：导航不落入被合并覆盖的单元格（锚点本身可选）
@@ -4398,7 +4771,8 @@ void AgGridWidget::moveSelection(int dRow, int dColumn)
             row += dRow;
     }
     if (dColumn != 0) {
-        while (column >= 0 && column < m_model->columnCount() && isSpanCoveredCell(row, column))
+        while (column >= 0 && column < m_model->columnCount()
+               && (isSpanCoveredCell(row, column) || !isCellFocusable(row, column)))
             column += dColumn;
     }
     if (row < 0 || row >= m_model->rowCount() || column < 0 || column >= m_model->columnCount())
@@ -4664,6 +5038,12 @@ void AgGridWidget::selectCell(int row, int column)
     if (m_selectionMode == SelectionMode::None)
         return;
 
+    // 不可聚焦的单元格：不把锚点（焦点框）落到该格，退化为按行选中（保留当前锚点列）
+    if (!isCellFocusable(row, column)) {
+        selectRow(row);
+        return;
+    }
+
     setFocus();
 
     if (m_selectionMode == SelectionMode::Multiple) {
@@ -4843,7 +5223,7 @@ void AgGridWidget::syncSelectionAfterLayoutChange()
     }
 }
 
-bool AgGridWidget::applyRowSelectionClick(int row, int column, bool ctrl)
+bool AgGridWidget::applyRowSelectionClick(int row, int column, bool ctrl, bool withColumn)
 {
     if (!m_model || row < 0 || row >= m_model->rowCount())
         return false;
@@ -4862,10 +5242,12 @@ bool AgGridWidget::applyRowSelectionClick(int row, int column, bool ctrl)
             m_selectedOriginalRow = -1;
             return true;
         }
-        const bool changed = (m_selectedRow != row || m_selectedColumn != column);
+        const bool changed = (m_selectedRow != row
+                              || (withColumn && m_selectedColumn != column));
         m_selectedRow = row;
-        m_selectedColumn = column;
         m_selectedOriginalRow = original;
+        if (withColumn)
+            m_selectedColumn = column;
         return changed;
     }
 
@@ -4877,8 +5259,9 @@ bool AgGridWidget::applyRowSelectionClick(int row, int column, bool ctrl)
         m_selectedOriginalRows.insert(original);
 
     m_selectedRow = row;
-    m_selectedColumn = column;
     m_selectedOriginalRow = original;
+    if (withColumn)
+        m_selectedColumn = column;
     return true;
 }
 
@@ -4920,10 +5303,8 @@ void AgGridWidget::setRowNumberColumnVisible(bool visible)
     if (m_showRowNumberColumn == visible)
         return;
 
-    m_showRowNumberColumn = visible;
-    rebuildColumnOffsets();
-    updateScrollBars();
-    update();
+    // 带显隐动画（与列显隐观感一致）；最终状态由动画路径应用
+    animateSpecialColumnVisibility(SpecialRowNumber, visible);
 }
 
 bool AgGridWidget::isRowNumberColumnVisible() const
@@ -4949,15 +5330,8 @@ void AgGridWidget::setCheckboxColumnVisible(bool visible)
     if (m_showCheckboxColumn == visible)
         return;
 
-    m_showCheckboxColumn = visible;
-    if (!visible) {
-        m_checkedOriginalRows.clear();
-        m_partialOriginalRows.clear();
-    }
-
-    rebuildColumnOffsets();
-    updateScrollBars();
-    update();
+    // 带显隐动画（与列显隐观感一致）；勾选集合在隐藏动画结束时随最终状态清空
+    animateSpecialColumnVisibility(SpecialCheckbox, visible);
 }
 
 bool AgGridWidget::isCheckboxColumnVisible() const
@@ -5639,6 +6013,27 @@ void AgGridWidget::clearSort()
     emit sortChanged(-1, Qt::AscendingOrder);
 }
 
+void AgGridWidget::setSortComparator(const AgRowComparator &comparator)
+{
+    if (!m_model)
+        return;
+
+    m_model->setSortComparator(comparator);
+    // 自定义比较函数不指向具体列：仅当当前无排序列指示时清掉残留的表头箭头
+    if (m_sortedColumn >= 0) {
+        m_sortedColumn = -1;
+        m_sortOrder = Qt::AscendingOrder;
+        update();
+        emit sortChanged(-1, Qt::AscendingOrder);
+    }
+}
+
+void AgGridWidget::clearSortComparator()
+{
+    if (m_model)
+        m_model->clearSortComparator();
+}
+
 void AgGridWidget::setFilterCallback(const std::function<bool(const QVariantMap &row)> &callback)
 {
     if (!m_model)
@@ -5670,12 +6065,8 @@ void AgGridWidget::setRowDragEnabled(bool enabled)
 
     if (m_rowDragEnabled == enabled)
         return;
-    m_rowDragEnabled = enabled;
-    if (!enabled)
-        cancelRowDrag();
-    rebuildColumnOffsets();
-    updateScrollBars();
-    update();
+    // 带显隐动画（与复选框 / 行号列观感一致）；最终状态由动画路径应用
+    animateSpecialColumnVisibility(SpecialDragHandle, enabled);
 }
 
 bool AgGridWidget::isRowDragEnabled() const
@@ -5938,6 +6329,29 @@ bool AgGridWidget::event(QEvent *event)
     return QWidget::event(event);
 }
 
+bool AgGridWidget::focusNextPrevChild(bool next)
+{
+    // 与 QAbstractItemView 相同的模式：Tab / Backtab 由表格自管——提交当前编辑并
+    // 跳到下一个 / 上一个可编辑格。不重写时，编辑提交（尤其经复合编辑器的主动提交
+    // 路径）之后按 Tab，Qt 默认 Tab 链可能把焦点移出表格（落到布局中其它控件或
+    // 残留的编辑器子控件上），键盘编辑链断裂。
+    // 无下一可编辑格时同样消费按键：焦点留在表格内（与 keyPressEvent 的 Tab 语义一致）。
+    if (m_activeEditor && !tryFinishCurrentEdit())
+        return true;   // 校验要求保持编辑：吃掉 Tab
+
+    if (m_model && m_selectedRow >= 0 && m_selectedColumn >= 0) {
+        int row = m_selectedRow;
+        int column = m_selectedColumn;
+        if (findNextEditableCell(row, column, next ? 1 : -1)) {
+            editCell(row, column);
+            return true;
+        }
+    }
+
+    // 无模型 / 无选中 / 无下一格：焦点留在表格内
+    return true;
+}
+
 bool AgGridWidget::eventFilter(QObject *watched, QEvent *event)
 {
     if (watched != m_activeEditor)
@@ -5963,13 +6377,27 @@ bool AgGridWidget::eventFilter(QObject *watched, QEvent *event)
             keyPressEvent(keyEvent);
             return true;
         default:
-            clearEditError();
+            // 校验失败期间按键：即时复查，通过则清除提示，不通过则刷新内容位置
+            refreshEditError();
             break;
+        }
+    } else if (event->type() == QEvent::HoverEnter || event->type() == QEvent::HoverMove) {
+        // 悬停编辑框时确保错误提示可见并贴住编辑框下方
+        if (m_editErrorTip && m_editErrorTip->isVisible()) {
+            updateEditErrorTipGeometry();
+            m_editErrorTip->raise();
         }
     } else if (event->type() == QEvent::FocusOut) {
         if (m_committing)
             return false;
         if (QApplication::activePopupWidget())
+            return false;
+        // 焦点仍在编辑器自身或其子控件内部时不算失焦：复合编辑器（如 AgSelect /
+        // AgDatePicker 展开面板时把焦点移入内部行编辑框）内部挪焦点会向编辑器
+        // 本体发 FocusOut——若按失焦提交，面板刚弹出编辑器就被提交销毁，
+        // 表现为“面板只剩文本框”
+        QWidget *focus = QApplication::focusWidget();
+        if (focus && (focus == m_activeEditor || m_activeEditor->isAncestorOf(focus)))
             return false;
         tryFinishCurrentEdit(true);
         return false;
@@ -6768,6 +7196,10 @@ void AgGridWidget::updateDragFloatWidgetText()
 
     m_dragFloatWidget->setText(text);
     m_dragFloatWidget->adjustSize();
+    // 高度与当前尺寸模式的默认行高保持一致（排除 WordWrap 撑高的情况）：
+    // 小 / 中 / 大档位下浮层依次增高，观感与被拖起的行一致
+    m_dragFloatWidget->setFont(m_style->font(m_model));
+    m_dragFloatWidget->setFixedHeight(qMax(rowHeight(), 16));
 }
 
 void AgGridWidget::startAutoScroll()

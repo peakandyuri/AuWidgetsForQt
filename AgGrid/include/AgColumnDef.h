@@ -17,7 +17,7 @@
  *
  * 默认值速查：
  *  - width=120，minWidth=40，maxWidth=0（不限制），widthMode=Fixed，flexWeight=1
- *  - sortable=false，editable=false，filterable=false，resizable=true，visible=true，tooltipEnabled=false
+ *  - sortable=false，editable=false，filterable=false，focusable=true，resizable=true，visible=true，tooltipEnabled=false
  *  - pinMode=None，alignment=AlignLeft|AlignVCenter，textWrapMode=NoWrap
  *  - checkbox=false，headerAlignment=AlignCenter，表头字体/前景色未设置（使用样式默认）
  *
@@ -102,6 +102,13 @@ public:
     /// 允许过滤（预留）。
     bool isFilterable() const;
     void setFilterable(bool filterable);
+
+    /// 单元格是否可成为键盘 / 选中锚点（当前格，默认 true）。
+    /// false 时：方向键导航跳过该列；点击 / 程序选中不把锚点（焦点框）落到该格
+    /// （行选中仍生效，cellClicked / 渲染器交互照常）。适合放操作按钮的自定义列。
+    /// 动态逐格控制用 AgGridWidget::setCellFocusableCallback。
+    bool isFocusable() const;
+    void setFocusable(bool focusable);
 
     /// 初始可见性（默认 true；运行时显隐用 AgGridWidget::setColumnVisible）。
     bool isVisible() const;
@@ -191,6 +198,7 @@ private:
     bool m_sortable;
     bool m_editable;
     bool m_filterable;
+    bool m_focusable;
     bool m_visible;
     bool m_resizable;
     bool m_tooltipEnabled;

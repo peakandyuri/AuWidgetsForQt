@@ -9,6 +9,7 @@ AgColumnDef::AgColumnDef()
     , m_sortable(false)
     , m_editable(false)
     , m_filterable(false)
+    , m_focusable(true)
     , m_visible(true)
     , m_resizable(true)
     , m_tooltipEnabled(false)
@@ -128,6 +129,16 @@ bool AgColumnDef::isFilterable() const
 void AgColumnDef::setFilterable(bool filterable)
 {
     m_filterable = filterable;
+}
+
+bool AgColumnDef::isFocusable() const
+{
+    return m_focusable;
+}
+
+void AgColumnDef::setFocusable(bool focusable)
+{
+    m_focusable = focusable;
 }
 
 bool AgColumnDef::isVisible() const

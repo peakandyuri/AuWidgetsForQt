@@ -215,12 +215,14 @@ public:
     bool hasSpans() const;
 
     // 行号列
-    /// 显示 / 隐藏内置行号列（显示“原始行号 + 1”，右对齐）。
+    /// 显示 / 隐藏内置行号列（显示“可见行号 + 1”，右对齐；排序 / 过滤 / 拖拽重排
+    /// 后跟随可见顺序重新编号，带与列显隐一致的显隐动画）。
     void setRowNumberColumnVisible(bool visible);
     bool isRowNumberColumnVisible() const;
 
     // 复选框列
-    /// 显示 / 隐藏内置复选框列（表头复选框支持全选 / 半选）；隐藏时清空全部勾选。
+    /// 显示 / 隐藏内置复选框列（表头复选框支持全选 / 半选；隐藏时清空全部勾选）。
+    /// 显隐带与列显隐一致的动画（含拖拽手柄列，setRowDragEnabled 同）。
     void setCheckboxColumnVisible(bool visible);
     bool isCheckboxColumnVisible() const;
 
@@ -262,6 +264,11 @@ public:
     QList<AgSortRule> sortRules() const;
     /// 清除排序（恢复原始顺序）。
     void clearSort();
+    /// 设置整行自定义比较函数（AgRowComparator）：设置后立即生效（带排序动画），
+    /// 生效期间优先于 setSortRules 规则；传 nullptr 等价 clearSortComparator()。
+    void setSortComparator(const AgRowComparator &comparator);
+    /// 清除自定义比较函数（保留规则排序）。
+    void clearSortComparator();
 
     // 过滤
     /// 设置过滤回调：对每行（QVariantMap）返回 true 表示保留。
@@ -275,6 +282,15 @@ public:
     void setCellEditValidator(QSharedPointer<AgCellEditValidator> validator);
     /// 动态可编辑回调：在列 editable=true 的基础上按 (row, column) 最终裁决是否可编辑。
     void setCellEditableCallback(const std::function<bool(const AgGridModel *, int, int)> &callback);
+
+    // 单元格焦点控制
+    /// 某单元格是否可成为键盘 / 选中锚点（当前格，焦点框所在）。取列定义
+    /// AgColumnDef::isFocusable 与动态回调的合成结果（默认 true）。
+    /// 不可聚焦的单元格：方向键导航跳过；点击 / 程序选中不把锚点落到该格
+    /// （行选中仍生效，cellClicked 与渲染器交互照常）；Tab 编辑导航跳过。
+    bool isCellFocusable(int row, int column) const;
+    /// 动态可聚焦回调：在列 focusable=true 的基础上按 (row, column) 最终裁决。
+    void setCellFocusableCallback(const std::function<bool(const AgGridModel *, int, int)> &callback);
 
     /// 单元格 tooltip 内容回调：列 tooltipEnabled=true 且内容超出列宽被裁剪时，
     /// 以返回值作为 tooltip 文本（支持 HTML 富文本）；返回空串表示该格不显示。
@@ -411,6 +427,9 @@ protected:
     void contextMenuEvent(QContextMenuEvent *event) override;
     bool event(QEvent *event) override;
     bool eventFilter(QObject *watched, QEvent *event) override;
+    /// Tab / Backtab 由表格自管（与 QAbstractItemView 同模式）：提交当前编辑并跳到
+    /// 下一个 / 上一个可编辑格；无下一格时焦点留在表格内，不进入 Qt 默认 Tab 链。
+    bool focusNextPrevChild(bool next) override;
 
 private:
     friend class AgGridStyle;
@@ -680,6 +699,22 @@ private:
     void finishColumnVisibilityAnimation();
     qreal columnOpacity(int column) const;
 
+    // 辅助列（行号 / 复选框 / 拖拽手柄）显隐动画：与列显隐动画观感一致
+    // （180ms 缓动 + 淡入淡出，主体列随前缀宽度增减平滑移位）
+    enum SpecialColumnKind {
+        SpecialRowNumber = 0,    ///< 行号列
+        SpecialCheckbox = 1,     ///< 复选框列
+        SpecialDragHandle = 2    ///< 拖拽手柄列
+    };
+    void animateSpecialColumnVisibility(SpecialColumnKind kind, bool visible);
+    void finishSpecialColumnVisibilityAnimation();
+    /// 应用辅助列的最终可见状态（显示路径立即应用；隐藏路径在动画结束时应用）。
+    void applySpecialColumnVisibility(SpecialColumnKind kind, bool visible);
+    /// 显隐动画中该辅助列的淡入 / 淡出系数（未在动画中恒为 1）。
+    qreal specialColumnOpacity(SpecialColumnKind kind) const;
+    /// 显隐动画中该辅助列的插值宽度（未在动画中返回 baseWidth）。
+    int specialColumnAnimatedWidth(SpecialColumnKind kind, int baseWidth) const;
+
     void updateEditorGeometry();
     void onGlobalStyleChanged();
     /// Tab 导航：从 (row, column) 起按 dColumn 方向找下一个可编辑且未隐藏/未覆盖的格。
@@ -687,7 +722,8 @@ private:
     /// 方向键移动选中格；跳过隐藏列与合并覆盖格。
     void moveSelection(int dRow, int dColumn);
     /// 按当前模式应用数据区点击的行选中裁决（多选模式下点击与 Ctrl+点击均为切换该行）。
-    bool applyRowSelectionClick(int row, int column, bool ctrl);
+    /// withColumn=false 时保持锚点列不变（不可聚焦格 / 辅助列的点击路径）。
+    bool applyRowSelectionClick(int row, int column, bool ctrl, bool withColumn = true);
     /// 按当前模式应用复选框点击（内置复选框列 / 数据列复选框单元格）的行选中裁决；
     /// 多选模式为切换加入 / 移出，withColumn 为 true 时同时把列作为选中锚点。
     bool applyCheckboxClickSelection(int row, int column, bool withColumn);
@@ -695,10 +731,18 @@ private:
     int targetVerticalOffset(int row, ScrollHint hint, int spanBottomRow = -1) const;
     int targetHorizontalOffset(int column, ScrollHint hint, int spanRightColumn = -1) const;
     bool isCellEditable(int row, int column) const;
+    /// (row, column) 就近的可聚焦列（跳过隐藏 / 合并覆盖 / 不可聚焦）；无返回 -1。
+    int nearestFocusableColumn(int row, int column) const;
     void toggleCheckboxCellValue(int row, int column);
     bool tryFinishCurrentEdit(bool focusOut = false);
     void showEditError(const QString &message);
     void clearEditError();
+    /// 校验失败期间按键时即时复查：通过则清除提示，不通过则刷新提示内容与位置。
+    void refreshEditError();
+    /// 把错误提示定位到编辑框正下方（间隙 2px；贴近底部放不下时翻转到上方）。
+    void updateEditErrorTipGeometry();
+    /// 按列定义解析生效的编辑器实现（未命中注册名时回退默认单行编辑器）。
+    QSharedPointer<AgCellEditor> editorImplForColumn(int column) const;
     /// 计算 pos 处悬停单元格的 tooltip 文本（空串 = 不显示）。
     /// 仅列 tooltipEnabled=true 且内容超出列宽被裁剪时返回文本，
     /// 截断判定的几何约定与默认渲染器一致（左右内边距 + 树形首列缩进/箭头占位）。
@@ -806,6 +850,7 @@ private:
     QHash<QString, QSharedPointer<AgCellEditor>> m_cellEditors;  ///< 注册的编辑器
     QSharedPointer<AgCellEditValidator> m_cellEditValidator;     ///< 编辑提交校验器
     std::function<bool(const AgGridModel *, int, int)> m_cellEditableCallback;  ///< 动态可编辑回调
+    std::function<bool(const AgGridModel *, int, int)> m_cellFocusableCallback;  ///< 动态可聚焦回调
     std::function<QString(const AgGridModel *, int, int, const QString &)> m_cellTooltipTextCallback;  ///< tooltip 内容回调
     std::function<bool(const AgGridModel *, int)> m_rowCheckableCallback;       ///< 行可选回调
     QWidget *m_activeEditor;                 ///< 当前编辑器控件
@@ -813,6 +858,7 @@ private:
     int m_editRow;                           ///< 编辑行（锚点行）
     int m_editColumn;                        ///< 编辑列（锚点列）
     bool m_committing;                       ///< 提交中（防重入）
+    QLabel *m_editErrorTip;                  ///< 编辑校验错误提示（常驻于编辑框下方直至校验通过）
 
     bool m_isResizing;                       ///< 列宽调整中
     int m_resizeColumn;                      ///< 调整中的列
@@ -886,6 +932,13 @@ private:
     QVector<ColumnDragAnimationEntry> m_columnVisShiftEntries;  ///< 右侧列位移插值条目
     QVariantAnimation *m_columnVisAnimation; ///< 显隐动画驱动
 
+    // 辅助列（行号 / 复选框 / 拖拽手柄）显隐动画
+    bool m_specialVisAnimating;              ///< 显隐动画进行中
+    bool m_specialVisHiding;                 ///< true=隐藏动画 / false=显示动画
+    qreal m_specialVisProgress;              ///< 动画进度 0~1
+    unsigned m_specialVisMask;               ///< 参与动画的辅助列位掩码（1<<SpecialColumnKind）
+    QVariantAnimation *m_specialVisAnimation; ///< 显隐动画驱动
+
     // 加载遮罩
     bool m_loading;                          ///< 加载遮罩请求状态（setLoading 设置）
     qreal m_loadingOpacity;                  ///< 遮罩当前不透明度 0~1（淡入/淡出动画驱动）
@@ -898,6 +951,7 @@ private:
     bool m_dataAnimationEnabled;             ///< 数据变化动画总开关（默认开启）
     int m_sortAnimationDuration;             ///< 排序位移动画时长（毫秒，默认 100）
     int m_resetAnimationDuration;            ///< 重设数据切换动画时长（毫秒，默认 200）
+    bool m_suppressBottomLineForCapture;     ///< 捕获重设动画快照时临时压制底部边框线
     QVector<int> m_animLastOrder;            ///< 布局稳定后的可见行→原始行快照（动画起点）
     QVector<int> m_animLastOffsets;          ///< 快照对应的行偏移表（size = rowCount + 1）
     struct DataMoveAnimationEntry {

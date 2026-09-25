@@ -430,6 +430,7 @@ void AgGridModel::clear()
     m_fieldToColumn.clear();
     m_headerLevelCount = 1;
     m_sortRules.clear();
+    m_sortComparator = nullptr;
     m_filterCallback = nullptr;
     m_treeMode = false;
     m_treeRoots.clear();
@@ -525,12 +526,43 @@ void AgGridModel::sort(const QList<AgSortRule> &rules)
 
 void AgGridModel::clearSort()
 {
-    if (m_sortRules.isEmpty() && !hasFilterCallback())
+    if (m_sortRules.isEmpty() && !m_sortComparator && !hasFilterCallback())
         return;
 
     m_sortRules.clear();
+    m_sortComparator = nullptr;
     applyFilterAndSort();
     emit layoutChanged();
+}
+
+void AgGridModel::setSortComparator(const AgRowComparator &comparator)
+{
+    if (!comparator) {
+        clearSortComparator();
+        return;
+    }
+
+    m_sortComparator = comparator;
+    if (m_treeMode)
+        applyFilterAndSort();   // 树模式：自定义比较在同级兄弟铺平时生效
+    else
+        sortVisibleData();
+    emit layoutChanged();
+}
+
+void AgGridModel::clearSortComparator()
+{
+    if (!m_sortComparator)
+        return;
+
+    m_sortComparator = nullptr;
+    applyFilterAndSort();
+    emit layoutChanged();
+}
+
+bool AgGridModel::hasSortComparator() const
+{
+    return static_cast<bool>(m_sortComparator);
 }
 
 void AgGridModel::setFilterCallback(const std::function<bool(const QVariantMap &row)> &callback)
@@ -706,6 +738,10 @@ void AgGridModel::rebuildVisibleRowsTree()
     // 3. 深度优先铺平：同级兄弟按排序规则稳定排序后依次输出；
     //    仅展开的行继续下钻（默认折叠）。
     auto compareOriginal = [this](int a, int b) -> bool {
+        if (m_sortComparator) {
+            // 自定义比较函数优先于规则（比较结果为 0 时保持原顺序）
+            return m_sortComparator(m_originalRowData.at(a), m_originalRowData.at(b)) < 0;
+        }
         for (const AgSortRule &rule : m_sortRules) {
             const QString field = fieldAtColumn(rule.column);
             if (field.isEmpty())
@@ -751,10 +787,14 @@ void AgGridModel::rebuildVisibleRowsTree()
 
 void AgGridModel::sortVisibleData()
 {
-    if (m_sortRules.isEmpty() || m_rowData.size() < 2)
+    if ((m_sortRules.isEmpty() && !m_sortComparator) || m_rowData.size() < 2)
         return;
 
-    auto compareRows = [&](const QVariantMap &a, const QVariantMap &b) {
+    auto compareRows = [&](const QVariantMap &a, const QVariantMap &b) -> bool {
+        if (m_sortComparator) {
+            // 自定义比较函数优先于规则（比较结果为 0 时保持原顺序，稳定排序）
+            return m_sortComparator(a, b) < 0;
+        }
         for (const AgSortRule &rule : m_sortRules) {
             const QString field = fieldAtColumn(rule.column);
             if (field.isEmpty())

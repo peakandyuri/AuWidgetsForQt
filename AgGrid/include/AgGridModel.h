@@ -29,6 +29,16 @@ struct AgSortRule {
 };
 
 /**
+ * @brief 整行自定义比较函数（多规则排序之外的另一种排序方式）。
+ *
+ * 入参为两行的原始数据（QVariantMap，键为列 field）。返回值 <0 表示 a 排在 b 前，
+ * >0 表示 b 排在 a 前，0 表示相等（稳定排序保持原顺序）。函数内部可自由读取
+ * 任意列、组合派生逻辑（如先看 A 列取值区间再比 B 列），不受“列 + 升降序”
+ * 规则的表达能力限制。
+ */
+using AgRowComparator = std::function<int(const QVariantMap &a, const QVariantMap &b)>;
+
+/**
  * @brief AgGridWidget 的数据模型，与视图解耦。
  *
  * 职责：
@@ -178,6 +188,15 @@ public:
     /// 清除排序（保留过滤），恢复原始顺序。触发 layoutChanged。
     void clearSort();
 
+    /// 设置整行自定义比较函数（AgRowComparator）：设置后立即生效并重新排序，
+    /// 生效期间优先于 sort(rules)（规则保留但不参与比较）；传 nullptr 等价
+    /// clearSortComparator()。树形模式作用于同级兄弟。触发 layoutChanged。
+    void setSortComparator(const AgRowComparator &comparator);
+    /// 清除自定义比较函数（保留规则排序），恢复规则 / 原始顺序（保留过滤）。触发 layoutChanged。
+    void clearSortComparator();
+    /// 是否设置了自定义比较函数。
+    bool hasSortComparator() const;
+
     /// 设置过滤回调：对每行返回 true 表示保留。设置后立即生效。
     void setFilterCallback(const std::function<bool(const QVariantMap &row)> &callback);
     /// 清除过滤回调（恢复全部行）。
@@ -250,6 +269,7 @@ private:
     int m_headerLevelCount;                      ///< 表头层级数
 
     QList<AgSortRule> m_sortRules;               ///< 当前排序规则
+    AgRowComparator m_sortComparator;            ///< 整行自定义比较函数（优先于规则）
     std::function<bool(const QVariantMap &row)> m_filterCallback;  ///< 过滤回调（true 保留）
 
     // ---- 树形数据 ----
