@@ -334,8 +334,22 @@ void AgPopupPanel::closePopup()
     }
 
     emit aboutToClose();
+#ifdef Q_OS_WIN
     const QRect current = geometry();
     animateGeometry(collapsedRect(current, m_placedAbove), false);
+#else
+    // Linux / Wayland：顶级窗口逐帧改尺寸依赖窗口系统回配（Wayland 需要合成器
+    // 逐帧 configure，X11 受合成器与异步 ConfigureNotify 影响），中间帧被合并
+    // 丢弃，收起动画的实际观感是面板先跳到收起尺寸停顿一下再消失。因此非
+    // Windows 平台不做几何收起动画，直接隐藏（弹出动画保留）。
+    stopAnimation();
+    if (m_eventFilterInstalled) {
+        qApp->removeEventFilter(this);
+        m_eventFilterInstalled = false;
+    }
+    hide();
+    emit closed();
+#endif
 }
 
 void AgPopupPanel::dismiss()

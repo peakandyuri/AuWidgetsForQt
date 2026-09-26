@@ -1052,7 +1052,8 @@ void AgSelect::ensurePopup()
     m_listView->setMouseTracking(true);
     m_listView->setSelectionMode(QAbstractItemView::NoSelection);
     m_listView->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    m_listView->setUniformItemSizes(true);
+    // 不开 uniformItemSizes：组名行与选项行高不同，开启后列表用第一行的尺寸
+    // 铺排全部行并估算内容高度，内容高度虚增 / 行高错乱，选项不多时也会出滚动条
     m_listView->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_listView->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     m_listView->setVerticalScrollBar(new AgScrollBar(Qt::Vertical));

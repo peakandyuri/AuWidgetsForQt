@@ -33,6 +33,32 @@ static qreal agOutCubic(qreal t)
     return 1.0 - u * u * u;
 }
 
+/// 判断 widget 是否位于编辑器子树内。与 QWidget::isAncestorOf 不同：这里跨越
+/// 顶层窗口边界（编辑器弹出的下拉面板 / QComboBox 弹层等都是挂在编辑器下的
+/// 子顶级窗口，其 parentWidget() 链仍指向编辑器）。
+static bool agInEditorSubtree(const QWidget *editor, const QWidget *widget)
+{
+    while (widget) {
+        if (widget == editor)
+            return true;
+        widget = widget->parentWidget();
+    }
+    return false;
+}
+
+/// 编辑器自有弹层（QComboBox 弹层 / AgSelect、AgDatePicker 的面板）是否处于打开状态。
+/// Linux/Wayland 上点击这类弹层窗口会把激活与键盘焦点交给弹层（其内部通常没有
+/// 可聚焦控件，焦点表现为空），且激活面板的同时宿主窗口失活——这些都不是真正的
+/// “焦点离开编辑器”，不能据此提交销毁编辑器（Windows 由 MA_NOACTIVATE 天然规避）。
+static bool agEditorPopupActive(const QWidget *editor)
+{
+    const QWidget *popup = QApplication::activePopupWidget();
+    if (popup && agInEditorSubtree(editor, popup))
+        return true;
+    const QWidget *active = QApplication::activeWindow();
+    return active && active != editor->window() && agInEditorSubtree(editor, active);
+}
+
 AgGridWidget::AgGridWidget(QWidget *parent)
     : QWidget(parent)
     , m_model(nullptr)
@@ -193,7 +219,9 @@ AgGridWidget::AgGridWidget(QWidget *parent)
     // 复合编辑器的失焦提交：编辑器内部子控件（如 AgSelect / AgDatePicker 的行编辑框）
     // 持有焦点时，焦点移出编辑器子树只会向子控件发 FocusOut，编辑器本体收不到，
     // eventFilter 的失焦提交路径感知不到——这里按全局焦点变化补一条等价裁决。
-    // 焦点在编辑器子树内部挪动（展开面板把焦点交给内部行编辑框）不触发提交。
+    // 焦点在编辑器子树内部挪动（展开面板把焦点交给内部行编辑框）不触发提交；
+    // 焦点移入编辑器自己的弹层窗口（含 Qt::Popup 下拉 / Qt::Tool 面板，跨窗口
+    // 判定见 agInEditorSubtree），或弹层被点击激活导致焦点短暂为空时同样不提交。
     connect(qApp, &QApplication::focusChanged, this, [this](QWidget *old, QWidget *now) {
         if (!m_activeEditor || m_committing)
             return;
@@ -201,8 +229,11 @@ AgGridWidget::AgGridWidget(QWidget *parent)
                                         || m_activeEditor->isAncestorOf(old));
         const bool toEditor = now && (now == m_activeEditor
                                       || m_activeEditor->isAncestorOf(now));
-        if (fromEditor && !toEditor)
+        if (fromEditor && !toEditor) {
+            if (agEditorPopupActive(m_activeEditor))
+                return;
             tryFinishCurrentEdit(true);
+        }
     });
 
     applyStyleToScrollBars();
@@ -6390,14 +6421,17 @@ bool AgGridWidget::eventFilter(QObject *watched, QEvent *event)
     } else if (event->type() == QEvent::FocusOut) {
         if (m_committing)
             return false;
-        if (QApplication::activePopupWidget())
-            return false;
         // 焦点仍在编辑器自身或其子控件内部时不算失焦：复合编辑器（如 AgSelect /
         // AgDatePicker 展开面板时把焦点移入内部行编辑框）内部挪焦点会向编辑器
         // 本体发 FocusOut——若按失焦提交，面板刚弹出编辑器就被提交销毁，
         // 表现为“面板只剩文本框”
         QWidget *focus = QApplication::focusWidget();
         if (focus && (focus == m_activeEditor || m_activeEditor->isAncestorOf(focus)))
+            return false;
+        // 编辑器自有弹层（QComboBox 弹层 / AgSelect、AgDatePicker 面板）被点击
+        // 或激活时，Linux/Wayland 会把焦点交给弹层窗口或短暂置空，不算失焦，
+        // 见 agEditorPopupActive
+        if (QApplication::activePopupWidget() || agEditorPopupActive(m_activeEditor))
             return false;
         tryFinishCurrentEdit(true);
         return false;
