@@ -3,8 +3,8 @@
 
 #include "DemoWindowBase.h"
 
-class AgGridModel;
-class AgGridWidget;
+class AuGridModel;
+class AuGridWidget;
 
 /**
  * @brief 排序与过滤示例：表头点击排序、多规则逻辑排序、自定义过滤回调。
@@ -17,8 +17,8 @@ public:
     explicit SortFilterDemoWindow(QWidget *parent = nullptr);
 
 private:
-    AgGridWidget *m_grid;
-    AgGridModel *m_model;
+    AuGridWidget *m_grid;
+    AuGridModel *m_model;
 };
 
 #endif // SORTFILTERDEMOWINDOW_H

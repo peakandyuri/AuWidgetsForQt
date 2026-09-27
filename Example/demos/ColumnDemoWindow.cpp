@@ -1,8 +1,8 @@
 #include "ColumnDemoWindow.h"
 
-#include "AgColumnDef.h"
-#include "AgGridModel.h"
-#include "AgGridWidget.h"
+#include "AuColumnDef.h"
+#include "AuGridModel.h"
+#include "AuGridWidget.h"
 
 #include <QHBoxLayout>
 #include <QPushButton>
@@ -18,18 +18,18 @@ ColumnDemoWindow::ColumnDemoWindow(QWidget *parent)
     , m_grid(nullptr)
     , m_model(nullptr)
 {
-    m_model = new AgGridModel(this);
+    m_model = new AuGridModel(this);
 
     // tooltip 演示：两列内容相同、宽度相同，仅 tooltipEnabled 不同
-    QVector<AgColumnDef> defs = makeStandardColumns();
-    AgColumnDef noteOn("note", QStringLiteral(u"备注(tooltip开)"));
+    QVector<AuColumnDef> defs = makeStandardColumns();
+    AuColumnDef noteOn("note", QStringLiteral(u"备注(tooltip开)"));
     noteOn.setWidth(150);
-    noteOn.setTextWrapMode(AgColumnDef::TextWrapMode::NoWrapTruncate);
+    noteOn.setTextWrapMode(AuColumnDef::TextWrapMode::NoWrapTruncate);
     noteOn.setTooltipEnabled(true);
     defs.append(noteOn);
-    AgColumnDef noteOff("noteOff", QStringLiteral(u"备注(tooltip关)"));
+    AuColumnDef noteOff("noteOff", QStringLiteral(u"备注(tooltip关)"));
     noteOff.setWidth(150);
-    noteOff.setTextWrapMode(AgColumnDef::TextWrapMode::NoWrapTruncate);
+    noteOff.setTextWrapMode(AuColumnDef::TextWrapMode::NoWrapTruncate);
     defs.append(noteOff);
     m_model->setColumnDefs(defs);
 
@@ -41,7 +41,7 @@ ColumnDemoWindow::ColumnDemoWindow(QWidget *parent)
     }
     m_model->setRowData(rows);
 
-    m_grid = new AgGridWidget(this);
+    m_grid = new AuGridWidget(this);
     m_grid->setModel(m_model);
 
     QHBoxLayout *pinButtons = new QHBoxLayout;
@@ -54,14 +54,14 @@ ColumnDemoWindow::ColumnDemoWindow(QWidget *parent)
     pinButtons->addStretch(1);
 
     connect(pinLeftBtn, &QPushButton::clicked, this, [this]() {
-        m_grid->pinColumn(0, AgColumnDef::PinMode::Left);
+        m_grid->pinColumn(0, AuColumnDef::PinMode::Left);
     });
     connect(pinRightBtn, &QPushButton::clicked, this, [this]() {
-        m_grid->pinColumn(QStringLiteral("col6"), AgColumnDef::PinMode::Right);
+        m_grid->pinColumn(QStringLiteral("col6"), AuColumnDef::PinMode::Right);
     });
     connect(unpinBtn, &QPushButton::clicked, this, [this]() {
         for (int c = 0; c < m_model->columnCount(); ++c)
-            m_grid->pinColumn(c, AgColumnDef::PinMode::None);
+            m_grid->pinColumn(c, AuColumnDef::PinMode::None);
     });
 
     QHBoxLayout *visButtons = new QHBoxLayout;

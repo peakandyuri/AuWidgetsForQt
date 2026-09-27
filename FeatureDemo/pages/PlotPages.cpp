@@ -2,10 +2,10 @@
 
 #include "PageHelpers.h"
 
-#include "AgPlot.h"
-#include "AgPlotAxis.h"
-#include "AgPlotCurve.h"
-#include "AgPlotPrimitive.h"
+#include "AuPlot.h"
+#include "AuPlotAxis.h"
+#include "AuPlotCurve.h"
+#include "AuPlotPrimitive.h"
 
 #include <QComboBox>
 #include <QHBoxLayout>
@@ -19,7 +19,7 @@
 namespace {
 
 /// 演示页布局：顶部控制条（可空）+ 曲线本体 + 可选底部日志。
-QWidget *plotPanel(AgPlot *plot, QHBoxLayout *controls = nullptr, QWidget *footer = nullptr)
+QWidget *plotPanel(AuPlot *plot, QHBoxLayout *controls = nullptr, QWidget *footer = nullptr)
 {
     QWidget *body = new QWidget;
     QVBoxLayout *v = new QVBoxLayout(body);
@@ -55,8 +55,8 @@ QVector<FeaturePage> makePlotPages()
             u"默认单轴（底部 X1 + 左侧 Y1），一条正弦曲线；背景网格默认虚线（横向 + 纵向），"
             u"可用下拉框切换线型与方向——线型、颜色、开关都逐轴独立配置。");
         page.createDemo = []() -> QWidget * {
-            AgPlot *plot = new AgPlot;
-            AgPlotCurve *curve = new AgPlotCurve;
+            AuPlot *plot = new AuPlot;
+            AuPlotCurve *curve = new AuPlotCurve;
             curve->setPoints(sineWave());
             plot->addItem(curve);
 
@@ -98,10 +98,10 @@ QVector<FeaturePage> makePlotPages()
             return plotPanel(plot, layout);
         };
         page.code = QStringLiteral(
-            "AgPlot *plot = new AgPlot;\n"
+            "AuPlot *plot = new AuPlot;\n"
             "\n"
             "// 曲线：坐标按 X1/Y1 轴的数据值\n"
-            "AgPlotCurve *curve = new AgPlotCurve;\n"
+            "AuPlotCurve *curve = new AuPlotCurve;\n"
             "for (int i = 0; i < 200; ++i) {\n"
             "    double x = 10.0 * i / 199;\n"
             "    curve->addPoint(x, qSin(x) * 3 + x * 0.5);\n"
@@ -125,11 +125,11 @@ QVector<FeaturePage> makePlotPages()
             u"xAxis2()->setVisible() 单独开）。两条曲线量纲不同：一条绑 Y1，一条绑 Y2，"
             u"各自按绑定轴自适应量程；Y2 轴设置了独立轴色便于区分。");
         page.createDemo = []() -> QWidget * {
-            AgPlot *plot = new AgPlot;
+            AuPlot *plot = new AuPlot;
             plot->setDualAxisEnabled(true);
 
-            AgPlotCurve *temperature = new AgPlotCurve;   // 绑默认 Y1
-            AgPlotCurve *humidity = new AgPlotCurve;      // 绑右侧 Y2
+            AuPlotCurve *temperature = new AuPlotCurve;   // 绑默认 Y1
+            AuPlotCurve *humidity = new AuPlotCurve;      // 绑右侧 Y2
             for (int i = 0; i <= 48; ++i) {
                 const double x = i / 2.0;
                 temperature->addPoint(x, 15 + qSin(x / 3.0) * 8 + i * 0.1);
@@ -137,7 +137,7 @@ QVector<FeaturePage> makePlotPages()
             }
             plot->addItem(temperature);
             plot->addItem(humidity);
-            humidity->setYAxis(AgPlotAxisPos::Y2);
+            humidity->setYAxis(AuPlotAxisPos::Y2);
             humidity->setLineColor(QColor(0x27, 0xae, 0x60));
 
             // Y2 轴独立颜色（无效时用全局样式的轴色）
@@ -145,17 +145,17 @@ QVector<FeaturePage> makePlotPages()
             return plotPanel(plot);
         };
         page.code = QStringLiteral(
-            "AgPlot *plot = new AgPlot;\n"
+            "AuPlot *plot = new AuPlot;\n"
             "plot->setDualAxisEnabled(true);   // 显示顶部 X2 + 右侧 Y2\n"
             "\n"
             "// 曲线一：默认绑定 X1 + Y1\n"
-            "AgPlotCurve *temperature = new AgPlotCurve;\n"
+            "AuPlotCurve *temperature = new AuPlotCurve;\n"
             "// ... addPoint(时间, 温度)\n"
             "plot->addItem(temperature);\n"
             "\n"
             "// 曲线二：绑定右侧 Y2（X 轴仍可用 X1）\n"
-            "AgPlotCurve *humidity = new AgPlotCurve;\n"
-            "humidity->setYAxis(AgPlotAxisPos::Y2);\n"
+            "AuPlotCurve *humidity = new AuPlotCurve;\n"
+            "humidity->setYAxis(AuPlotAxisPos::Y2);\n"
             "// ... addPoint(时间, 湿度)\n"
             "plot->addItem(humidity);\n"
             "\n"
@@ -176,7 +176,7 @@ QVector<FeaturePage> makePlotPages()
             u"4 个小刻度（setMinorTickCount 可改）。setTickLabelsVisible(false) 可整体"
             u"隐藏刻度数值。");
         page.createDemo = []() -> QWidget * {
-            AgPlot *plot = new AgPlot;
+            AuPlot *plot = new AuPlot;
 
             plot->xAxis()->setRange(1, 7);
             plot->xAxis()->setTickCount(7);
@@ -193,11 +193,11 @@ QVector<FeaturePage> makePlotPages()
             plot->yAxis()->setTickCount(5);      // 固定 5 个大刻度
             plot->yAxis()->setMinorTickCount(4); // 大刻度间 4 个小刻度
 
-            AgPlotCurve *curve = new AgPlotCurve;
+            AuPlotCurve *curve = new AuPlotCurve;
             const QVector<double> week = { 42, 68, 55, 90, 74, 30, 48 };
             for (int i = 0; i < week.size(); ++i)
                 curve->addPoint(i + 1, week.at(i));
-            curve->setPointStyle(AgPlotPointStyle::Circle);
+            curve->setPointStyle(AuPlotPointStyle::Circle);
             curve->setPointSize(7);
             plot->addItem(curve);
             return plotPanel(plot);
@@ -234,12 +234,12 @@ QVector<FeaturePage> makePlotPages()
             u"参考线（红色虚线，z=1）、垂直全幅标线（青绿点线，z=1）和散点（空心圆，"
             u"z=2）在曲线上方。绘制按 zLevel 从小到大，负级在默认曲线底部。");
         page.createDemo = []() -> QWidget * {
-            AgPlot *plot = new AgPlot;
+            AuPlot *plot = new AuPlot;
             plot->xAxis()->setRange(0, 10);
             plot->yAxis()->setRange(-1, 8);
 
             // 面：z=-1，画在默认曲线底部（多边形自动闭合）
-            AgPlotArea *area = new AgPlotArea;
+            AuPlotArea *area = new AuPlotArea;
             area->setZLevel(-1);
             area->setPoints({ QPointF(2.5, 0), QPointF(5.5, 0), QPointF(6.5, 4.5),
                               QPointF(4.5, 7.0), QPointF(2.0, 4.0) });
@@ -249,20 +249,20 @@ QVector<FeaturePage> makePlotPages()
             plot->addItem(area);
 
             // 曲线：z=0（默认层级）
-            AgPlotCurve *curve = new AgPlotCurve;
+            AuPlotCurve *curve = new AuPlotCurve;
             curve->setPoints(sineWave(100, 2.0, 0.3));
             plot->addItem(curve);
 
             // 线：z=1，阈值参考线（虚线可用 setDashPattern 精细控制间隔）
-            AgPlotLine *reference = new AgPlotLine;
+            AuPlotLine *reference = new AuPlotLine;
             reference->setZLevel(1);
             reference->setPoints({ QPointF(0, 4.6), QPointF(10, 4.6) });
             reference->setLineColor(QColor(0xe7, 0x4c, 0x3c));
             reference->setLineStyle(Qt::DashLine);
             plot->addItem(reference);
 
-            // 参考线：z=1，垂直全幅标线（AgPlotRefLine，只需一个数据值）
-            AgPlotRefLine *refLine = new AgPlotRefLine(AgPlotRefLine::Orientation::Vertical);
+            // 参考线：z=1，垂直全幅标线（AuPlotRefLine，只需一个数据值）
+            AuPlotRefLine *refLine = new AuPlotRefLine(AuPlotRefLine::Orientation::Vertical);
             refLine->setZLevel(1);
             refLine->setValue(8.0);
             refLine->setLineColor(QColor(0x16, 0xa0, 0x85));
@@ -270,9 +270,9 @@ QVector<FeaturePage> makePlotPages()
             plot->addItem(refLine);
 
             // 点：z=2，散点标注（X 样式）
-            AgPlotPoints *markers = new AgPlotPoints;
+            AuPlotPoints *markers = new AuPlotPoints;
             markers->setZLevel(2);
-            markers->setPointStyle(AgPlotPointStyle::HollowCircle);
+            markers->setPointStyle(AuPlotPointStyle::HollowCircle);
             markers->setPointSize(9);
             markers->setPointColor(QColor(0x8e, 0x44, 0xad));
             markers->setPoints({ QPointF(2.0, 2.0), QPointF(5.0, 4.9), QPointF(8.0, 3.9) });
@@ -283,7 +283,7 @@ QVector<FeaturePage> makePlotPages()
             "// 层级约定：zLevel 越小越先画（越靠底层），默认曲线为 0\n"
             "\n"
             "// 面：z=-1 → 默认曲线下方；多边形自动闭合，填充色支持透明度\n"
-            "AgPlotArea *area = new AgPlotArea;\n"
+            "AuPlotArea *area = new AuPlotArea;\n"
             "area->setZLevel(-1);\n"
             "area->setPoints({ {2.5, 0}, {5.5, 0}, {6.5, 4.5}, {4.5, 7.0}, {2.0, 4.0} });\n"
             "area->setFillColor(QColor(0x27ae60, 50));  // 内部背景 20% 透明度\n"
@@ -291,12 +291,12 @@ QVector<FeaturePage> makePlotPages()
             "plot->addItem(area);\n"
             "\n"
             "// 曲线：z=0（默认）\n"
-            "AgPlotCurve *curve = new AgPlotCurve;\n"
+            "AuPlotCurve *curve = new AuPlotCurve;\n"
             "// ... addPoint(x, y)\n"
             "plot->addItem(curve);\n"
             "\n"
             "// 线：z=1 → 曲线上方；虚线间隔可自定义（单位为线宽倍数）\n"
-            "AgPlotLine *reference = new AgPlotLine;\n"
+            "AuPlotLine *reference = new AuPlotLine;\n"
             "reference->setZLevel(1);\n"
             "reference->setPoints({ {0, 4.6}, {10, 4.6} });\n"
             "reference->setLineStyle(Qt::DashLine);\n"
@@ -304,16 +304,16 @@ QVector<FeaturePage> makePlotPages()
             "plot->addItem(reference);\n"
             "\n"
             "// 水平 / 垂直参考线：全幅标线只需一个数据值（阈值/报警线）\n"
-            "AgPlotRefLine *refLine = new AgPlotRefLine(AgPlotRefLine::Vertical);\n"
+            "AuPlotRefLine *refLine = new AuPlotRefLine(AuPlotRefLine::Vertical);\n"
             "refLine->setValue(8.0);              // 垂直线在 x=8；Horizontal 则为 y 值\n"
             "refLine->setLineStyle(Qt::DotLine);\n"
             "plot->addItem(refLine);              // 注意：不参与自适应量程\n"
             "\n"
             "// 点：z=2；内置样式：实心/空心圆、方块、菱形、三角、\n"
             "// 十字架(Cross)、X(XCross)、带圈的十字架(RingedCross) 等\n"
-            "AgPlotPoints *markers = new AgPlotPoints;\n"
+            "AuPlotPoints *markers = new AuPlotPoints;\n"
             "markers->setZLevel(2);\n"
-            "markers->setPointStyle(AgPlotPointStyle::HollowCircle);\n"
+            "markers->setPointStyle(AuPlotPointStyle::HollowCircle);\n"
             "markers->addPoint(2.0, 2.0);\n"
             "plot->addItem(markers);\n");
         pages << page;
@@ -329,12 +329,12 @@ QVector<FeaturePage> makePlotPages()
             u"自定义 formatter 同样生效），移出绘图区自动隐藏；setCrosshairEnabled(true)："
             u"横贯绘图区的十字点线跟随鼠标。trackerChanged() 信号实时输出吸附值（见日志）。");
         page.createDemo = []() -> QWidget * {
-            AgPlot *plot = new AgPlot;
+            AuPlot *plot = new AuPlot;
             plot->setTrackerEnabled(true);
             plot->setCrosshairEnabled(true);
 
-            AgPlotCurve *sine = new AgPlotCurve;
-            AgPlotCurve *damped = new AgPlotCurve;
+            AuPlotCurve *sine = new AuPlotCurve;
+            AuPlotCurve *damped = new AuPlotCurve;
             for (int i = 0; i <= 100; ++i) {
                 const double x = 10.0 * i / 100.0;
                 sine->addPoint(x, qSin(x) * 3.0);
@@ -345,8 +345,8 @@ QVector<FeaturePage> makePlotPages()
             damped->setLineColor(QColor(0xe7, 0x4c, 0x3c));
 
             QPlainTextEdit *log = PageHelpers::makeLog(110);
-            QObject::connect(plot, &AgPlot::trackerChanged, plot,
-                             [log](AgPlotCurve *curve, const QPointF &point) {
+            QObject::connect(plot, &AuPlot::trackerChanged, plot,
+                             [log](AuPlotCurve *curve, const QPointF &point) {
                                  if (curve)
                                      PageHelpers::appendLog(log, QStringLiteral(u"吸附: x=%1, y=%2")
                                                                             .arg(point.x(), 0, 'f', 2)
@@ -357,7 +357,7 @@ QVector<FeaturePage> makePlotPages()
             return plotPanel(plot, nullptr, log);
         };
         page.code = QStringLiteral(
-            "AgPlot *plot = new AgPlot;\n"
+            "AuPlot *plot = new AuPlot;\n"
             "\n"
             "// 追踪器：吸附最近曲线点 + 标记/引导线/tooltip\n"
             "plot->setTrackerEnabled(true);\n"
@@ -365,15 +365,15 @@ QVector<FeaturePage> makePlotPages()
             "plot->setCrosshairEnabled(true);\n"
             "\n"
             "// 吸附值实时回调（curve 为 nullptr 表示已离开曲线）\n"
-            "connect(plot, &AgPlot::trackerChanged, this,\n"
-            "        [log](AgPlotCurve *curve, const QPointF &p) {\n"
+            "connect(plot, &AuPlot::trackerChanged, this,\n"
+            "        [log](AuPlotCurve *curve, const QPointF &p) {\n"
             "    if (curve)\n"
             "        log->appendPlainText(QString(\"x=%1 y=%2\").arg(p.x()).arg(p.y()));\n"
             "});\n"
             "\n"
             "// tooltip 值文本使用绑定轴的刻度格式化：\n"
             "// 自定义过 setLabelFormatter 的轴（如星期）同样生效；\n"
-            "// 背景色/边框/文字颜色/字体在 AgPlotStyle 的 tracker* 字段配置。\n");
+            "// 背景色/边框/文字颜色/字体在 AuPlotStyle 的 tracker* 字段配置。\n");
         pages << page;
     }
 
@@ -387,7 +387,7 @@ QVector<FeaturePage> makePlotPages()
             u"最大值，因此拖动和缩放被钳制在该范围内——滚轮缩小到全范围后不会再小。"
             u"提示：拖动/缩放过的轴会自动脱离数据自适应量程，setAutoRange(true) 可恢复。");
         page.createDemo = []() -> QWidget * {
-            AgPlot *plot = new AgPlot;
+            AuPlot *plot = new AuPlot;
 
             // 交互开关 + 方向精细化控制（默认全关）
             plot->setDragEnabled(true);
@@ -399,7 +399,7 @@ QVector<FeaturePage> makePlotPages()
             plot->xAxis()->setRange(0, 100);
             plot->yAxis()->setRange(-120, 120);
 
-            AgPlotCurve *curve = new AgPlotCurve;
+            AuPlotCurve *curve = new AuPlotCurve;
             for (int i = 0; i <= 1000; ++i) {
                 const double x = i / 10.0;
                 curve->addPoint(x, qSin(x / 5.0) * 80 + qSin(x / 1.7) * 30);
@@ -408,7 +408,7 @@ QVector<FeaturePage> makePlotPages()
             return plotPanel(plot);
         };
         page.code = QStringLiteral(
-            "AgPlot *plot = new AgPlot;\n"
+            "AuPlot *plot = new AuPlot;\n"
             "\n"
             "// 交互默认关闭，按需开启\n"
             "plot->setDragEnabled(true);   // 鼠标左键拖动平移\n"
@@ -442,13 +442,13 @@ QVector<FeaturePage> makePlotPages()
             u"首/最小/最大/末，峰谷不丢），重绘流畅。已开启拖动、滚轮缩放与追踪器"
             u"（升序曲线二分吸附，移动无卡顿）。");
         page.createDemo = []() -> QWidget * {
-            AgPlot *plot = new AgPlot;
+            AuPlot *plot = new AuPlot;
             plot->setDragEnabled(true);
             plot->setZoomEnabled(true);
             plot->setTrackerEnabled(true);
             plot->setCrosshairEnabled(true);
 
-            AgPlotCurve *curve = new AgPlotCurve;
+            AuPlotCurve *curve = new AuPlotCurve;
             const int count = 1000 * 1000;
             QVector<QPointF> points;
             points.reserve(count);
@@ -490,7 +490,7 @@ QVector<FeaturePage> makePlotPages()
         };
         page.code = QStringLiteral(
             "// 百万级数据：正常 setPoints 即可，内部自动优化\n"
-            "AgPlotCurve *curve = new AgPlotCurve;\n"
+            "AuPlotCurve *curve = new AuPlotCurve;\n"
             "QVector<QPointF> points;\n"
             "points.reserve(1000 * 1000);\n"
             "for (int i = 0; i < 1000 * 1000; ++i)\n"
@@ -517,23 +517,23 @@ QVector<FeaturePage> makePlotPages()
             u"实心菱形、空心菱形、实心三角、空心三角、十字架、X 叉号、带圈的十字架。"
             u"每行 6 个，size 统一 14px。本页 Y 轴隐藏了刻度数值（setTickLabelsVisible）。");
         page.createDemo = []() -> QWidget * {
-            AgPlot *plot = new AgPlot;
+            AuPlot *plot = new AuPlot;
             plot->xAxis()->setRange(0.5, 6.5);
             plot->yAxis()->setRange(-0.5, 1.5);
             plot->yAxis()->setTickLabelsVisible(false);   // 需求：刻度可不显示数值
             plot->xAxis()->setGridVisible(false);
             plot->yAxis()->setGridVisible(false);
 
-            const QVector<AgPlotPointStyle> styles = {
-                AgPlotPointStyle::Circle,       AgPlotPointStyle::HollowCircle,
-                AgPlotPointStyle::Square,       AgPlotPointStyle::HollowSquare,
-                AgPlotPointStyle::Diamond,      AgPlotPointStyle::HollowDiamond,
-                AgPlotPointStyle::Triangle,     AgPlotPointStyle::HollowTriangle,
-                AgPlotPointStyle::Cross,        AgPlotPointStyle::XCross,
-                AgPlotPointStyle::RingedCross,
+            const QVector<AuPlotPointStyle> styles = {
+                AuPlotPointStyle::Circle,       AuPlotPointStyle::HollowCircle,
+                AuPlotPointStyle::Square,       AuPlotPointStyle::HollowSquare,
+                AuPlotPointStyle::Diamond,      AuPlotPointStyle::HollowDiamond,
+                AuPlotPointStyle::Triangle,     AuPlotPointStyle::HollowTriangle,
+                AuPlotPointStyle::Cross,        AuPlotPointStyle::XCross,
+                AuPlotPointStyle::RingedCross,
             };
             for (int i = 0; i < styles.size(); ++i) {
-                AgPlotPoints *points = new AgPlotPoints;
+                AuPlotPoints *points = new AuPlotPoints;
                 points->setPointStyle(styles.at(i));
                 points->setPointSize(14);
                 points->setPointColor(QColor(0x2f, 0x6f, 0xdb));
@@ -543,22 +543,22 @@ QVector<FeaturePage> makePlotPages()
             return plotPanel(plot);
         };
         page.code = QStringLiteral(
-            "// 每种样式一个 AgPlotPoints（也可用曲线的 setPointStyle 画在数据点上）\n"
-            "const QVector<AgPlotPointStyle> styles = {\n"
-            "    AgPlotPointStyle::Circle,        // 实心圆\n"
-            "    AgPlotPointStyle::HollowCircle,  // 空心圆圈\n"
-            "    AgPlotPointStyle::Square,        // 实心方块\n"
-            "    AgPlotPointStyle::HollowSquare,  // 空心方块\n"
-            "    AgPlotPointStyle::Diamond,       // 实心菱形\n"
-            "    AgPlotPointStyle::HollowDiamond, // 空心菱形\n"
-            "    AgPlotPointStyle::Triangle,      // 实心三角\n"
-            "    AgPlotPointStyle::HollowTriangle,// 空心三角\n"
-            "    AgPlotPointStyle::Cross,         // 十字架\n"
-            "    AgPlotPointStyle::XCross,        // X 叉号\n"
-            "    AgPlotPointStyle::RingedCross,   // 带圈的十字架\n"
+            "// 每种样式一个 AuPlotPoints（也可用曲线的 setPointStyle 画在数据点上）\n"
+            "const QVector<AuPlotPointStyle> styles = {\n"
+            "    AuPlotPointStyle::Circle,        // 实心圆\n"
+            "    AuPlotPointStyle::HollowCircle,  // 空心圆圈\n"
+            "    AuPlotPointStyle::Square,        // 实心方块\n"
+            "    AuPlotPointStyle::HollowSquare,  // 空心方块\n"
+            "    AuPlotPointStyle::Diamond,       // 实心菱形\n"
+            "    AuPlotPointStyle::HollowDiamond, // 空心菱形\n"
+            "    AuPlotPointStyle::Triangle,      // 实心三角\n"
+            "    AuPlotPointStyle::HollowTriangle,// 空心三角\n"
+            "    AuPlotPointStyle::Cross,         // 十字架\n"
+            "    AuPlotPointStyle::XCross,        // X 叉号\n"
+            "    AuPlotPointStyle::RingedCross,   // 带圈的十字架\n"
             "};\n"
-            "AgPlotPoints *points = new AgPlotPoints;\n"
-            "points->setPointStyle(AgPlotPointStyle::RingedCross);\n"
+            "AuPlotPoints *points = new AuPlotPoints;\n"
+            "points->setPointStyle(AuPlotPointStyle::RingedCross);\n"
             "points->setPointSize(14);\n"
             "points->setPointColor(QColor(0x2f6fdb));\n"
             "points->addPoint(1.0, 0.0);\n"

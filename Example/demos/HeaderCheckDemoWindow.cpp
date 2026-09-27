@@ -1,8 +1,8 @@
 #include "HeaderCheckDemoWindow.h"
 
-#include "AgColumnDef.h"
-#include "AgGridModel.h"
-#include "AgGridWidget.h"
+#include "AuColumnDef.h"
+#include "AuGridModel.h"
+#include "AuGridWidget.h"
 #include "HeaderCheckBoxRenderer.h"
 
 #include <QHBoxLayout>
@@ -20,33 +20,33 @@ HeaderCheckDemoWindow::HeaderCheckDemoWindow(QWidget *parent)
     , m_model(nullptr)
     , m_log(nullptr)
 {
-    QVector<AgColumnDef> columns;
-    AgColumnDef colName("name", QStringLiteral(u"任务"));
-    colName.setWidthMode(AgColumnDef::ColumnWidthMode::Flex);
+    QVector<AuColumnDef> columns;
+    AuColumnDef colName("name", QStringLiteral(u"任务"));
+    colName.setWidthMode(AuColumnDef::ColumnWidthMode::Flex);
     colName.setSortable(true);
     columns.append(colName);
-    AgColumnDef colOwner("owner", QStringLiteral(u"负责人"));
-    colOwner.setWidthMode(AgColumnDef::ColumnWidthMode::Fixed);
+    AuColumnDef colOwner("owner", QStringLiteral(u"负责人"));
+    colOwner.setWidthMode(AuColumnDef::ColumnWidthMode::Fixed);
     colOwner.setWidth(120);
     colOwner.setSortable(true);
     columns.append(colOwner);
     // 两个复选框数据列共用同一个表头渲染器实例
-    AgColumnDef colPass("pass", QStringLiteral(u"通过"));
-    colPass.setWidthMode(AgColumnDef::ColumnWidthMode::Fixed);
+    AuColumnDef colPass("pass", QStringLiteral(u"通过"));
+    colPass.setWidthMode(AuColumnDef::ColumnWidthMode::Fixed);
     colPass.setWidth(90);
     colPass.setCheckbox(true);
     colPass.setEditable(true);
     colPass.setHeaderRenderer("headerCheckBox");
     columns.append(colPass);
-    AgColumnDef colUrgent("urgent", QStringLiteral(u"加急"));
-    colUrgent.setWidthMode(AgColumnDef::ColumnWidthMode::Fixed);
+    AuColumnDef colUrgent("urgent", QStringLiteral(u"加急"));
+    colUrgent.setWidthMode(AuColumnDef::ColumnWidthMode::Fixed);
     colUrgent.setWidth(90);
     colUrgent.setCheckbox(true);
     colUrgent.setEditable(true);
     colUrgent.setHeaderRenderer("headerCheckBox");
     columns.append(colUrgent);
 
-    m_model = new AgGridModel(this);
+    m_model = new AuGridModel(this);
     m_model->setColumnDefs(columns);
 
     const QStringList owners = {
@@ -63,21 +63,21 @@ HeaderCheckDemoWindow::HeaderCheckDemoWindow(QWidget *parent)
     }
     m_model->setRowData(rows);
 
-    m_grid = new AgGridWidget(this);
+    m_grid = new AuGridWidget(this);
     m_grid->setModel(m_model);
     m_grid->setSortingEnabled(true);
 
     HeaderCheckBoxRenderer *headerCheck = new HeaderCheckBoxRenderer();
     headerCheck->setModel(m_model);
     m_grid->registerHeaderRenderer("headerCheckBox",
-                                   QSharedPointer<AgHeaderRenderer>(headerCheck));
+                                   QSharedPointer<AuHeaderRenderer>(headerCheck));
 
     m_log = new QPlainTextEdit(this);
     m_log->setReadOnly(true);
     m_log->setMaximumHeight(120);
     m_log->setPlaceholderText(QStringLiteral(u"信号日志…"));
 
-    connect(m_grid, &AgGridWidget::cellCheckStateChanged, this, [this](int row, int column, bool checked) {
+    connect(m_grid, &AuGridWidget::cellCheckStateChanged, this, [this](int row, int column, bool checked) {
         m_log->appendPlainText(QString("cellCheckStateChanged: row=%1 column=%2 checked=%3")
                                    .arg(row).arg(column).arg(checked));
     });
@@ -87,8 +87,8 @@ HeaderCheckDemoWindow::HeaderCheckDemoWindow(QWidget *parent)
     buttons->addWidget(sortBtn);
     buttons->addStretch(1);
     connect(sortBtn, &QPushButton::clicked, this, [this]() {
-        QList<AgSortRule> rules;
-        rules << AgSortRule{0, Qt::AscendingOrder};
+        QList<AuSortRule> rules;
+        rules << AuSortRule{0, Qt::AscendingOrder};
         m_grid->setSortRules(rules);
     });
 
@@ -100,5 +100,5 @@ HeaderCheckDemoWindow::HeaderCheckDemoWindow(QWidget *parent)
     addNote("表头复选框为三态：由该列数据实时聚合，部分勾选显示半选；排序 / 过滤后状态自动跟随数据。");
     addNote("复选框热区内的点击不会触发表头排序；热区外点击表头仍可排序（任务 / 负责人列已开启 sortable）。");
     addNote("实现方式：自定义表头渲染器（hitTest 声明热区 + headerMouseClick 遍历写模型），"
-            "两个复选框列共用同一渲染器实例，见 CustomAgGrid/HeaderCheckBoxRenderer。");
+            "两个复选框列共用同一渲染器实例，见 CustomAuGrid/HeaderCheckBoxRenderer。");
 }

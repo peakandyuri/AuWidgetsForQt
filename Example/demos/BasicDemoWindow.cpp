@@ -1,9 +1,9 @@
 #include "BasicDemoWindow.h"
 
-#include "AgGridModel.h"
-#include "AgGridWidget.h"
-#include "AgComboBoxCellEditor.h"
-#include "AgCellEditValidator.h"
+#include "AuGridModel.h"
+#include "AuGridWidget.h"
+#include "AuComboBoxCellEditor.h"
+#include "AuCellEditValidator.h"
 #include "ButtonRenderer.h"
 #include "HeaderButtonRenderer.h"
 #include "DemoValidator.h"
@@ -24,20 +24,20 @@ BasicDemoWindow::BasicDemoWindow(QWidget *parent)
 {
     const QStringList comboOptions = { "Alpha", "Beta", "Gamma", "Delta" };
 
-    m_model = new AgGridModel(this);
+    m_model = new AuGridModel(this);
     m_model->setColumnDefs(makeStandardColumns());
     m_model->setRowData(makeFlatRows(200));
 
-    m_grid = new AgGridWidget(this);
+    m_grid = new AuGridWidget(this);
     m_grid->setModel(m_model);
 
-    m_grid->registerCellRenderer("button", QSharedPointer<AgCellRenderer>(new ButtonRenderer()));
-    m_grid->registerHeaderRenderer("headerButton", QSharedPointer<AgHeaderRenderer>(new HeaderButtonRenderer()));
-    m_grid->registerCellEditor("combo", QSharedPointer<AgCellEditor>(new AgComboBoxCellEditor(comboOptions)));
-    m_grid->setCellEditValidator(QSharedPointer<AgCellEditValidator>(new DemoValidator()));
+    m_grid->registerCellRenderer("button", QSharedPointer<AuCellRenderer>(new ButtonRenderer()));
+    m_grid->registerHeaderRenderer("headerButton", QSharedPointer<AuHeaderRenderer>(new HeaderButtonRenderer()));
+    m_grid->registerCellEditor("combo", QSharedPointer<AuCellEditor>(new AuComboBoxCellEditor(comboOptions)));
+    m_grid->setCellEditValidator(QSharedPointer<AuCellEditValidator>(new DemoValidator()));
 
     // 动态可编辑示例：col2 只有在 col0 的值以 "R0" 开头时才可编辑
-    m_grid->setCellEditableCallback([](const AgGridModel *model, int row, int column) {
+    m_grid->setCellEditableCallback([](const AuGridModel *model, int row, int column) {
         if (column != 2 || !model)
             return true;
         return model->cellValue(row, "col0").toString().startsWith("R0");
@@ -45,13 +45,13 @@ BasicDemoWindow::BasicDemoWindow(QWidget *parent)
 
     // 列定义示例：E 列（索引 3）使用表头按钮渲染器，F 列（索引 4）使用按钮单元格渲染器
     {
-        QVector<AgColumnDef> columns = m_model->topLevelColumnDefs();
+        QVector<AuColumnDef> columns = m_model->topLevelColumnDefs();
         columns[3].setHeaderRenderer("headerButton");
         columns[4].setCellRenderer("button");
         m_model->setColumnDefs(columns);
     }
 
-    connect(m_grid, &AgGridWidget::cellValueChanged, this, [](int row, int column, const QVariant &value) {
+    connect(m_grid, &AuGridWidget::cellValueChanged, this, [](int row, int column, const QVariant &value) {
         qDebug() << "Cell value changed: row=" << row << " column=" << column << " value=" << value;
     });
 

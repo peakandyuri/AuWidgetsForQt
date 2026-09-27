@@ -3,8 +3,8 @@
 
 #include "DemoWindowBase.h"
 
-class AgGridModel;
-class AgGridWidget;
+class AuGridModel;
+class AuGridWidget;
 class QCheckBox;
 
 /**
@@ -21,8 +21,8 @@ public:
 private:
     QVector<QVariantMap> makeRows(int count) const;
 
-    AgGridWidget *m_grid;
-    AgGridModel *m_model;
+    AuGridWidget *m_grid;
+    AuGridModel *m_model;
     QCheckBox *m_animSwitch;
 };
 

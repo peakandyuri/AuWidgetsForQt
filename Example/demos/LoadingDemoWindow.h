@@ -3,8 +3,8 @@
 
 #include "DemoWindowBase.h"
 
-class AgGridModel;
-class AgGridWidget;
+class AuGridModel;
+class AuGridWidget;
 
 /**
  * @brief 加载遮罩示例：setLoading() 显隐、自定义文字、模拟异步请求。
@@ -17,8 +17,8 @@ public:
     explicit LoadingDemoWindow(QWidget *parent = nullptr);
 
 private:
-    AgGridWidget *m_grid;
-    AgGridModel *m_model;
+    AuGridWidget *m_grid;
+    AuGridModel *m_model;
 };
 
 #endif // LOADINGDEMOWINDOW_H

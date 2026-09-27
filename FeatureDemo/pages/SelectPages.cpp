@@ -2,8 +2,8 @@
 
 #include "PageHelpers.h"
 
-#include "AgSelect.h"
-#include "AgSelectStyle.h"
+#include "AuSelect.h"
+#include "AuSelectStyle.h"
 
 #include <QColor>
 #include <QHBoxLayout>
@@ -30,16 +30,16 @@ QStringList fruitItems()
 }
 
 /// 创建带示例条目的下拉框。
-AgSelect *newSelect()
+AuSelect *newSelect()
 {
-    AgSelect *select = new AgSelect;
+    AuSelect *select = new AuSelect;
     select->addItems(fruitItems());
     select->setFixedWidth(240);
     return select;
 }
 
 /// 演示页布局：顶部控制条 + 控件本体（居左）+ 可选日志。
-QWidget *selectPanel(AgSelect *select, QHBoxLayout *controls = nullptr, QWidget *log = nullptr)
+QWidget *selectPanel(AuSelect *select, QHBoxLayout *controls = nullptr, QWidget *log = nullptr)
 {
     QWidget *body = new QWidget;
     QVBoxLayout *v = new QVBoxLayout(body);
@@ -64,15 +64,15 @@ QVector<FeaturePage> makeSelectPages()
             u"addItem / addItems 添加条目，setCurrentIndex / setCurrentText 设置当前值；"
             u"点击弹出面板点选，或用键盘上下键 + 回车选择。");
         page.createDemo = []() {
-            AgSelect *select = newSelect();
+            AuSelect *select = newSelect();
 
             QPlainTextEdit *log = PageHelpers::makeLog();
-            QObject::connect(select, &AgSelect::currentIndexChanged, select,
+            QObject::connect(select, &AuSelect::currentIndexChanged, select,
                              [log](int index) {
                                  PageHelpers::appendLog(
                                      log, QString("currentIndexChanged: index=%1").arg(index));
                              });
-            QObject::connect(select, &AgSelect::currentTextChanged, select,
+            QObject::connect(select, &AuSelect::currentTextChanged, select,
                              [log](const QString &text) {
                                  PageHelpers::appendLog(
                                      log, QString("currentTextChanged: %1").arg(text));
@@ -93,7 +93,7 @@ QVector<FeaturePage> makeSelectPages()
             return selectPanel(select, controls, log);
         };
         page.code = R"snip(
-AgSelect *select = new AgSelect(this);
+AuSelect *select = new AuSelect(this);
 
 // 条目：与演示一致的 6 项（addItem 单条追加，addItem 第二参数可带用户数据）
 select->addItems({"苹果 Apple", "香蕉 Banana", "樱桃 Cherry",
@@ -112,9 +112,9 @@ int found = select->findText("芒果", Qt::MatchContains);
 select->setCurrentIndex(found);
 
 // 变化回调（演示日志打印）
-connect(select, &AgSelect::currentIndexChanged,
+connect(select, &AuSelect::currentIndexChanged,
         this, [](int index) { /* ... */ });
-connect(select, &AgSelect::currentTextChanged,
+connect(select, &AuSelect::currentTextChanged,
         this, [](const QString &text) { /* ... */ });
 )snip";
         pages.append(page);
@@ -128,12 +128,12 @@ connect(select, &AgSelect::currentTextChanged,
             u"setMultiSelection(true) 进入多选：点击选项切换勾选，编辑框以 chip 标签呈现，"
             u"chip 右侧 × 可移除，支持换行。");
         page.createDemo = []() {
-            AgSelect *select = newSelect();
+            AuSelect *select = newSelect();
             select->setMultiSelection(true);
             select->setFixedWidth(360);
 
             QPlainTextEdit *log = PageHelpers::makeLog();
-            QObject::connect(select, &AgSelect::checkedChanged, select,
+            QObject::connect(select, &AuSelect::checkedChanged, select,
                              [select, log](const QList<int> &indexes) {
                                  Q_UNUSED(indexes);
                                  PageHelpers::appendLog(
@@ -161,7 +161,7 @@ connect(select, &AgSelect::currentTextChanged,
             return selectPanel(select, controls, log);
         };
         page.code = R"snip(
-AgSelect *select = new AgSelect(this);
+AuSelect *select = new AuSelect(this);
 select->addItems({"苹果 Apple", "香蕉 Banana", "樱桃 Cherry",
                   "葡萄 Grape", "芒果 Mango", "橙子 Orange"});
 
@@ -174,7 +174,7 @@ QStringList texts = select->checkedTexts();
 select->clearChecked();                             // 清空勾选
 
 // 勾选集合变化（演示日志打印勾选文本）
-connect(select, &AgSelect::checkedChanged,
+connect(select, &AuSelect::checkedChanged,
         this, [](const QList<int> &indexes) { /* ... */ });
 
 // 编辑框 chip 右侧 × 可移除单个选项（面板保持当前状态）。
@@ -190,7 +190,7 @@ connect(select, &AgSelect::checkedChanged,
             u"addGroup 追加分组标题行，其后的 addItem 归入该组；组名行不可选中、无悬停，"
             u"组内条目缩进显示。传空串结束当前分组。");
         page.createDemo = []() {
-            AgSelect *select = newSelect();
+            AuSelect *select = newSelect();
             select->clear();
             select->addGroup(QStringLiteral(u"水果"));
             select->addItem(QStringLiteral(u"苹果 Apple"));
@@ -210,7 +210,7 @@ connect(select, &AgSelect::checkedChanged,
             return selectPanel(select, controls);
         };
         page.code = R"snip(
-AgSelect *select = new AgSelect(this);
+AuSelect *select = new AuSelect(this);
 
 select->addGroup("水果");            // 分组标题行（不可选中）
 select->addItem("苹果 Apple");       // 其后的条目归入该组
@@ -233,7 +233,7 @@ select->addItem("分组外条目");
         page.description = QStringLiteral(
             u"setItemEnabled 置灰个别条目：灰显不可选、不参与键盘导航。");
         page.createDemo = []() {
-            AgSelect *select = newSelect();
+            AuSelect *select = newSelect();
             select->setItemEnabled(1, false);
             select->setItemEnabled(3, false);
 
@@ -251,7 +251,7 @@ select->addItem("分组外条目");
             return selectPanel(select, controls);
         };
         page.code = R"snip(
-AgSelect *select = new AgSelect(this);
+AuSelect *select = new AuSelect(this);
 select->addItems({"苹果 Apple", "香蕉 Banana", "樱桃 Cherry",
                   "葡萄 Grape", "芒果 Mango", "橙子 Orange"});
 
@@ -276,25 +276,25 @@ select->isItemEnabled(1);   // 查询可用性
             u"setEditable(true) 后可直接输入，实时过滤下拉项并高亮命中文字；选择后回填，"
             u"输入与任何选项都不匹配时失焦还原。");
         page.createDemo = []() {
-            AgSelect *select = newSelect();
+            AuSelect *select = newSelect();
             select->setEditable(true);
             select->setFixedWidth(300);
 
             QPlainTextEdit *log = PageHelpers::makeLog();
-            QObject::connect(select, &AgSelect::textEdited, select, [log](const QString &text) {
+            QObject::connect(select, &AuSelect::textEdited, select, [log](const QString &text) {
                 PageHelpers::appendLog(log, QString("textEdited: %1").arg(text));
             });
             return selectPanel(select, nullptr, log);
         };
         page.code = R"snip(
-AgSelect *select = new AgSelect(this);
+AuSelect *select = new AuSelect(this);
 select->addItems({"苹果 Apple", "香蕉 Banana", "樱桃 Cherry",
                   "葡萄 Grape", "芒果 Mango", "橙子 Orange"});
 
 select->setEditable(true);   // 允许输入，实时过滤下拉项
 
 // 输入回调（演示日志打印）
-connect(select, &AgSelect::textEdited,
+connect(select, &AuSelect::textEdited,
         this, [](const QString &text) { /* ... */ });
 
 // 行为约定：
@@ -312,7 +312,7 @@ connect(select, &AgSelect::textEdited,
         page.description = QStringLiteral(
             u"setPlaceholderText 在未选中任何项时灰显提示文字；选择后自动隐藏，清除后恢复。");
         page.createDemo = []() {
-            AgSelect *select = newSelect();
+            AuSelect *select = newSelect();
             select->setPlaceholderText(QStringLiteral(u"请选择一种水果…"));
 
             QHBoxLayout *controls = new QHBoxLayout;
@@ -324,7 +324,7 @@ connect(select, &AgSelect::textEdited,
             return selectPanel(select, controls);
         };
         page.code = R"snip(
-AgSelect *select = new AgSelect(this);
+AuSelect *select = new AuSelect(this);
 select->addItems({"苹果 Apple", "香蕉 Banana", "樱桃 Cherry",
                   "葡萄 Grape", "芒果 Mango", "橙子 Orange"});
 
@@ -344,25 +344,25 @@ select->clearSelection();   // 清除选择后占位文本重新显示（对应�
             u"setClearButtonEnabled(true) 后，已有选择时悬停编辑框，箭头切换为圆圈 ×，"
             u"点击清除选择（单选还原为未选中，多选清空全部勾选）。");
         page.createDemo = []() {
-            AgSelect *select = newSelect();
+            AuSelect *select = newSelect();
             select->setClearButtonEnabled(true);
             select->setCurrentIndex(1);
 
             QPlainTextEdit *log = PageHelpers::makeLog();
-            QObject::connect(select, &AgSelect::cleared, select, [log]() {
+            QObject::connect(select, &AuSelect::cleared, select, [log]() {
                 PageHelpers::appendLog(log, QStringLiteral("cleared"));
             });
             return selectPanel(select, nullptr, log);
         };
         page.code = R"snip(
-AgSelect *select = new AgSelect(this);
+AuSelect *select = new AuSelect(this);
 select->addItems({"苹果 Apple", "香蕉 Banana", "樱桃 Cherry",
                   "葡萄 Grape", "芒果 Mango", "橙子 Orange"});
 select->setClearButtonEnabled(true);   // 开启清除按钮
 select->setCurrentIndex(1);            // 先有选中项，悬停编辑框才会出现清除图标
 
 // 已有选择项时悬停编辑框 → 箭头变为实心圆圈 × → 点击清除（演示日志打印 cleared）
-connect(select, &AgSelect::cleared, this, []() { /* ... */ });
+connect(select, &AuSelect::cleared, this, []() { /* ... */ });
 
 select->clearSelection();   // API 清除同样发出 cleared()
 )snip";
@@ -387,7 +387,7 @@ select->clearSelection();   // API 清除同样发出 cleared()
                 return QIcon(pix);
             };
 
-            AgSelect *select = new AgSelect;
+            AuSelect *select = new AuSelect;
             select->addItem(QStringLiteral(u"红色"), "red",
                             colorIcon(QColor(0xd9, 0x4a, 0x3e)));
             select->addItem(QStringLiteral(u"绿色"), "green",
@@ -417,7 +417,7 @@ auto colorIcon = [](const QColor &color) {
     return QIcon(pix);
 };
 
-AgSelect *select = new AgSelect(this);
+AuSelect *select = new AuSelect(this);
 
 // 文本 + 用户数据 + 图标（与演示一致：红 / 绿 / 蓝）
 select->addItem("红色", "red",   colorIcon(QColor(0xd9, 0x4a, 0x3e)));
@@ -439,10 +439,10 @@ QIcon icon = select->itemIcon(0);
             u"面板默认与编辑框同宽：可切换按内容自适应（PopupFitContent）或固定宽度"
             u"（PopupFixed）；maxPopupHeight 控制内容区最大高度，超出出滚动条。");
         page.createDemo = []() {
-            AgSelect *select = newSelect();
+            AuSelect *select = newSelect();
             for (int i = 0; i < 20; ++i)
                 select->addItem(QStringLiteral(u"额外选项 %1").arg(i + 1));
-            select->setPopupWidthMode(AgSelect::PopupFitContent);
+            select->setPopupWidthMode(AuSelect::PopupFitContent);
             select->setMaxPopupHeight(220);
 
             QHBoxLayout *controls = new QHBoxLayout;
@@ -456,15 +456,15 @@ QIcon icon = select->itemIcon(0);
             controls->addWidget(openBtn);
             controls->addStretch(1);
             QObject::connect(fitBtn, &QPushButton::clicked, select, [select]() {
-                select->setPopupWidthMode(AgSelect::PopupFitContent);
+                select->setPopupWidthMode(AuSelect::PopupFitContent);
                 select->showPopup();
             });
             QObject::connect(matchBtn, &QPushButton::clicked, select, [select]() {
-                select->setPopupWidthMode(AgSelect::PopupMatchEditor);
+                select->setPopupWidthMode(AuSelect::PopupMatchEditor);
                 select->showPopup();
             });
             QObject::connect(fixedBtn, &QPushButton::clicked, select, [select]() {
-                select->setPopupWidthMode(AgSelect::PopupFixed);
+                select->setPopupWidthMode(AuSelect::PopupFixed);
                 select->setFixedPopupWidth(320);
                 select->showPopup();
             });
@@ -473,17 +473,17 @@ QIcon icon = select->itemIcon(0);
             return selectPanel(select, controls);
         };
         page.code = R"snip(
-AgSelect *select = new AgSelect(this);
+AuSelect *select = new AuSelect(this);
 // 条目：6 个水果条目（见“基础单选”页）+ 20 个“额外选项”，撑出滚动
 for (int i = 0; i < 20; ++i)
     select->addItem(QString("额外选项 %1").arg(i + 1));
 select->setMaxPopupHeight(220);   // 面板内容区最大高度（超出出滚动条）
 
 // 面板宽度模式（对应演示按钮）
-select->setPopupWidthMode(AgSelect::PopupMatchEditor);  // 与编辑框同宽（默认）
-select->setPopupWidthMode(AgSelect::PopupFixed);        // 固定宽度
+select->setPopupWidthMode(AuSelect::PopupMatchEditor);  // 与编辑框同宽（默认）
+select->setPopupWidthMode(AuSelect::PopupFixed);        // 固定宽度
 select->setFixedPopupWidth(320);                        // （不小于编辑框宽度）
-select->setPopupWidthMode(AgSelect::PopupFitContent);   // 按内容自适应（演示默认）
+select->setPopupWidthMode(AuSelect::PopupFitContent);   // 按内容自适应（演示默认）
 
 // 程序化开合
 select->showPopup();
@@ -500,7 +500,7 @@ select->hidePopup();
             u"setSizeMode 切换小 / 中 / 大三档尺寸预设；setStyle 设置独立亮 / 暗主题"
             u"（控件接管所有权），传 nullptr 恢复跟随全局样式。");
         page.createDemo = []() {
-            AgSelect *select = newSelect();
+            AuSelect *select = newSelect();
 
             QHBoxLayout *controls = new QHBoxLayout;
             QPushButton *smallBtn = new QPushButton(QStringLiteral(u"小"));
@@ -517,7 +517,7 @@ select->hidePopup();
             controls->addWidget(lightBtn);
             controls->addWidget(globalBtn);
             controls->addStretch(1);
-            using SizeMode = AgSelectStyle::SizeMode;
+            using SizeMode = AuSelectStyle::SizeMode;
             QObject::connect(smallBtn, &QPushButton::clicked, select,
                              [select]() { select->setSizeMode(SizeMode::Small); });
             QObject::connect(mediumBtn, &QPushButton::clicked, select,
@@ -525,9 +525,9 @@ select->hidePopup();
             QObject::connect(largeBtn, &QPushButton::clicked, select,
                              [select]() { select->setSizeMode(SizeMode::Large); });
             QObject::connect(darkBtn, &QPushButton::clicked, select,
-                             [select]() { select->setStyle(AgSelectStyle::createDarkStyle()); });
+                             [select]() { select->setStyle(AuSelectStyle::createDarkStyle()); });
             QObject::connect(lightBtn, &QPushButton::clicked, select,
-                             [select]() { select->setStyle(AgSelectStyle::createLightStyle()); });
+                             [select]() { select->setStyle(AuSelectStyle::createLightStyle()); });
             QObject::connect(globalBtn, &QPushButton::clicked, select,
                              [select]() { select->setStyle(nullptr); });
             return selectPanel(select, controls);
@@ -536,16 +536,16 @@ select->hidePopup();
 // 演示为 6 项水果条目的下拉框
 
 // 尺寸档位：小 / 中 / 大（对应演示按钮，样式实例的尺寸类字段随之重置）
-select->setSizeMode(AgSelectStyle::SizeMode::Large);
+select->setSizeMode(AuSelectStyle::SizeMode::Large);
 
 // 独立主题（所有权转移给控件）
-select->setStyle(AgSelectStyle::createDarkStyle());
-select->setStyle(AgSelectStyle::createLightStyle());
+select->setStyle(AuSelectStyle::createDarkStyle());
+select->setStyle(AuSelectStyle::createLightStyle());
 
 select->setStyle(nullptr);   // 恢复跟随全局样式
 
 // 全局设置一次，所有未显式 setStyle 的控件自动生效（本程序 main.cpp 即如此）：
-AgSelectStyle::setGlobalStyle(AgSelectStyle::createLightStyle());
+AuSelectStyle::setGlobalStyle(AuSelectStyle::createLightStyle());
 )snip";
         pages.append(page);
     }
@@ -558,26 +558,26 @@ AgSelectStyle::setGlobalStyle(AgSelectStyle::createLightStyle());
             u"常用回调一览（演示日志依次打印）：activated 用户激活选项、cleared 清除、"
             u"popup 系列面板开合动画回调；多选 checkedChanged 见“多选 Chips”页。");
         page.createDemo = []() {
-            AgSelect *select = newSelect();
+            AuSelect *select = newSelect();
             select->setClearButtonEnabled(true);
 
             QPlainTextEdit *log = PageHelpers::makeLog(160);
-            QObject::connect(select, &AgSelect::activated, select, [log](int index) {
+            QObject::connect(select, &AuSelect::activated, select, [log](int index) {
                 PageHelpers::appendLog(log, QString("activated: index=%1").arg(index));
             });
-            QObject::connect(select, &AgSelect::cleared, select, [log]() {
+            QObject::connect(select, &AuSelect::cleared, select, [log]() {
                 PageHelpers::appendLog(log, QStringLiteral("cleared"));
             });
-            QObject::connect(select, &AgSelect::popupAboutToShow, select, [log]() {
+            QObject::connect(select, &AuSelect::popupAboutToShow, select, [log]() {
                 PageHelpers::appendLog(log, QStringLiteral("popupAboutToShow"));
             });
-            QObject::connect(select, &AgSelect::popupShown, select, [log]() {
+            QObject::connect(select, &AuSelect::popupShown, select, [log]() {
                 PageHelpers::appendLog(log, QStringLiteral("popupShown"));
             });
-            QObject::connect(select, &AgSelect::popupAboutToHide, select, [log]() {
+            QObject::connect(select, &AuSelect::popupAboutToHide, select, [log]() {
                 PageHelpers::appendLog(log, QStringLiteral("popupAboutToHide"));
             });
-            QObject::connect(select, &AgSelect::popupHidden, select, [log]() {
+            QObject::connect(select, &AuSelect::popupHidden, select, [log]() {
                 PageHelpers::appendLog(log, QStringLiteral("popupHidden"));
             });
 
@@ -593,16 +593,16 @@ AgSelectStyle::setGlobalStyle(AgSelectStyle::createLightStyle());
 // 演示：6 项水果条目 + 清除按钮开启，日志依次打印下列回调
 
 // 用户激活选项（单选点选 / 键盘回车）
-connect(select, &AgSelect::activated, this, [](int index) { /* ... */ });
+connect(select, &AuSelect::activated, this, [](int index) { /* ... */ });
 
 // 用户通过清除按钮 / clearSelection() 清空
-connect(select, &AgSelect::cleared, this, []() { /* ... */ });
+connect(select, &AuSelect::cleared, this, []() { /* ... */ });
 
 // 面板开合回调（About = 动画开始前，完成 = 动画结束后）
-connect(select, &AgSelect::popupAboutToShow, this, []() { /* ... */ });
-connect(select, &AgSelect::popupShown, this, []() { /* ... */ });
-connect(select, &AgSelect::popupAboutToHide, this, []() { /* ... */ });
-connect(select, &AgSelect::popupHidden, this, []() { /* ... */ });
+connect(select, &AuSelect::popupAboutToShow, this, []() { /* ... */ });
+connect(select, &AuSelect::popupShown, this, []() { /* ... */ });
+connect(select, &AuSelect::popupAboutToHide, this, []() { /* ... */ });
+connect(select, &AuSelect::popupHidden, this, []() { /* ... */ });
 
 select->isPopupVisible();   // 面板是否展开
 // 注：多选勾选集合变化见“多选 Chips”页（checkedChanged）。

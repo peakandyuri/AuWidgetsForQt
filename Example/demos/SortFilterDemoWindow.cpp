@@ -1,8 +1,8 @@
 #include "SortFilterDemoWindow.h"
 
-#include "AgColumnDef.h"
-#include "AgGridModel.h"
-#include "AgGridWidget.h"
+#include "AuColumnDef.h"
+#include "AuGridModel.h"
+#include "AuGridWidget.h"
 
 #include <QHBoxLayout>
 #include <QPushButton>
@@ -16,31 +16,31 @@ SortFilterDemoWindow::SortFilterDemoWindow(QWidget *parent)
     , m_grid(nullptr)
     , m_model(nullptr)
 {
-    QVector<AgColumnDef> columns;
-    AgColumnDef colA("col0", "A");
-    colA.setWidthMode(AgColumnDef::ColumnWidthMode::Fixed);
+    QVector<AuColumnDef> columns;
+    AuColumnDef colA("col0", "A");
+    colA.setWidthMode(AuColumnDef::ColumnWidthMode::Fixed);
     colA.setWidth(90);
     colA.setSortable(true);
     columns.append(colA);
-    AgColumnDef colB("col1", "B");
-    colB.setWidthMode(AgColumnDef::ColumnWidthMode::Flex);
+    AuColumnDef colB("col1", "B");
+    colB.setWidthMode(AuColumnDef::ColumnWidthMode::Flex);
     colB.setSortable(true);
     columns.append(colB);
-    AgColumnDef colC("col2", "C");
-    colC.setWidthMode(AgColumnDef::ColumnWidthMode::Fixed);
+    AuColumnDef colC("col2", "C");
+    colC.setWidthMode(AuColumnDef::ColumnWidthMode::Fixed);
     colC.setWidth(120);
     columns.append(colC);
-    AgColumnDef colD("col3", "D");
-    colD.setWidthMode(AgColumnDef::ColumnWidthMode::Fixed);
+    AuColumnDef colD("col3", "D");
+    colD.setWidthMode(AuColumnDef::ColumnWidthMode::Fixed);
     colD.setWidth(120);
     colD.setSortable(true);
     columns.append(colD);
 
-    m_model = new AgGridModel(this);
+    m_model = new AuGridModel(this);
     m_model->setColumnDefs(columns);
     m_model->setRowData(makeFlatRows(200));
 
-    m_grid = new AgGridWidget(this);
+    m_grid = new AuGridWidget(this);
     m_grid->setModel(m_model);
     m_grid->setSortingEnabled(true);   // 表头点击排序总开关
 
@@ -58,14 +58,14 @@ SortFilterDemoWindow::SortFilterDemoWindow(QWidget *parent)
     buttons->addStretch(1);
 
     connect(sortABtn, &QPushButton::clicked, this, [this]() {
-        QList<AgSortRule> rules;
-        rules << AgSortRule{0, Qt::AscendingOrder};
+        QList<AuSortRule> rules;
+        rules << AuSortRule{0, Qt::AscendingOrder};
         m_grid->setSortRules(rules);
     });
     connect(sortMultiBtn, &QPushButton::clicked, this, [this]() {
-        QList<AgSortRule> rules;
-        rules << AgSortRule{0, Qt::AscendingOrder};
-        rules << AgSortRule{1, Qt::DescendingOrder};
+        QList<AuSortRule> rules;
+        rules << AuSortRule{0, Qt::AscendingOrder};
+        rules << AuSortRule{1, Qt::DescendingOrder};
         m_grid->setSortRules(rules);
     });
     connect(clearSortBtn, &QPushButton::clicked, this, [this]() {

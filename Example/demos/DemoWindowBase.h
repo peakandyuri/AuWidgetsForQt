@@ -5,8 +5,8 @@
 #include <QVector>
 #include <QVariantMap>
 
-class AgColumnDef;
-class AgGridModel;
+class AuColumnDef;
+class AuGridModel;
 class QVBoxLayout;
 
 /**
@@ -26,11 +26,11 @@ public:
     void addNote(const QString &text);
 
     /// 共享工具：生成示例标准列定义（Fixed / AutoFit / Flex / 分组列 / 复选框数据列齐全）。
-    static QVector<AgColumnDef> makeStandardColumns();
+    static QVector<AuColumnDef> makeStandardColumns();
     /// 共享工具：生成 rowCount 行 "R{行}C{列}" 风格扁平数据（含下拉选项与 bool 列）。
     static QVector<QVariantMap> makeFlatRows(int rowCount);
     /// 共享工具：创建"标准列 + 扁平数据"的模型（所有权归调用者）。
-    static AgGridModel *makeStandardModel(int rowCount, QObject *parent);
+    static AuGridModel *makeStandardModel(int rowCount, QObject *parent);
 
 protected:
     QVBoxLayout *m_contentLayout;   ///< 内容区：控制行与表格（说明区之下、备注区之上）

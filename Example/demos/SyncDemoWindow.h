@@ -3,9 +3,9 @@
 
 #include "DemoWindowBase.h"
 
-class AgGridModel;
-class AgGridSyncGroup;
-class AgGridWidget;
+class AuGridModel;
+class AuGridSyncGroup;
+class AuGridWidget;
 
 /**
  * @brief 多表格同步示例：滚动与列宽在多个表格间互相同步（数据对比场景）。
@@ -18,11 +18,11 @@ public:
     explicit SyncDemoWindow(QWidget *parent = nullptr);
 
 private:
-    AgGridWidget *m_gridA;
-    AgGridWidget *m_gridB;
-    AgGridModel *m_modelA;
-    AgGridModel *m_modelB;
-    AgGridSyncGroup *m_syncGroup;
+    AuGridWidget *m_gridA;
+    AuGridWidget *m_gridB;
+    AuGridModel *m_modelA;
+    AuGridModel *m_modelB;
+    AuGridSyncGroup *m_syncGroup;
 };
 
 #endif // SYNCDEMOWINDOW_H

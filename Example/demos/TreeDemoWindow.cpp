@@ -1,33 +1,33 @@
 #include "TreeDemoWindow.h"
 
-#include "AgColumnDef.h"
-#include "AgGridModel.h"
-#include "AgGridWidget.h"
-#include "AgTreeRow.h"
+#include "AuColumnDef.h"
+#include "AuGridModel.h"
+#include "AuGridWidget.h"
+#include "AuTreeRow.h"
 
 #include <QHBoxLayout>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QVBoxLayout>
 
-QVector<AgTreeRow> TreeDemoWindow::buildTreeRows()
+QVector<AuTreeRow> TreeDemoWindow::buildTreeRows()
 {
     const QStringList departments = {
         QStringLiteral(u"研发部"), QStringLiteral(u"产品部"), QStringLiteral(u"市场部")
     };
-    QVector<AgTreeRow> roots;
+    QVector<AuTreeRow> roots;
     for (int d = 0; d < departments.size(); ++d) {
-        AgTreeRow dept;
+        AuTreeRow dept;
         dept.data.insert("col0", QString("D%1").arg(d));
         dept.data.insert("col1", departments.at(d));
         dept.data.insert("col4", QStringLiteral(u"3 个项目"));
         for (int p = 0; p < 3; ++p) {
-            AgTreeRow project;
+            AuTreeRow project;
             project.data.insert("col0", QString("D%1P%2").arg(d).arg(p));
             project.data.insert("col1", QStringLiteral(u"项目 %1-%2").arg(d).arg(p));
             project.data.insert("col4", QStringLiteral(u"4 个任务"));
             for (int t = 0; t < 4; ++t) {
-                AgTreeRow task;
+                AuTreeRow task;
                 task.data.insert("col0", QString("D%1P%2T%3").arg(d).arg(p).arg(t));
                 task.data.insert("col1", QStringLiteral(u"任务 %1-%2-%3").arg(d).arg(p).arg(t));
                 task.data.insert("col4", QString("%1%").arg((d + p + t) * 10 % 100));
@@ -51,32 +51,32 @@ TreeDemoWindow::TreeDemoWindow(QWidget *parent)
     , m_log(nullptr)
 {
     // 树形列：首列为树列（缩进 + 箭头），Enabled 为数据列复选框（本示例不改其值）
-    QVector<AgColumnDef> columns;
-    AgColumnDef colA("col0", "A");
-    colA.setWidthMode(AgColumnDef::ColumnWidthMode::Fixed);
+    QVector<AuColumnDef> columns;
+    AuColumnDef colA("col0", "A");
+    colA.setWidthMode(AuColumnDef::ColumnWidthMode::Fixed);
     colA.setWidth(110);
     colA.setSortable(true);
     columns.append(colA);
-    AgColumnDef colB("col1", QStringLiteral(u"名称"));
-    colB.setWidthMode(AgColumnDef::ColumnWidthMode::Flex);
+    AuColumnDef colB("col1", QStringLiteral(u"名称"));
+    colB.setWidthMode(AuColumnDef::ColumnWidthMode::Flex);
     colB.setSortable(true);
     columns.append(colB);
-    AgColumnDef colE("col4", QStringLiteral(u"摘要"));
-    colE.setWidthMode(AgColumnDef::ColumnWidthMode::Fixed);
+    AuColumnDef colE("col4", QStringLiteral(u"摘要"));
+    colE.setWidthMode(AuColumnDef::ColumnWidthMode::Fixed);
     colE.setWidth(120);
     columns.append(colE);
-    AgColumnDef colG("col6", "Enabled");
-    colG.setWidthMode(AgColumnDef::ColumnWidthMode::Fixed);
+    AuColumnDef colG("col6", "Enabled");
+    colG.setWidthMode(AuColumnDef::ColumnWidthMode::Fixed);
     colG.setWidth(90);
     colG.setCheckbox(true);
     colG.setEditable(true);
     columns.append(colG);
 
-    m_model = new AgGridModel(this);
+    m_model = new AuGridModel(this);
     m_model->setColumnDefs(columns);
     m_model->setTreeData(buildTreeRows());
 
-    m_grid = new AgGridWidget(this);
+    m_grid = new AuGridWidget(this);
     m_grid->setModel(m_model);
     m_grid->setRowNumberColumnVisible(true);
     m_grid->setCheckboxColumnVisible(true);
@@ -87,10 +87,10 @@ TreeDemoWindow::TreeDemoWindow(QWidget *parent)
     m_log->setMaximumHeight(120);
     m_log->setPlaceholderText(QStringLiteral(u"信号日志…"));
 
-    connect(m_grid, &AgGridWidget::rowExpandedChanged, this, [this](int row, bool expanded) {
+    connect(m_grid, &AuGridWidget::rowExpandedChanged, this, [this](int row, bool expanded) {
         m_log->appendPlainText(QString("rowExpandedChanged: row=%1 expanded=%2").arg(row).arg(expanded));
     });
-    connect(m_grid, &AgGridWidget::rowCheckedChanged, this, [this](int row, bool checked) {
+    connect(m_grid, &AuGridWidget::rowCheckedChanged, this, [this](int row, bool checked) {
         m_log->appendPlainText(QString("rowCheckedChanged: row=%1 checked=%2").arg(row).arg(checked));
     });
 

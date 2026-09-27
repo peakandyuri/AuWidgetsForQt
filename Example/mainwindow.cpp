@@ -1,9 +1,9 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
 
-#include "AgGridStyle.h"
-#include "AgSelectDemoWindow.h"
-#include "AgDatePickerDemoWindow.h"
+#include "AuGridStyle.h"
+#include "AuSelectDemoWindow.h"
+#include "AuDatePickerDemoWindow.h"
 #include "BasicDemoWindow.h"
 #include "ColumnDemoWindow.h"
 #include "HeaderCheckDemoWindow.h"
@@ -29,12 +29,12 @@ MainWindow::MainWindow(QWidget *parent)
     , ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
-    setWindowTitle(QStringLiteral(u"AgGrid 功能示例"));
+    setWindowTitle(QStringLiteral(u"AuGrid 功能示例"));
 
     // 全局样式：所有未显式 setStyle() 的示例窗口自动应用（亮暗切换见"样式与外观"示例）
-    AgGridStyle::setGlobalStyle(AgGridStyle::createLightStyle());
+    AuGridStyle::setGlobalStyle(AuGridStyle::createLightStyle());
 
-    QLabel *titleLabel = new QLabel(QStringLiteral(u"AgGrid for Qt 功能示例"), this);
+    QLabel *titleLabel = new QLabel(QStringLiteral(u"AuGrid for Qt 功能示例"), this);
     QFont titleFont = titleLabel->font();
     titleFont.setBold(true);
     titleFont.setPointSize(titleFont.pointSize() + 4);
@@ -84,10 +84,10 @@ MainWindow::MainWindow(QWidget *parent)
           [this]() { return static_cast<QDialog *>(new LoadingDemoWindow(this)); } },
         { "dataanimation", QStringLiteral(u"数据切换动画\n排序位移 / 重设数据切换（200ms）"),
           [this]() { return static_cast<QDialog *>(new DataAnimationDemoWindow(this)); } },
-        { "agselect", QStringLiteral(u"AgSelect 下拉选择\n单选 / 分组 / 多选 chips / 过滤 / 主题尺寸"),
-          [this]() { return static_cast<QDialog *>(new AgSelectDemoWindow(this)); } },
-        { "agdatepicker", QStringLiteral(u"AgDatePicker 日期选择\n日 / 月 / 年粒度 / 范围 / 清除 / footer"),
-          [this]() { return static_cast<QDialog *>(new AgDatePickerDemoWindow(this)); } },
+        { "auselect", QStringLiteral(u"AuSelect 下拉选择\n单选 / 分组 / 多选 chips / 过滤 / 主题尺寸"),
+          [this]() { return static_cast<QDialog *>(new AuSelectDemoWindow(this)); } },
+        { "audatepicker", QStringLiteral(u"AuDatePicker 日期选择\n日 / 月 / 年粒度 / 范围 / 清除 / footer"),
+          [this]() { return static_cast<QDialog *>(new AuDatePickerDemoWindow(this)); } },
     };
 
     const int columns = 3;
@@ -99,7 +99,7 @@ MainWindow::MainWindow(QWidget *parent)
     buttonGrid->setColumnStretch(columns, 1);
 
     QLabel *footerLabel = new QLabel(
-        QStringLiteral(u"更多细节见 docs/AgGrid-帮助文档.md"), this);
+        QStringLiteral(u"更多细节见 docs/AuGrid-帮助文档.md"), this);
     footerLabel->setAlignment(Qt::AlignCenter);
     footerLabel->setWordWrap(true);
 

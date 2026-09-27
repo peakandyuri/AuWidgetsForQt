@@ -1,8 +1,8 @@
 #include "RowDragDemoWindow.h"
 
-#include "AgColumnDef.h"
-#include "AgGridModel.h"
-#include "AgGridWidget.h"
+#include "AuColumnDef.h"
+#include "AuGridModel.h"
+#include "AuGridWidget.h"
 
 #include <QDebug>
 #include <QHBoxLayout>
@@ -17,21 +17,21 @@ RowDragDemoWindow::RowDragDemoWindow(QWidget *parent)
     , m_grid(nullptr)
     , m_model(nullptr)
 {
-    QVector<AgColumnDef> columns;
-    AgColumnDef colName("name", QStringLiteral(u"任务"));
-    colName.setWidthMode(AgColumnDef::ColumnWidthMode::Flex);
+    QVector<AuColumnDef> columns;
+    AuColumnDef colName("name", QStringLiteral(u"任务"));
+    colName.setWidthMode(AuColumnDef::ColumnWidthMode::Flex);
     columns.append(colName);
-    AgColumnDef colOwner("owner", QStringLiteral(u"负责人"));
-    colOwner.setWidthMode(AgColumnDef::ColumnWidthMode::Fixed);
+    AuColumnDef colOwner("owner", QStringLiteral(u"负责人"));
+    colOwner.setWidthMode(AuColumnDef::ColumnWidthMode::Fixed);
     colOwner.setWidth(120);
     columns.append(colOwner);
-    AgColumnDef colPri("priority", QStringLiteral(u"优先级"));
-    colPri.setWidthMode(AgColumnDef::ColumnWidthMode::Fixed);
+    AuColumnDef colPri("priority", QStringLiteral(u"优先级"));
+    colPri.setWidthMode(AuColumnDef::ColumnWidthMode::Fixed);
     colPri.setWidth(90);
     colPri.setSortable(true);
     columns.append(colPri);
 
-    m_model = new AgGridModel(this);
+    m_model = new AuGridModel(this);
     m_model->setColumnDefs(columns);
 
     const QStringList owners = { QStringLiteral(u"张三"), QStringLiteral(u"李四"), QStringLiteral(u"王五"), QStringLiteral(u"赵六") };
@@ -45,12 +45,12 @@ RowDragDemoWindow::RowDragDemoWindow(QWidget *parent)
     }
     m_model->setRowData(rows);
 
-    m_grid = new AgGridWidget(this);
+    m_grid = new AuGridWidget(this);
     m_grid->setModel(m_model);
     m_grid->setCheckboxColumnVisible(true);
     m_grid->setRowDragEnabled(true);
 
-    connect(m_grid, &AgGridWidget::rowsDragged, this, [](const QVector<int> &originalRows, int targetOriginalIndex) {
+    connect(m_grid, &AuGridWidget::rowsDragged, this, [](const QVector<int> &originalRows, int targetOriginalIndex) {
         qDebug() << "rowsDragged: count=" << originalRows.size() << " targetOriginalIndex=" << targetOriginalIndex;
     });
 

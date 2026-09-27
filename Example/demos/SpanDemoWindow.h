@@ -3,8 +3,8 @@
 
 #include "DemoWindowBase.h"
 
-class AgGridModel;
-class AgGridWidget;
+class AuGridModel;
+class AuGridWidget;
 
 /**
  * @brief 合并单元格示例：类似 QTableView::setSpan 的行列合并。
@@ -17,8 +17,8 @@ public:
     explicit SpanDemoWindow(QWidget *parent = nullptr);
 
 private:
-    AgGridWidget *m_grid;
-    AgGridModel *m_model;
+    AuGridWidget *m_grid;
+    AuGridModel *m_model;
 };
 
 #endif // SPANDEMOWINDOW_H

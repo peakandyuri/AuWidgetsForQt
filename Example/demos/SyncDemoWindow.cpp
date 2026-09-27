@@ -1,8 +1,8 @@
 #include "SyncDemoWindow.h"
 
-#include "AgGridModel.h"
-#include "AgGridSyncGroup.h"
-#include "AgGridWidget.h"
+#include "AuGridModel.h"
+#include "AuGridSyncGroup.h"
+#include "AuGridWidget.h"
 
 #include <QHBoxLayout>
 #include <QPushButton>
@@ -11,7 +11,7 @@
 
 SyncDemoWindow::SyncDemoWindow(QWidget *parent)
     : DemoWindowBase(QStringLiteral(u"多表格同步"),
-                     QStringLiteral(u"AgGridSyncGroup 把多个表格的滚动偏移与列宽互相同步，"
+                     QStringLiteral(u"AuGridSyncGroup 把多个表格的滚动偏移与列宽互相同步，"
                                      u"适合上下两份相同数据对比差异的场景。"),
                      parent)
     , m_gridA(nullptr)
@@ -20,20 +20,20 @@ SyncDemoWindow::SyncDemoWindow(QWidget *parent)
     , m_modelB(nullptr)
     , m_syncGroup(nullptr)
 {
-    m_modelA = new AgGridModel(this);
+    m_modelA = new AuGridModel(this);
     m_modelA->setColumnDefs(makeStandardColumns());
     m_modelA->setRowData(makeFlatRows(500));
 
-    m_modelB = new AgGridModel(this);
+    m_modelB = new AuGridModel(this);
     m_modelB->setColumnDefs(makeStandardColumns());
     m_modelB->setRowData(makeFlatRows(500));
 
-    m_gridA = new AgGridWidget(this);
+    m_gridA = new AuGridWidget(this);
     m_gridA->setModel(m_modelA);
-    m_gridB = new AgGridWidget(this);
+    m_gridB = new AuGridWidget(this);
     m_gridB->setModel(m_modelB);
 
-    m_syncGroup = new AgGridSyncGroup(this);
+    m_syncGroup = new AuGridSyncGroup(this);
     m_syncGroup->addGrid(m_gridA);
     m_syncGroup->addGrid(m_gridB);
     m_syncGroup->syncFrom(m_gridA);
@@ -49,7 +49,7 @@ SyncDemoWindow::SyncDemoWindow(QWidget *parent)
     });
 
     // 数据一致性：同步修改两份模型同一单元格（数据对比场景需调用方自行保证数据一致）
-    connect(m_gridA, &AgGridWidget::cellValueChanged, this, [this](int row, int column, const QVariant &value) {
+    connect(m_gridA, &AuGridWidget::cellValueChanged, this, [this](int row, int column, const QVariant &value) {
         m_modelB->setCellValue(row, m_modelB->fieldAtColumn(column), value);
     });
 

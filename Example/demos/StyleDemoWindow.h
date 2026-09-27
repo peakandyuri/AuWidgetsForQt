@@ -3,8 +3,8 @@
 
 #include "DemoWindowBase.h"
 
-class AgGridModel;
-class AgGridWidget;
+class AuGridModel;
+class AuGridWidget;
 
 /**
  * @brief 样式与外观示例：全局主题、尺寸模式、独立样式与上下文样式。
@@ -17,8 +17,8 @@ public:
     explicit StyleDemoWindow(QWidget *parent = nullptr);
 
 private:
-    AgGridWidget *m_grid;
-    AgGridModel *m_model;
+    AuGridWidget *m_grid;
+    AuGridModel *m_model;
 };
 
 #endif // STYLEDEMOWINDOW_H

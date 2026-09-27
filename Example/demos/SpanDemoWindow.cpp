@@ -1,8 +1,8 @@
 #include "SpanDemoWindow.h"
 
-#include "AgColumnDef.h"
-#include "AgGridModel.h"
-#include "AgGridWidget.h"
+#include "AuColumnDef.h"
+#include "AuGridModel.h"
+#include "AuGridWidget.h"
 
 #include <QDebug>
 #include <QHBoxLayout>
@@ -17,19 +17,19 @@ SpanDemoWindow::SpanDemoWindow(QWidget *parent)
     , m_grid(nullptr)
     , m_model(nullptr)
 {
-    QVector<AgColumnDef> columns;
+    QVector<AuColumnDef> columns;
     for (int c = 0; c < 4; ++c) {
-        AgColumnDef col(QString("col%1").arg(c), QString("COL%1").arg(c));
-        col.setWidthMode(AgColumnDef::ColumnWidthMode::Fixed);
+        AuColumnDef col(QString("col%1").arg(c), QString("COL%1").arg(c));
+        col.setWidthMode(AuColumnDef::ColumnWidthMode::Fixed);
         col.setWidth(140);
         columns.append(col);
     }
 
-    m_model = new AgGridModel(this);
+    m_model = new AuGridModel(this);
     m_model->setColumnDefs(columns);
     m_model->setRowData(makeFlatRows(8));
 
-    m_grid = new AgGridWidget(this);
+    m_grid = new AuGridWidget(this);
     m_grid->setModel(m_model);
 
     // 合并示例

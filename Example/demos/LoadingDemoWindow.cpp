@@ -1,8 +1,8 @@
 #include "LoadingDemoWindow.h"
 
-#include "AgColumnDef.h"
-#include "AgGridModel.h"
-#include "AgGridWidget.h"
+#include "AuColumnDef.h"
+#include "AuGridModel.h"
+#include "AuGridWidget.h"
 
 #include <QHBoxLayout>
 #include <QPushButton>
@@ -17,11 +17,11 @@ LoadingDemoWindow::LoadingDemoWindow(QWidget *parent)
     , m_grid(nullptr)
     , m_model(nullptr)
 {
-    m_model = new AgGridModel(this);
+    m_model = new AuGridModel(this);
     m_model->setColumnDefs(makeStandardColumns());
     m_model->setRowData(makeFlatRows(50));
 
-    m_grid = new AgGridWidget(this);
+    m_grid = new AuGridWidget(this);
     m_grid->setModel(m_model);
     m_grid->setRowNumberColumnVisible(true);
     m_grid->setCheckboxColumnVisible(true);

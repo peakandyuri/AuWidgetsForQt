@@ -2,10 +2,10 @@
 #define TREEDEMOWINDOW_H
 
 #include "DemoWindowBase.h"
-#include "AgTreeRow.h"
+#include "AuTreeRow.h"
 
-class AgGridModel;
-class AgGridWidget;
+class AuGridModel;
+class AuGridWidget;
 class QPlainTextEdit;
 
 /**
@@ -20,10 +20,10 @@ public:
 
 private:
     /// 构建"部门 → 项目 → 任务"三级示例树。
-    static QVector<AgTreeRow> buildTreeRows();
+    static QVector<AuTreeRow> buildTreeRows();
 
-    AgGridWidget *m_grid;
-    AgGridModel *m_model;
+    AuGridWidget *m_grid;
+    AuGridModel *m_model;
     QPlainTextEdit *m_log;
 };
 

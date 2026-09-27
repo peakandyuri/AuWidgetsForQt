@@ -1,8 +1,8 @@
 #include "RowHeightDemoWindow.h"
 
-#include "AgColumnDef.h"
-#include "AgGridModel.h"
-#include "AgGridWidget.h"
+#include "AuColumnDef.h"
+#include "AuGridModel.h"
+#include "AuGridWidget.h"
 
 #include <QCheckBox>
 #include <QHBoxLayout>
@@ -18,7 +18,7 @@ RowHeightDemoWindow::RowHeightDemoWindow(QWidget *parent)
     , m_grid(nullptr)
     , m_model(nullptr)
 {
-    m_model = new AgGridModel(this);
+    m_model = new AuGridModel(this);
     applyWrapMode(true);
 
     // 描述列长短不一（含显式 \n），各行高度按内容自适应
@@ -48,7 +48,7 @@ RowHeightDemoWindow::RowHeightDemoWindow(QWidget *parent)
                  {"desc", QStringLiteral(u"两行左右：合同编号 HT-2026-0918，付款方式为月结三十天。")}});
     m_model->setRowData(rows);
 
-    m_grid = new AgGridWidget(this);
+    m_grid = new AuGridWidget(this);
     m_grid->setModel(m_model);
     m_grid->setRowNumberColumnVisible(true);
 
@@ -101,23 +101,23 @@ RowHeightDemoWindow::RowHeightDemoWindow(QWidget *parent)
 
 void RowHeightDemoWindow::applyWrapMode(bool wordWrap)
 {
-    QVector<AgColumnDef> columns;
-    AgColumnDef colName("name", QStringLiteral(u"名称"));
-    colName.setWidthMode(AgColumnDef::ColumnWidthMode::Fixed);
+    QVector<AuColumnDef> columns;
+    AuColumnDef colName("name", QStringLiteral(u"名称"));
+    colName.setWidthMode(AuColumnDef::ColumnWidthMode::Fixed);
     colName.setWidth(120);
-    colName.setTextWrapMode(AgColumnDef::TextWrapMode::NoWrapTruncate);
+    colName.setTextWrapMode(AuColumnDef::TextWrapMode::NoWrapTruncate);
     columns.append(colName);
 
-    AgColumnDef colCount("count", QStringLiteral(u"数量"));
-    colCount.setWidthMode(AgColumnDef::ColumnWidthMode::Fixed);
+    AuColumnDef colCount("count", QStringLiteral(u"数量"));
+    colCount.setWidthMode(AuColumnDef::ColumnWidthMode::Fixed);
     colCount.setWidth(80);
     colCount.setAlignment(Qt::AlignCenter);
     columns.append(colCount);
 
-    AgColumnDef colDesc("desc", QStringLiteral(u"描述"));
-    colDesc.setWidthMode(AgColumnDef::ColumnWidthMode::Flex);
-    colDesc.setTextWrapMode(wordWrap ? AgColumnDef::TextWrapMode::WordWrap
-                                     : AgColumnDef::TextWrapMode::NoWrapTruncate);
+    AuColumnDef colDesc("desc", QStringLiteral(u"描述"));
+    colDesc.setWidthMode(AuColumnDef::ColumnWidthMode::Flex);
+    colDesc.setTextWrapMode(wordWrap ? AuColumnDef::TextWrapMode::WordWrap
+                                     : AuColumnDef::TextWrapMode::NoWrapTruncate);
     columns.append(colDesc);
 
     m_model->setColumnDefs(columns);

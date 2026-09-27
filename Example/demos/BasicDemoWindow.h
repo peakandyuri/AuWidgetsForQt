@@ -3,8 +3,8 @@
 
 #include "DemoWindowBase.h"
 
-class AgGridWidget;
-class AgGridModel;
+class AuGridWidget;
+class AuGridModel;
 
 /**
  * @brief 基础功能示例：列宽模式、多级表头、单元格编辑与校验、自定义渲染器。
@@ -17,8 +17,8 @@ public:
     explicit BasicDemoWindow(QWidget *parent = nullptr);
 
 private:
-    AgGridWidget *m_grid;
-    AgGridModel *m_model;
+    AuGridWidget *m_grid;
+    AuGridModel *m_model;
 };
 
 #endif // BASICDEMOWINDOW_H

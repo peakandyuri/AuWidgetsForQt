@@ -19,7 +19,7 @@ class QVBoxLayout;
  * @brief 功能细化演示主窗口。
  *
  * 布局：
- *  - 左侧：控件列表（AgGrid / AgSelect / AgDatePicker），单选互斥切换；
+ *  - 左侧：控件列表（AuGrid / AuSelect / AuDatePicker），单选互斥切换；
  *  - 右侧上方：当前控件支持的功能 TabBar（一个功能一个 Tab）；
  *  - 右侧下方：左右分栏 —— 左为该功能的独立演示，右为实现代码（PlainText）。
  *

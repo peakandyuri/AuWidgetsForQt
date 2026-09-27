@@ -2,16 +2,16 @@
 
 #include "PageHelpers.h"
 
-#include "AgCellEditValidator.h"
-#include "AgCellRenderer.h"
-#include "AgColumnDef.h"
-#include "AgComboBoxCellEditor.h"
-#include "AgDatePicker.h"
-#include "AgGridModel.h"
-#include "AgGridStyle.h"
-#include "AgGridSyncGroup.h"
-#include "AgGridWidget.h"
-#include "AgSelect.h"
+#include "AuCellEditValidator.h"
+#include "AuCellRenderer.h"
+#include "AuColumnDef.h"
+#include "AuComboBoxCellEditor.h"
+#include "AuDatePicker.h"
+#include "AuGridModel.h"
+#include "AuGridStyle.h"
+#include "AuGridSyncGroup.h"
+#include "AuGridWidget.h"
+#include "AuSelect.h"
 
 #include <QCheckBox>
 #include <QFontMetrics>
@@ -29,37 +29,37 @@
 namespace {
 
 /// 校验器演示用：数量列（叶子列 1）禁止负数，其余放行。
-class CountValidator : public AgCellEditValidator
+class CountValidator : public AuCellEditValidator
 {
 public:
-    AgEditValidationResult validate(const AgGridModel * /*model*/, int /*row*/, int column,
+    AuEditValidationResult validate(const AuGridModel * /*model*/, int /*row*/, int column,
                                     const QVariant & /*oldValue*/, const QVariant &newValue,
                                     QString &errorMessage) const override
     {
         if (column == 1 && newValue.toInt() < 0) {
             errorMessage = QStringLiteral(u"数量不能为负数");
-            return AgEditValidationResult::RejectKeepEditing;
+            return AuEditValidationResult::RejectKeepEditing;
         }
-        return AgEditValidationResult::Accept;
+        return AuEditValidationResult::Accept;
     }
 };
 
 /// 演示用：操作列按钮渲染器（画一个按钮，悬停变色，整格为手型热区）。
-class ButtonRenderer : public AgCellRenderer
+class ButtonRenderer : public AuCellRenderer
 {
 public:
     void paint(QPainter *painter, const QRect &rect, const QVariant &value,
-               const AgColumnDef & /*columnDef*/, int /*row*/, int /*column*/,
-               const AgGridModel * /*model*/, const AgGridStyle * /*style*/,
+               const AuColumnDef & /*columnDef*/, int /*row*/, int /*column*/,
+               const AuGridModel * /*model*/, const AuGridStyle * /*style*/,
                const QColor & /*textColor*/) const override
     {
-        paintButton(painter, rect, value, AgCellRendererContext());
+        paintButton(painter, rect, value, AuCellRendererContext());
     }
 
     void paint(QPainter *painter, const QRect &rect, const QVariant &value,
-               const AgColumnDef & /*columnDef*/, int /*row*/, int /*column*/,
-               const AgGridModel * /*model*/, const AgGridStyle * /*style*/,
-               const QColor & /*textColor*/, const AgCellRendererContext &ctx) const override
+               const AuColumnDef & /*columnDef*/, int /*row*/, int /*column*/,
+               const AuGridModel * /*model*/, const AuGridStyle * /*style*/,
+               const QColor & /*textColor*/, const AuCellRendererContext &ctx) const override
     {
         paintButton(painter, rect, value, ctx);
     }
@@ -71,7 +71,7 @@ public:
 
 private:
     static void paintButton(QPainter *painter, const QRect &rect, const QVariant &value,
-                            const AgCellRendererContext &ctx)
+                            const AuCellRendererContext &ctx)
     {
         const QString text = value.toString();
         const QFontMetrics fm(painter->font());
@@ -93,12 +93,12 @@ private:
 };
 
 /// 演示用：徽标渲染器（bool 值画成彩色圆角徽标）。
-class BadgeRenderer : public AgCellRenderer
+class BadgeRenderer : public AuCellRenderer
 {
 public:
     void paint(QPainter *painter, const QRect &rect, const QVariant &value,
-               const AgColumnDef & /*columnDef*/, int /*row*/, int /*column*/,
-               const AgGridModel * /*model*/, const AgGridStyle * /*style*/,
+               const AuColumnDef & /*columnDef*/, int /*row*/, int /*column*/,
+               const AuGridModel * /*model*/, const AuGridStyle * /*style*/,
                const QColor & /*textColor*/) const override
     {
         const bool on = value.toBool();
@@ -125,7 +125,7 @@ public:
 };
 
 /// 演示用：QSpinBox 编辑器（范围 0~500，越界自动钳制）。
-class SpinBoxEditor : public AgCellEditor
+class SpinBoxEditor : public AuCellEditor
 {
 public:
     QWidget *createEditor(QWidget *parent) const override
@@ -158,17 +158,17 @@ public:
 };
 
 /// 演示用：表头按钮渲染器（标题左侧 + 右侧“清零”按钮；按钮上点击不触发排序）。
-class HeaderActionButton : public AgHeaderRenderer
+class HeaderActionButton : public AuHeaderRenderer
 {
 public:
     explicit HeaderActionButton(const std::function<void(int column)> &onClick)
         : m_onClick(onClick)
     {}
 
-    void paint(QPainter *painter, const QRect &rect, const AgColumnDef &columnDef,
-               int /*column*/, int /*level*/, const AgGridModel * /*model*/,
-               const AgGridStyle * /*style*/, const QColor &textColor,
-               const AgHeaderRendererContext &context) const override
+    void paint(QPainter *painter, const QRect &rect, const AuColumnDef &columnDef,
+               int /*column*/, int /*level*/, const AuGridModel * /*model*/,
+               const AuGridStyle * /*style*/, const QColor &textColor,
+               const AuHeaderRendererContext &context) const override
     {
         painter->save();
         painter->setRenderHint(QPainter::Antialiasing);
@@ -235,34 +235,34 @@ private:
 };
 
 // ---------------------------------------------------------------------------
-// AgSelect / AgDatePicker 单元格编辑器（完全外部集成，AgGrid 零改动）
+// AuSelect / AuDatePicker 单元格编辑器（完全外部集成，AuGrid 零改动）
 //
-// 原理：AgGridWidget 的编辑器是插件（AgCellEditor 接口 + registerCellEditor），
-// 任意 QWidget 都能包装进去。包装类在 createEditor(parent) 里创建 AgSelect /
-// AgDatePicker（parent 即宿主 AgGridWidget），选择完成后通过公开 API
-// closeEditor(true) 主动提交——全程不需要改动 AgGrid 源码。
+// 原理：AuGridWidget 的编辑器是插件（AuCellEditor 接口 + registerCellEditor），
+// 任意 QWidget 都能包装进去。包装类在 createEditor(parent) 里创建 AuSelect /
+// AuDatePicker（parent 即宿主 AuGridWidget），选择完成后通过公开 API
+// closeEditor(true) 主动提交——全程不需要改动 AuGrid 源码。
 //
 // 交互闭环：编辑器打开即自动展开面板（Enter/双击编辑 → 面板直接就位 →
 // Enter 或点击确认 → 提交并把焦点还给表格 → Tab / 方向键继续导航）；
 // 编辑框高度按宿主行高定制，完全贴合单元格。
 
-/// 演示用：AgSelect 单元格编辑器（选择即提交，提交值 = 当前文本）。
-class AgSelectCellEditor : public QObject, public AgCellEditor
+/// 演示用：AuSelect 单元格编辑器（选择即提交，提交值 = 当前文本）。
+class AuSelectCellEditor : public QObject, public AuCellEditor
 {
 public:
-    explicit AgSelectCellEditor(const QStringList &items)
+    explicit AuSelectCellEditor(const QStringList &items)
         : m_items(items)
     {}
 
     QWidget *createEditor(QWidget *parent) const override
     {
-        AgSelect *select = new AgSelect(parent);
+        AuSelect *select = new AuSelect(parent);
         select->addItems(m_items);
         select->setFocusPolicy(Qt::StrongFocus);   // 让 editCell 的 setFocus 生效
 
         // 编辑框高度贴合单元格：按宿主默认行高定制（独立样式实例，随当前全局主题）
-        if (AgGridWidget *grid = qobject_cast<AgGridWidget *>(parent)) {
-            AgSelectStyle *style = new AgSelectStyle(*AgSelectStyle::globalStyle());
+        if (AuGridWidget *grid = qobject_cast<AuGridWidget *>(parent)) {
+            AuSelectStyle *style = new AuSelectStyle(*AuSelectStyle::globalStyle());
             style->setEditorHeight(grid->rowHeight());
             select->setStyle(style);
         }
@@ -276,8 +276,8 @@ public:
         // 选择完成（点击 / 键盘回车激活）→ 提交并关闭编辑器。
         // 提交后由宿主把焦点还给表格（closeEditor 内部处理），Tab / 方向键可继续
         // 注：该路径走 closeEditor 公开 API，直接提交、不经过校验器
-        QObject::connect(select, &AgSelect::activated, select, [select]() {
-            if (AgGridWidget *grid = qobject_cast<AgGridWidget *>(select->parent()))
+        QObject::connect(select, &AuSelect::activated, select, [select]() {
+            if (AuGridWidget *grid = qobject_cast<AuGridWidget *>(select->parent()))
                 grid->closeEditor(true);
         });
         return select;
@@ -285,13 +285,13 @@ public:
 
     void setEditorValue(QWidget *editor, const QVariant &value) const override
     {
-        if (AgSelect *select = qobject_cast<AgSelect *>(editor))
+        if (AuSelect *select = qobject_cast<AuSelect *>(editor))
             select->setCurrentIndex(select->findText(value.toString(), Qt::MatchExactly));
     }
 
     QVariant editorValue(QWidget *editor) const override
     {
-        if (AgSelect *select = qobject_cast<AgSelect *>(editor))
+        if (AuSelect *select = qobject_cast<AuSelect *>(editor))
             return select->currentText();
         return QVariant();
     }
@@ -300,17 +300,17 @@ private:
     QStringList m_items;
 };
 
-/// 演示用：AgDatePicker 单元格编辑器（选中即提交，提交值 = QDate；清除提交空值）。
-class AgDatePickerCellEditor : public QObject, public AgCellEditor
+/// 演示用：AuDatePicker 单元格编辑器（选中即提交，提交值 = QDate；清除提交空值）。
+class AuDatePickerCellEditor : public QObject, public AuCellEditor
 {
 public:
     QWidget *createEditor(QWidget *parent) const override
     {
-        AgDatePicker *picker = new AgDatePicker(parent);
+        AuDatePicker *picker = new AuDatePicker(parent);
         picker->setFocusPolicy(Qt::StrongFocus);
 
         // 编辑框高度贴合单元格：按宿主默认行高定制（内部派生独立样式）
-        if (AgGridWidget *grid = qobject_cast<AgGridWidget *>(parent))
+        if (AuGridWidget *grid = qobject_cast<AuGridWidget *>(parent))
             picker->setEditorHeight(grid->rowHeight());
 
         // 打开编辑器即展开日历面板
@@ -319,13 +319,13 @@ public:
                 picker->showPopup();
         });
 
-        QObject::connect(picker, &AgDatePicker::activated, picker, [picker]() {
-            if (AgGridWidget *grid = qobject_cast<AgGridWidget *>(picker->parent()))
+        QObject::connect(picker, &AuDatePicker::activated, picker, [picker]() {
+            if (AuGridWidget *grid = qobject_cast<AuGridWidget *>(picker->parent()))
                 grid->closeEditor(true);
         });
         // 圆圈 × 清除 → 提交无效 QDate（单元格清空）
-        QObject::connect(picker, &AgDatePicker::cleared, picker, [picker]() {
-            if (AgGridWidget *grid = qobject_cast<AgGridWidget *>(picker->parent()))
+        QObject::connect(picker, &AuDatePicker::cleared, picker, [picker]() {
+            if (AuGridWidget *grid = qobject_cast<AuGridWidget *>(picker->parent()))
                 grid->closeEditor(true);
         });
         return picker;
@@ -333,23 +333,23 @@ public:
 
     void setEditorValue(QWidget *editor, const QVariant &value) const override
     {
-        if (AgDatePicker *picker = qobject_cast<AgDatePicker *>(editor))
+        if (AuDatePicker *picker = qobject_cast<AuDatePicker *>(editor))
             picker->setDate(value.toDate());
     }
 
     QVariant editorValue(QWidget *editor) const override
     {
-        if (AgDatePicker *picker = qobject_cast<AgDatePicker *>(editor))
+        if (AuDatePicker *picker = qobject_cast<AuDatePicker *>(editor))
             return QVariant(picker->date());
         return QVariant();
     }
 };
 
 /// 便捷组合：创建网格 + 平铺数据模型（模型以网格为父，随网格销毁）。
-AgGridWidget *newFlatGrid(int rowCount, AgGridModel **modelOut = nullptr)
+AuGridWidget *newFlatGrid(int rowCount, AuGridModel **modelOut = nullptr)
 {
-    AgGridWidget *grid = new AgGridWidget;
-    AgGridModel *model = PageHelpers::makeFlatModel(rowCount, grid);
+    AuGridWidget *grid = new AuGridWidget;
+    AuGridModel *model = PageHelpers::makeFlatModel(rowCount, grid);
     grid->setModel(model);
     if (modelOut)
         *modelOut = model;
@@ -367,24 +367,24 @@ QVector<FeaturePage> makeGridPages()
         FeaturePage page;
         page.title = QStringLiteral(u"最小用法");
         page.description = QStringLiteral(
-            u"三步上手：定义列（AgColumnDef）→ 载入行数据（QVariantMap 列表，键 = 列 field）→ "
+            u"三步上手：定义列（AuColumnDef）→ 载入行数据（QVariantMap 列表，键 = 列 field）→ "
             u"绑定视图（setModel）。虚拟化渲染开箱即用。");
         page.createDemo = []() {
             return PageHelpers::composeDemo(nullptr, newFlatGrid(30));
         };
         page.code = R"snip(
 // 1. 列定义（值类型，可拷贝）——与演示一致：名称 / 数量 / 类别 / 启用 四列
-QVector<AgColumnDef> columns;
-AgColumnDef name("name", "名称");
+QVector<AuColumnDef> columns;
+AuColumnDef name("name", "名称");
 name.setWidth(140);
 columns.append(name);
-AgColumnDef count("count", "数量");
+AuColumnDef count("count", "数量");
 count.setWidth(100);
 columns.append(count);
-AgColumnDef category("category", "类别");
+AuColumnDef category("category", "类别");
 category.setWidth(110);
 columns.append(category);
-AgColumnDef enabled("enabled", "启用");
+AuColumnDef enabled("enabled", "启用");
 enabled.setWidth(80);
 columns.append(enabled);
 
@@ -401,11 +401,11 @@ for (int r = 0; r < 30; ++r) {
 }
 
 // 3. 模型 + 视图
-AgGridModel *model = new AgGridModel(this);
+AuGridModel *model = new AuGridModel(this);
 model->setColumnDefs(columns);
 model->setRowData(rows);
 
-AgGridWidget *grid = new AgGridWidget(this);
+AuGridWidget *grid = new AuGridWidget(this);
 grid->setModel(model);   // 控件不获得模型所有权
 )snip";
         pages.append(page);
@@ -419,7 +419,7 @@ grid->setModel(model);   // 控件不获得模型所有权
             u"内置行号列显示“可见行号 + 1”，排序 / 过滤 / 拖拽重排后跟随可见顺序"
             u"重新编号；显隐带与列显隐一致的动画。");
         page.createDemo = []() {
-            AgGridWidget *grid = newFlatGrid(30);
+            AuGridWidget *grid = newFlatGrid(30);
             grid->setRowNumberColumnVisible(true);
 
             QHBoxLayout *controls = new QHBoxLayout;
@@ -438,7 +438,7 @@ grid->setModel(model);   // 控件不获得模型所有权
         };
         page.code = R"snip(
 // 演示数据与“最小用法”一致：名称 / 数量 / 类别 / 启用 四列 × 30 行
-AgGridWidget *grid = new AgGridWidget(this);
+AuGridWidget *grid = new AuGridWidget(this);
 grid->setModel(model);
 
 grid->setRowNumberColumnVisible(true);   // 显示内置行号列（演示按钮：显示 / 隐藏，带动画）
@@ -459,19 +459,19 @@ grid->isRowNumberColumnVisible();        // 查询状态
             u"内置复选框列：表头复选框支持全选 / 半选，行头点击切换勾选；"
             u"勾选集合按“原始行号”记录，跨排序过滤稳定。");
         page.createDemo = []() {
-            AgGridModel *model = nullptr;
-            AgGridWidget *grid = newFlatGrid(30, &model);
+            AuGridModel *model = nullptr;
+            AuGridWidget *grid = newFlatGrid(30, &model);
             grid->setCheckboxColumnVisible(true);
 
             QPlainTextEdit *log = PageHelpers::makeLog();
-            QObject::connect(grid, &AgGridWidget::rowCheckedChanged, grid,
+            QObject::connect(grid, &AuGridWidget::rowCheckedChanged, grid,
                              [log](int row, bool checked) {
                                  PageHelpers::appendLog(
                                      log, QString("rowCheckedChanged: row=%1 checked=%2")
                                               .arg(row)
                                               .arg(checked));
                              });
-            QObject::connect(grid, &AgGridWidget::checkedStateChanged, grid, [grid, log]() {
+            QObject::connect(grid, &AuGridWidget::checkedStateChanged, grid, [grid, log]() {
                 PageHelpers::appendLog(log,
                                        QString("checkedStateChanged: 可见=%1 原始=%2")
                                            .arg(grid->checkedRows().size())
@@ -505,11 +505,11 @@ grid->isRowNumberColumnVisible();        // 查询状态
 grid->setCheckboxColumnVisible(true);   // 内置复选框列，表头支持全选 / 半选
 
 // 行勾选变化（row 为可见行号）
-connect(grid, &AgGridWidget::rowCheckedChanged,
+connect(grid, &AuGridWidget::rowCheckedChanged,
         this, [](int row, bool checked) { /* ... */ });
 
 // 勾选集合整体变化（全选 / 清空 / 拖拽移动等）
-connect(grid, &AgGridWidget::checkedStateChanged, this, []() { /* ... */ });
+connect(grid, &AuGridWidget::checkedStateChanged, this, []() { /* ... */ });
 
 // 读取勾选集合
 QSet<int> visible = grid->checkedRows();           // 可见行号
@@ -529,10 +529,10 @@ grid->clearAllCheckedRows();  // 清空勾选
             u"单选（默认）：点击选中一行；多选：点击 / Ctrl+点击切换选中、可累积多行；"
             u"不可选中：鼠标键盘与 API 均不生效。");
         page.createDemo = []() {
-            AgGridWidget *grid = newFlatGrid(30);
+            AuGridWidget *grid = newFlatGrid(30);
 
             QPlainTextEdit *log = PageHelpers::makeLog();
-            QObject::connect(grid, &AgGridWidget::selectionChanged, grid, [grid, log]() {
+            QObject::connect(grid, &AuGridWidget::selectionChanged, grid, [grid, log]() {
                 QStringList parts;
                 const QList<int> rows = grid->selectedOriginalRows().values();
                 for (int v : rows)
@@ -556,19 +556,19 @@ grid->clearAllCheckedRows();  // 清空勾选
             controls->addWidget(apiBtn);
             controls->addStretch(1);
             QObject::connect(singleBtn, &QPushButton::clicked, grid, [grid, singleBtn, multiBtn, noneBtn]() {
-                grid->setSelectionMode(AgGridWidget::SelectionMode::Single);
+                grid->setSelectionMode(AuGridWidget::SelectionMode::Single);
                 singleBtn->setChecked(true);
                 multiBtn->setChecked(false);
                 noneBtn->setChecked(false);
             });
             QObject::connect(multiBtn, &QPushButton::clicked, grid, [grid, singleBtn, multiBtn, noneBtn]() {
-                grid->setSelectionMode(AgGridWidget::SelectionMode::Multiple);
+                grid->setSelectionMode(AuGridWidget::SelectionMode::Multiple);
                 multiBtn->setChecked(true);
                 singleBtn->setChecked(false);
                 noneBtn->setChecked(false);
             });
             QObject::connect(noneBtn, &QPushButton::clicked, grid, [grid, singleBtn, multiBtn, noneBtn]() {
-                grid->setSelectionMode(AgGridWidget::SelectionMode::None);
+                grid->setSelectionMode(AuGridWidget::SelectionMode::None);
                 noneBtn->setChecked(true);
                 singleBtn->setChecked(false);
                 multiBtn->setChecked(false);
@@ -581,13 +581,13 @@ grid->clearAllCheckedRows();  // 清空勾选
 // 演示数据与“最小用法”一致：名称 / 数量 / 类别 / 启用 四列 × 30 行
 
 // 选中模式切换（对应演示按钮：单选 / 多选 / 不可选中）
-grid->setSelectionMode(AgGridWidget::SelectionMode::Multiple);
+grid->setSelectionMode(AuGridWidget::SelectionMode::Multiple);
 // Single：点击选中一行，Ctrl+点击已选行可取消
 // Multiple：点击 / Ctrl+点击均切换该行，可累积多行
 // None：鼠标 / 键盘 / 选中 API 均不改变选中
 
 // 选中变化（演示日志打印的是原始行号）
-connect(grid, &AgGridWidget::selectionChanged, this, [grid]() {
+connect(grid, &AuGridWidget::selectionChanged, this, [grid]() {
     QSet<int> rows = grid->selectedRows();              // 可见行号
     QSet<int> original = grid->selectedOriginalRows();  // 原始行号（持久化推荐）
 });
@@ -607,15 +607,15 @@ grid->selectRows(QSet<int>{2, 4, 6});   // 多选模式：整体替换选中集�
             u"导航直接跳过，点击不把焦点框落到该格（行选中、cellClicked、按钮交互照常）。"
             u"适合放操作按钮的自定义列；逐格动态裁决用 setCellFocusableCallback。");
         page.createDemo = []() {
-            AgGridModel *model = new AgGridModel(nullptr);
-            QVector<AgColumnDef> columns;
-            AgColumnDef name("name", QStringLiteral(u"名称"));
+            AuGridModel *model = new AuGridModel(nullptr);
+            QVector<AuColumnDef> columns;
+            AuColumnDef name("name", QStringLiteral(u"名称"));
             name.setWidth(120);
             columns.append(name);
-            columns.append(AgColumnDef("count", QStringLiteral(u"数量")));
-            columns.append(AgColumnDef("category", QStringLiteral(u"类别")));
+            columns.append(AuColumnDef("count", QStringLiteral(u"数量")));
+            columns.append(AuColumnDef("category", QStringLiteral(u"类别")));
             // 操作列：按钮渲染器 + 不可聚焦（点击按钮时焦点框保持原位）
-            AgColumnDef op("op", QStringLiteral(u"操作"));
+            AuColumnDef op("op", QStringLiteral(u"操作"));
             op.setWidth(110);
             op.setCellRenderer(QStringLiteral("demoButton"));
             op.setFocusable(false);
@@ -623,15 +623,15 @@ grid->selectRows(QSet<int>{2, 4, 6});   // 多选模式：整体替换选中集�
             model->setColumnDefs(columns);
             model->setRowData(PageHelpers::makeFlatRows(20));
 
-            AgGridWidget *grid = new AgGridWidget;
+            AuGridWidget *grid = new AuGridWidget;
             grid->setModel(model);
             model->setParent(grid);
             grid->registerCellRenderer(
                 QStringLiteral("demoButton"),
-                QSharedPointer<AgCellRenderer>(new ButtonRenderer));
+                QSharedPointer<AuCellRenderer>(new ButtonRenderer));
 
             QPlainTextEdit *log = PageHelpers::makeLog();
-            QObject::connect(grid, &AgGridWidget::cellClicked, grid,
+            QObject::connect(grid, &AuGridWidget::cellClicked, grid,
                              [grid, log](int row, int column) {
                                  const QString field = grid->model()->fieldAtColumn(column);
                                  PageHelpers::appendLog(
@@ -651,10 +651,10 @@ grid->selectRows(QSet<int>{2, 4, 6});   // 多选模式：整体替换选中集�
             QObject::connect(toggleBtn, &QPushButton::clicked, grid, [grid, toggleBtn]() {
                 const int op = grid->model()->columnIndexForField(QStringLiteral("op"));
                 const bool focusable = !grid->model()->columnDefAt(op).isFocusable();
-                AgColumnDef def = grid->model()->columnDefAt(op);
+                AuColumnDef def = grid->model()->columnDefAt(op);
                 def.setFocusable(focusable);
                 // 列定义是值类型：改完整树回写使变更生效
-                QVector<AgColumnDef> columns = grid->model()->topLevelColumnDefs();
+                QVector<AuColumnDef> columns = grid->model()->topLevelColumnDefs();
                 columns[op] = def;
                 grid->model()->setColumnDefs(columns);
                 toggleBtn->setText(focusable ? QStringLiteral(u"切换操作列不可聚焦")
@@ -664,12 +664,12 @@ grid->selectRows(QSet<int>{2, 4, 6});   // 多选模式：整体替换选中集�
         };
         page.code = R"snip(
 // 自定义操作列：按钮渲染器（paint 里画按钮，wantsHoverCursor 返回 true）
-class ButtonRenderer : public AgCellRenderer { /* 见本页完整示例 */ };
+class ButtonRenderer : public AuCellRenderer { /* 见本页完整示例 */ };
 
 grid->registerCellRenderer("button",
-    QSharedPointer<AgCellRenderer>(new ButtonRenderer));
+    QSharedPointer<AuCellRenderer>(new ButtonRenderer));
 
-AgColumnDef op("op", "操作");
+AuColumnDef op("op", "操作");
 op.setCellRenderer("button");
 op.setFocusable(false);   // 关键：该列单元格不成为键盘 / 选中锚点
 columns.append(op);
@@ -682,7 +682,7 @@ columns.append(op);
 
 // 也可逐格动态裁决（在列 focusable=true 的基础上进一步收紧）：
 grid->setCellFocusableCallback(
-    [](const AgGridModel *model, int row, int column) -> bool {
+    [](const AuGridModel *model, int row, int column) -> bool {
         return model->cellValue(row, column).toString() != "禁用";   // 示例
     });
 
@@ -699,14 +699,14 @@ grid->isCellFocusable(0, 3);   // 查询某格是否可聚焦
             u"开启后显示拖拽手柄列，按住手柄上下拖动整行重排；拖动完成发出 rowsDragged"
             u"（原始行号 + 目标位置），方便同步业务数据。");
         page.createDemo = []() {
-            AgGridWidget *grid = newFlatGrid(30);
+            AuGridWidget *grid = newFlatGrid(30);
             grid->setRowDragEnabled(true);
-            grid->setDragPreviewTextCallback([](const AgGridModel *, const QVector<int> &rows) {
+            grid->setDragPreviewTextCallback([](const AuGridModel *, const QVector<int> &rows) {
                 return QStringLiteral(u"正在移动 %1 行").arg(rows.size());
             });
 
             QPlainTextEdit *log = PageHelpers::makeLog();
-            QObject::connect(grid, &AgGridWidget::rowsDragged, grid,
+            QObject::connect(grid, &AuGridWidget::rowsDragged, grid,
                              [grid, log](const QVector<int> &originalRows, int targetOriginalIndex) {
                                  QStringList parts;
                                  for (int v : originalRows)
@@ -725,14 +725,14 @@ grid->setRowDragEnabled(true);   // 显示拖拽手柄列，按住手柄拖动�
 
 // 拖动完成：originalRows 为被拖动的原始行号，targetOriginalIndex 为插入位置
 //（演示日志打印 rowsDragged 两个参数）
-connect(grid, &AgGridWidget::rowsDragged,
+connect(grid, &AuGridWidget::rowsDragged,
         this, [](const QVector<int> &originalRows, int targetOriginalIndex) {
     // 模型内部顺序已移动；在此同步业务数据的顺序
 });
 
 // 拖动时的浮动提示文字（演示返回“正在移动 N 行”，默认“共 N 行”）
 grid->setDragPreviewTextCallback(
-    [](const AgGridModel *, const QVector<int> &rows) {
+    [](const AuGridModel *, const QVector<int> &rows) {
         return QString("正在移动 %1 行").arg(rows.size());
     });
 )snip";
@@ -747,26 +747,26 @@ grid->setDragPreviewTextCallback(
             u"列定义 sortable=true 的列显示排序箭头，配合总开关 setSortingEnabled(true)；"
             u"点击表头在升序 / 降序间切换。");
         page.createDemo = []() {
-            AgGridModel *model = new AgGridModel(nullptr);
-            QVector<AgColumnDef> columns;
-            AgColumnDef name("name", QStringLiteral(u"名称"));
+            AuGridModel *model = new AuGridModel(nullptr);
+            QVector<AuColumnDef> columns;
+            AuColumnDef name("name", QStringLiteral(u"名称"));
             name.setSortable(true);
             columns.append(name);
-            AgColumnDef count("count", QStringLiteral(u"数量"));
+            AuColumnDef count("count", QStringLiteral(u"数量"));
             count.setSortable(true);
             columns.append(count);
-            AgColumnDef category("category", QStringLiteral(u"类别（不可排序）"));
+            AuColumnDef category("category", QStringLiteral(u"类别（不可排序）"));
             columns.append(category);
             model->setColumnDefs(columns);
             model->setRowData(PageHelpers::makeFlatRows(30));
 
-            AgGridWidget *grid = new AgGridWidget;
+            AuGridWidget *grid = new AuGridWidget;
             grid->setModel(model);
             model->setParent(grid);
             grid->setSortingEnabled(true);
 
             QPlainTextEdit *log = PageHelpers::makeLog();
-            QObject::connect(grid, &AgGridWidget::sortChanged, grid,
+            QObject::connect(grid, &AuGridWidget::sortChanged, grid,
                              [log](int column, Qt::SortOrder order) {
                                  PageHelpers::appendLog(
                                      log, QString("sortChanged: column=%1 order=%2")
@@ -792,18 +792,18 @@ grid->setDragPreviewTextCallback(
         };
         page.code = R"snip(
 // 示例数据：名称 / 数量 / 类别（不可排序）三列 × 30 行
-AgColumnDef name("name", "名称");
+AuColumnDef name("name", "名称");
 name.setSortable(true);                 // 显示排序箭头
-AgColumnDef count("count", "数量");
+AuColumnDef count("count", "数量");
 count.setSortable(true);
-AgColumnDef category("category", "类别（不可排序）");   // 未设 sortable，无箭头
+AuColumnDef category("category", "类别（不可排序）");   // 未设 sortable，无箭头
 
 // 总开关（默认关闭；仅对 sortable 列生效，对应演示按钮）
 grid->setSortingEnabled(true);
 grid->setSortingEnabled(false);   // 关闭
 
 // 排序变化（点击表头触发，演示日志打印 column 与方向）
-connect(grid, &AgGridWidget::sortChanged,
+connect(grid, &AuGridWidget::sortChanged,
         this, [](int column, Qt::SortOrder order) { /* ... */ });
 
 grid->clearSort();   // 清除排序，恢复原始顺序
@@ -819,8 +819,8 @@ grid->clearSort();   // 清除排序，恢复原始顺序
             u"setSortRules 设置多条规则，按列表顺序依次比较：第一列相等时才比较第二列；"
             u"setSortComparator 设置整行自定义比较函数（优先于规则），可自由组合多列逻辑。");
         page.createDemo = []() {
-            AgGridModel *model = nullptr;
-            AgGridWidget *grid = newFlatGrid(40, &model);
+            AuGridModel *model = nullptr;
+            AuGridWidget *grid = newFlatGrid(40, &model);
 
             QHBoxLayout *controls = new QHBoxLayout;
             QPushButton *applyBtn = new QPushButton(QStringLiteral(u"类别升序 + 数量降序"));
@@ -831,8 +831,8 @@ grid->clearSort();   // 清除排序，恢复原始顺序
             controls->addWidget(clearBtn);
             controls->addStretch(1);
             QObject::connect(applyBtn, &QPushButton::clicked, grid, [grid]() {
-                grid->setSortRules({AgSortRule(2, Qt::AscendingOrder),
-                                    AgSortRule(1, Qt::DescendingOrder)});
+                grid->setSortRules({AuSortRule(2, Qt::AscendingOrder),
+                                    AuSortRule(1, Qt::DescendingOrder)});
             });
             // 自定义比较函数：规则表达不了的多列组合逻辑。
             // 示例：偶数量的行排前面，同为偶 / 奇再按数量升序——
@@ -858,8 +858,8 @@ grid->clearSort();   // 清除排序，恢复原始顺序
 // 多规则排序：按顺序依次比较（对应演示按钮“类别升序 + 数量降序”）
 // 先按“类别”升序（叶子列 2），类别相同再按“数量”降序（叶子列 1）
 grid->setSortRules({
-    AgSortRule(2, Qt::AscendingOrder),
-    AgSortRule(1, Qt::DescendingOrder)
+    AuSortRule(2, Qt::AscendingOrder),
+    AuSortRule(1, Qt::DescendingOrder)
 });
 
 // 整行自定义比较函数（对应演示按钮“自定义比较函数”）：
@@ -885,8 +885,8 @@ grid->clearSort();          // 清除全部规则与比较函数，恢复原始�
             u"setFilterCallback 对每行（QVariantMap）裁决保留与否；清除过滤恢复全部行。"
             u"过滤 / 取消过滤带行位移动画。");
         page.createDemo = []() {
-            AgGridModel *model = nullptr;
-            AgGridWidget *grid = newFlatGrid(50, &model);
+            AuGridModel *model = nullptr;
+            AuGridWidget *grid = newFlatGrid(50, &model);
 
             QHBoxLayout *controls = new QHBoxLayout;
             QPushButton *filterBtn = new QPushButton(QStringLiteral(u"只留数量 ≥ 250"));
@@ -927,31 +927,31 @@ grid->clearFilter();   // 清除过滤，恢复全部行
         page.description = QStringLiteral(
             u"列定义 editable=true 后，双击 / 回车 / 直接输入字符进入编辑；提交后模型已更新并发出信号。");
         page.createDemo = []() {
-            AgGridModel *model = new AgGridModel(nullptr);
-            QVector<AgColumnDef> columns;
-            AgColumnDef name("name", QStringLiteral(u"名称（只读）"));
+            AuGridModel *model = new AuGridModel(nullptr);
+            QVector<AuColumnDef> columns;
+            AuColumnDef name("name", QStringLiteral(u"名称（只读）"));
             columns.append(name);
-            AgColumnDef count("count", QStringLiteral(u"数量（可编辑）"));
+            AuColumnDef count("count", QStringLiteral(u"数量（可编辑）"));
             count.setEditable(true);
             columns.append(count);
-            AgColumnDef enabled("enabled", QStringLiteral(u"启用（复选框）"));
+            AuColumnDef enabled("enabled", QStringLiteral(u"启用（复选框）"));
             enabled.setCheckbox(true);
             enabled.setEditable(true);
             columns.append(enabled);
             model->setColumnDefs(columns);
             model->setRowData(PageHelpers::makeFlatRows(20));
 
-            AgGridWidget *grid = new AgGridWidget;
+            AuGridWidget *grid = new AuGridWidget;
             grid->setModel(model);
             model->setParent(grid);
 
             QPlainTextEdit *log = PageHelpers::makeLog();
-            QObject::connect(grid, &AgGridWidget::cellEditingStarted, grid,
+            QObject::connect(grid, &AuGridWidget::cellEditingStarted, grid,
                              [log](int row, int column) {
                                  PageHelpers::appendLog(
                                      log, QString("cellEditingStarted: r=%1 c=%2").arg(row).arg(column));
                              });
-            QObject::connect(grid, &AgGridWidget::cellValueChanged, grid,
+            QObject::connect(grid, &AuGridWidget::cellValueChanged, grid,
                              [log](int row, int column, const QVariant &value) {
                                  PageHelpers::appendLog(
                                      log, QString("cellValueChanged: r=%1 c=%2 value=%3")
@@ -983,15 +983,15 @@ grid->clearFilter();   // 清除过滤，恢复全部行
         };
         page.code = R"snip(
 // 示例数据：名称（只读）/ 数量（可编辑）/ 启用（复选框）三列 × 20 行
-AgColumnDef name("name", "名称（只读）");      // 未设 editable，双击无效
-AgColumnDef count("count", "数量（可编辑）");
+AuColumnDef name("name", "名称（只读）");      // 未设 editable，双击无效
+AuColumnDef count("count", "数量（可编辑）");
 count.setEditable(true);                       // 双击 / 回车 / 输入字符进入编辑
-AgColumnDef enabled("enabled", "启用（复选框）");
+AuColumnDef enabled("enabled", "启用（复选框）");
 enabled.setCheckbox(true);
 enabled.setEditable(true);                     // 复选框列：允许点击 / 空格切换
 
 // 提交成功（通过校验器）后模型已更新（演示日志打印新值）
-connect(grid, &AgGridWidget::cellValueChanged,
+connect(grid, &AuGridWidget::cellValueChanged,
         this, [](int row, int column, const QVariant &value) { /* ... */ });
 
 // 程序化开始编辑（对应演示按钮“编辑 (2,1)”）
@@ -1015,20 +1015,20 @@ grid->closeEditor(true);  // 提交并关闭；false = 放弃
             u"setCellEditValidator 对全部编辑提交生效：Accept 接受 / Reject 拒绝关闭 / "
             u"RejectKeepEditing 拒绝并保持编辑器打开（红字提示 errorMessage）。");
         page.createDemo = []() {
-            AgGridModel *model = new AgGridModel(nullptr);
-            QVector<AgColumnDef> columns;
-            AgColumnDef name("name", QStringLiteral(u"名称"));
+            AuGridModel *model = new AuGridModel(nullptr);
+            QVector<AuColumnDef> columns;
+            AuColumnDef name("name", QStringLiteral(u"名称"));
             columns.append(name);
-            AgColumnDef count("count", QStringLiteral(u"数量（不允许负数）"));
+            AuColumnDef count("count", QStringLiteral(u"数量（不允许负数）"));
             count.setEditable(true);
             columns.append(count);
             model->setColumnDefs(columns);
             model->setRowData(PageHelpers::makeFlatRows(20));
 
-            AgGridWidget *grid = new AgGridWidget;
+            AuGridWidget *grid = new AuGridWidget;
             grid->setModel(model);
             model->setParent(grid);
-            grid->setCellEditValidator(QSharedPointer<AgCellEditValidator>(new CountValidator));
+            grid->setCellEditValidator(QSharedPointer<AuCellEditValidator>(new CountValidator));
 
             QHBoxLayout *controls = new QHBoxLayout;
             QPushButton *editBtn = new QPushButton(QStringLiteral(u"编辑 (2,1) 试试输入负数"));
@@ -1041,23 +1041,23 @@ grid->closeEditor(true);  // 提交并关闭；false = 放弃
         page.code = R"snip(
 // 自定义校验器：对全部编辑提交生效
 // 示例数据：名称 / 数量（不允许负数，可编辑）两列 × 20 行
-class CountValidator : public AgCellEditValidator
+class CountValidator : public AuCellEditValidator
 {
 public:
-    AgEditValidationResult validate(const AgGridModel *model, int row, int column,
+    AuEditValidationResult validate(const AuGridModel *model, int row, int column,
                                     const QVariant &oldValue, const QVariant &newValue,
                                     QString &errorMessage) const override
     {
         if (column == 1 && newValue.toInt() < 0) {   // “数量”列不允许负数
             errorMessage = "数量不能为负数";
-            return AgEditValidationResult::RejectKeepEditing;  // 保持编辑器打开并红字提示
+            return AuEditValidationResult::RejectKeepEditing;  // 保持编辑器打开并红字提示
         }
-        return AgEditValidationResult::Accept;
+        return AuEditValidationResult::Accept;
     }
 };
 
 grid->setCellEditValidator(
-    QSharedPointer<AgCellEditValidator>(new CountValidator));
+    QSharedPointer<AuCellEditValidator>(new CountValidator));
 
 grid->editCell(2, 1);   // 打开编辑器，试试输入负数（对应演示按钮）
 )snip";
@@ -1073,17 +1073,17 @@ grid->editCell(2, 1);   // 打开编辑器，试试输入负数（对应演示�
             u"“启用”列画成彩色徽标，“操作”列画成按钮（悬停变色、手型光标，点击删除该行）。"
             u"渲染器只管绘制，交互通过 cellClicked / 鼠标回调接入。");
         page.createDemo = []() {
-            AgGridModel *model = new AgGridModel(nullptr);
-            QVector<AgColumnDef> columns;
-            AgColumnDef name("name", QStringLiteral(u"名称"));
+            AuGridModel *model = new AuGridModel(nullptr);
+            QVector<AuColumnDef> columns;
+            AuColumnDef name("name", QStringLiteral(u"名称"));
             name.setWidth(130);
             columns.append(name);
-            columns.append(AgColumnDef("count", QStringLiteral(u"数量")));
-            AgColumnDef enabled("enabled", QStringLiteral(u"启用"));
+            columns.append(AuColumnDef("count", QStringLiteral(u"数量")));
+            AuColumnDef enabled("enabled", QStringLiteral(u"启用"));
             enabled.setWidth(110);
             enabled.setCellRenderer(QStringLiteral("demoBadge"));
             columns.append(enabled);
-            AgColumnDef op("op", QStringLiteral(u"操作"));
+            AuColumnDef op("op", QStringLiteral(u"操作"));
             op.setWidth(110);
             op.setCellRenderer(QStringLiteral("demoButton"));
             op.setFocusable(false);   // 按钮列不参与键盘焦点（见“单元格焦点控制”页）
@@ -1091,17 +1091,17 @@ grid->editCell(2, 1);   // 打开编辑器，试试输入负数（对应演示�
             model->setColumnDefs(columns);
             model->setRowData(PageHelpers::makeFlatRows(15));
 
-            AgGridWidget *grid = new AgGridWidget;
+            AuGridWidget *grid = new AuGridWidget;
             grid->setModel(model);
             model->setParent(grid);
             grid->registerCellRenderer(QStringLiteral("demoBadge"),
-                                       QSharedPointer<AgCellRenderer>(new BadgeRenderer));
+                                       QSharedPointer<AuCellRenderer>(new BadgeRenderer));
             grid->registerCellRenderer(QStringLiteral("demoButton"),
-                                       QSharedPointer<AgCellRenderer>(new ButtonRenderer));
+                                       QSharedPointer<AuCellRenderer>(new ButtonRenderer));
 
             QPlainTextEdit *log = PageHelpers::makeLog();
             // 操作列按钮：cellClicked 里按列 field 分发，删除该行（带消失动画）
-            QObject::connect(grid, &AgGridWidget::cellClicked, grid,
+            QObject::connect(grid, &AuGridWidget::cellClicked, grid,
                              [grid, log](int row, int column) {
                                  if (grid->model()->fieldAtColumn(column)
                                      != QStringLiteral("op"))
@@ -1121,29 +1121,29 @@ grid->editCell(2, 1);   // 打开编辑器，试试输入负数（对应演示�
         };
         page.code = R"snip(
 // 徽标渲染器：按值画彩色圆角徽标（paint 里画圆角矩形 + 文字，完整实现见演示源码）
-class BadgeRenderer : public AgCellRenderer { /* ... */ };
+class BadgeRenderer : public AuCellRenderer { /* ... */ };
 
 // 按钮渲染器：画按钮 + wantsHoverCursor 返回 true 显示手型光标
 //（完整实现见“单元格焦点控制”页）
-class ButtonRenderer : public AgCellRenderer { /* ... */ };
+class ButtonRenderer : public AuCellRenderer { /* ... */ };
 
 grid->registerCellRenderer("badge",
-    QSharedPointer<AgCellRenderer>(new BadgeRenderer));
+    QSharedPointer<AuCellRenderer>(new BadgeRenderer));
 grid->registerCellRenderer("button",
-    QSharedPointer<AgCellRenderer>(new ButtonRenderer));
+    QSharedPointer<AuCellRenderer>(new ButtonRenderer));
 
-AgColumnDef enabled("enabled", "启用");
+AuColumnDef enabled("enabled", "启用");
 enabled.setCellRenderer("badge");    // “启用”列画成徽标
 columns.append(enabled);
 
-AgColumnDef op("op", "操作");
+AuColumnDef op("op", "操作");
 op.setCellRenderer("button");        // “操作”列画成按钮
 op.setFocusable(false);              // 按钮列不参与键盘焦点（可选）
 columns.append(op);
 
 // 渲染器只负责绘制；交互在控件的 cellClicked 里按列 field 分发
 //（本页演示：点击按钮删除该行，带行消失动画）
-connect(grid, &AgGridWidget::cellClicked, this, [grid](int row, int column) {
+connect(grid, &AuGridWidget::cellClicked, this, [grid](int row, int column) {
     if (grid->model()->fieldAtColumn(column) == "op")
         grid->model()->removeRows({ grid->model()->originalRowForVisibleRow(row) });
 });
@@ -1156,20 +1156,20 @@ connect(grid, &AgGridWidget::cellClicked, this, [grid](int row, int column) {
         FeaturePage page;
         page.title = QStringLiteral(u"自定义单元格编辑器");
         page.description = QStringLiteral(
-            u"AgCellEditor 把任意 QWidget 包装成编辑器，注册后按列引用。"
+            u"AuCellEditor 把任意 QWidget 包装成编辑器，注册后按列引用。"
             u"演示自定义 QSpinBox 编辑器（数量列 0~500，越界自动钳制）与内置 "
-            u"AgComboBoxCellEditor 下拉编辑器（类别列）。双击 / 回车 / 直接输入进入编辑。");
+            u"AuComboBoxCellEditor 下拉编辑器（类别列）。双击 / 回车 / 直接输入进入编辑。");
         page.createDemo = []() {
-            AgGridModel *model = new AgGridModel(nullptr);
-            QVector<AgColumnDef> columns;
-            AgColumnDef name("name", QStringLiteral(u"名称"));
+            AuGridModel *model = new AuGridModel(nullptr);
+            QVector<AuColumnDef> columns;
+            AuColumnDef name("name", QStringLiteral(u"名称"));
             name.setWidth(120);
             columns.append(name);
-            AgColumnDef count("count", QStringLiteral(u"数量(0~500)"));
+            AuColumnDef count("count", QStringLiteral(u"数量(0~500)"));
             count.setEditable(true);
             count.setCellEditor(QStringLiteral("demoSpin"));
             columns.append(count);
-            AgColumnDef category("category", QStringLiteral(u"类别(下拉)"));
+            AuColumnDef category("category", QStringLiteral(u"类别(下拉)"));
             category.setWidth(140);
             category.setEditable(true);
             category.setCellEditor(QStringLiteral("demoCombo"));
@@ -1177,18 +1177,18 @@ connect(grid, &AgGridWidget::cellClicked, this, [grid](int row, int column) {
             model->setColumnDefs(columns);
             model->setRowData(PageHelpers::makeFlatRows(15));
 
-            AgGridWidget *grid = new AgGridWidget;
+            AuGridWidget *grid = new AuGridWidget;
             grid->setModel(model);
             model->setParent(grid);
             grid->registerCellEditor(QStringLiteral("demoSpin"),
-                                     QSharedPointer<AgCellEditor>(new SpinBoxEditor));
+                                     QSharedPointer<AuCellEditor>(new SpinBoxEditor));
             grid->registerCellEditor(QStringLiteral("demoCombo"),
-                                     QSharedPointer<AgCellEditor>(new AgComboBoxCellEditor(
+                                     QSharedPointer<AuCellEditor>(new AuComboBoxCellEditor(
                                          {QStringLiteral(u"水果"), QStringLiteral(u"蔬菜"),
                                           QStringLiteral(u"谷物"), QStringLiteral(u"坚果")})));
 
             QPlainTextEdit *log = PageHelpers::makeLog();
-            QObject::connect(grid, &AgGridWidget::cellValueChanged, grid,
+            QObject::connect(grid, &AuGridWidget::cellValueChanged, grid,
                              [log](int row, int column, const QVariant &value) {
                                  PageHelpers::appendLog(
                                      log, QString("cellValueChanged: r=%1 c=%2 value=%3")
@@ -1199,8 +1199,8 @@ connect(grid, &AgGridWidget::cellClicked, this, [grid](int row, int column) {
             return PageHelpers::composeDemo(nullptr, grid, log);
         };
         page.code = R"snip(
-// 自定义编辑器：把 QSpinBox 包装成 AgCellEditor（三个纯虚接口）
-class SpinBoxEditor : public AgCellEditor
+// 自定义编辑器：把 QSpinBox 包装成 AuCellEditor（三个纯虚接口）
+class SpinBoxEditor : public AuCellEditor
 {
 public:
     QWidget *createEditor(QWidget *parent) const override {
@@ -1223,48 +1223,48 @@ public:
 
 // 注册 + 按列引用（双击 / 回车 / 直接输入进入编辑）
 grid->registerCellEditor("spin",
-    QSharedPointer<AgCellEditor>(new SpinBoxEditor));
+    QSharedPointer<AuCellEditor>(new SpinBoxEditor));
 count.setCellEditor("spin");
 count.setEditable(true);
 
 // 内置下拉编辑器（可编辑 QComboBox）
 grid->registerCellEditor("combo",
-    QSharedPointer<AgCellEditor>(new AgComboBoxCellEditor({"水果", "蔬菜", "谷物", "坚果"})));
+    QSharedPointer<AuCellEditor>(new AuComboBoxCellEditor({"水果", "蔬菜", "谷物", "坚果"})));
 category.setCellEditor("combo");
 category.setEditable(true);
 
 // 提交后模型已更新并发出信号
-connect(grid, &AgGridWidget::cellValueChanged,
+connect(grid, &AuGridWidget::cellValueChanged,
         this, [](int row, int column, const QVariant &value) { /* ... */ });
 )snip";
         pages.append(page);
     }
 
-    // ============ 10b2. 集成 AgSelect / AgDatePicker 编辑器 ============
+    // ============ 10b2. 集成 AuSelect / AuDatePicker 编辑器 ============
     {
         FeaturePage page;
-        page.title = QStringLiteral(u"集成 AgSelect / AgDatePicker");
+        page.title = QStringLiteral(u"集成 AuSelect / AuDatePicker");
         page.description = QStringLiteral(
-            u"把 AgSelect / AgDatePicker 集成进单元格编辑——完全通过外部代码完成，"
-            u"AgGrid 零改动：AgCellEditor 插件接口包装控件 + registerCellEditor 注册，"
+            u"把 AuSelect / AuDatePicker 集成进单元格编辑——完全通过外部代码完成，"
+            u"AuGrid 零改动：AuCellEditor 插件接口包装控件 + registerCellEditor 注册，"
             u"选择 / 选日期后通过公开 API closeEditor(true) 主动提交。"
             u"交互闭环：编辑器打开即自动展开面板，Enter / 点击确认后提交并把焦点还给"
             u"表格，Tab / 方向键可继续导航；编辑框高度按行高定制、完全贴合单元格。");
         page.createDemo = []() {
-            AgGridModel *model = new AgGridModel(nullptr);
-            QVector<AgColumnDef> columns;
-            AgColumnDef name("name", QStringLiteral(u"名称"));
+            AuGridModel *model = new AuGridModel(nullptr);
+            QVector<AuColumnDef> columns;
+            AuColumnDef name("name", QStringLiteral(u"名称"));
             name.setWidth(110);
             columns.append(name);
-            AgColumnDef category("category", QStringLiteral(u"类别(AgSelect)"));
+            AuColumnDef category("category", QStringLiteral(u"类别(AuSelect)"));
             category.setWidth(150);
             category.setEditable(true);
-            category.setCellEditor(QStringLiteral("agSelect"));
+            category.setCellEditor(QStringLiteral("auSelect"));
             columns.append(category);
-            AgColumnDef date("date", QStringLiteral(u"日期(AgDatePicker)"));
+            AuColumnDef date("date", QStringLiteral(u"日期(AuDatePicker)"));
             date.setWidth(150);
             date.setEditable(true);
-            date.setCellEditor(QStringLiteral("agDatePicker"));
+            date.setCellEditor(QStringLiteral("auDatePicker"));
             columns.append(date);
             model->setColumnDefs(columns);
 
@@ -1280,22 +1280,22 @@ connect(grid, &AgGridWidget::cellValueChanged,
             }
             model->setRowData(rows);
 
-            AgGridWidget *grid = new AgGridWidget;
+            AuGridWidget *grid = new AuGridWidget;
             grid->setModel(model);
             model->setParent(grid);
-            grid->registerCellEditor(QStringLiteral("agSelect"),
-                                     QSharedPointer<AgCellEditor>(new AgSelectCellEditor(
+            grid->registerCellEditor(QStringLiteral("auSelect"),
+                                     QSharedPointer<AuCellEditor>(new AuSelectCellEditor(
                                          {QStringLiteral(u"苹果 Apple"),
                                           QStringLiteral(u"香蕉 Banana"),
                                           QStringLiteral(u"樱桃 Cherry"),
                                           QStringLiteral(u"葡萄 Grape"),
                                           QStringLiteral(u"芒果 Mango"),
                                           QStringLiteral(u"橙子 Orange")})));
-            grid->registerCellEditor(QStringLiteral("agDatePicker"),
-                                     QSharedPointer<AgCellEditor>(new AgDatePickerCellEditor));
+            grid->registerCellEditor(QStringLiteral("auDatePicker"),
+                                     QSharedPointer<AuCellEditor>(new AuDatePickerCellEditor));
 
             QPlainTextEdit *log = PageHelpers::makeLog();
-            QObject::connect(grid, &AgGridWidget::cellValueChanged, grid,
+            QObject::connect(grid, &AuGridWidget::cellValueChanged, grid,
                              [grid, log](int row, int column, const QVariant &value) {
                                  const QString field = grid->model()->fieldAtColumn(column);
                                  PageHelpers::appendLog(
@@ -1307,21 +1307,21 @@ connect(grid, &AgGridWidget::cellValueChanged,
             return PageHelpers::composeDemo(nullptr, grid, log);
         };
         page.code = R"snip(
-// —— 完全外部集成，AgGrid 零改动 ——
-// 1) 包装类：QObject + AgCellEditor 多继承（用静态 QObject::connect，无需 moc）
-class AgSelectCellEditor : public QObject, public AgCellEditor
+// —— 完全外部集成，AuGrid 零改动 ——
+// 1) 包装类：QObject + AuCellEditor 多继承（用静态 QObject::connect，无需 moc）
+class AuSelectCellEditor : public QObject, public AuCellEditor
 {
 public:
-    explicit AgSelectCellEditor(const QStringList &items) : m_items(items) {}
+    explicit AuSelectCellEditor(const QStringList &items) : m_items(items) {}
 
     QWidget *createEditor(QWidget *parent) const override {
-        AgSelect *select = new AgSelect(parent);      // parent 即宿主 AgGridWidget
+        AuSelect *select = new AuSelect(parent);      // parent 即宿主 AuGridWidget
         select->addItems(m_items);
         select->setFocusPolicy(Qt::StrongFocus);      // 让 editCell 的 setFocus 生效
 
         // 编辑框高度贴合单元格：按宿主行高定制（独立样式实例）
-        if (AgGridWidget *grid = qobject_cast<AgGridWidget *>(parent)) {
-            AgSelectStyle *style = new AgSelectStyle(*AgSelectStyle::globalStyle());
+        if (AuGridWidget *grid = qobject_cast<AuGridWidget *>(parent)) {
+            AuSelectStyle *style = new AuSelectStyle(*AuSelectStyle::globalStyle());
             style->setEditorHeight(grid->rowHeight());
             select->setStyle(style);
         }
@@ -1334,36 +1334,36 @@ public:
 
         // 选择完成 → 公开 API closeEditor(true) 提交；
         // 提交后宿主自动把焦点还给表格，Tab / 方向键可继续导航
-        QObject::connect(select, &AgSelect::activated, select, [select]() {
-            if (AgGridWidget *grid = qobject_cast<AgGridWidget *>(select->parent()))
+        QObject::connect(select, &AuSelect::activated, select, [select]() {
+            if (AuGridWidget *grid = qobject_cast<AuGridWidget *>(select->parent()))
                 grid->closeEditor(true);
         });
         return select;
     }
     void setEditorValue(QWidget *editor, const QVariant &value) const override {
-        AgSelect *select = static_cast<AgSelect *>(editor);
+        AuSelect *select = static_cast<AuSelect *>(editor);
         select->setCurrentIndex(select->findText(value.toString(), Qt::MatchExactly));
     }
     QVariant editorValue(QWidget *editor) const override {
-        return static_cast<AgSelect *>(editor)->currentText();
+        return static_cast<AuSelect *>(editor)->currentText();
     }
 private:
     QStringList m_items;
 };
 
-// AgDatePicker 同理：setEditorHeight(行高)、打开即展开日历、
+// AuDatePicker 同理：setEditorHeight(行高)、打开即展开日历、
 // activated 提交选中值（QDate）、cleared 提交空值
-class AgDatePickerCellEditor : public QObject, public AgCellEditor { /* 同上 */ };
+class AuDatePickerCellEditor : public QObject, public AuCellEditor { /* 同上 */ };
 
 // 2) 注册并按列引用——与内置编辑器完全同一套用法
-grid->registerCellEditor("agSelect",
-    QSharedPointer<AgCellEditor>(new AgSelectCellEditor({"苹果 Apple", "香蕉 Banana"})));
-category.setCellEditor("agSelect");
+grid->registerCellEditor("auSelect",
+    QSharedPointer<AuCellEditor>(new AuSelectCellEditor({"苹果 Apple", "香蕉 Banana"})));
+category.setCellEditor("auSelect");
 category.setEditable(true);
 
-grid->registerCellEditor("agDatePicker",
-    QSharedPointer<AgCellEditor>(new AgDatePickerCellEditor));
-date.setCellEditor("agDatePicker");
+grid->registerCellEditor("auDatePicker",
+    QSharedPointer<AuCellEditor>(new AuDatePickerCellEditor));
+date.setCellEditor("auDatePicker");
 date.setEditable(true);
 
 // 键盘闭环：Enter / 双击编辑（面板自动展开）→ Enter 确认 → 提交回表格
@@ -1382,25 +1382,25 @@ date.setEditable(true);
             u"数量列表头右侧内嵌“清零”按钮——按钮上点击不触发排序（hitTest 拦截），"
             u"点击后整列数量清零；表头其余区域仍可点击排序 / 拖动调宽。");
         page.createDemo = []() {
-            AgGridModel *model = new AgGridModel(nullptr);
-            QVector<AgColumnDef> columns;
-            AgColumnDef name("name", QStringLiteral(u"名称"));
+            AuGridModel *model = new AuGridModel(nullptr);
+            QVector<AuColumnDef> columns;
+            AuColumnDef name("name", QStringLiteral(u"名称"));
             name.setWidth(140);
             columns.append(name);
-            AgColumnDef count("count", QStringLiteral(u"数量"));
+            AuColumnDef count("count", QStringLiteral(u"数量"));
             count.setSortable(true);
             count.setHeaderRenderer(QStringLiteral("demoHeaderButton"));
             columns.append(count);
             model->setColumnDefs(columns);
             model->setRowData(PageHelpers::makeFlatRows(15));
 
-            AgGridWidget *grid = new AgGridWidget;
+            AuGridWidget *grid = new AuGridWidget;
             grid->setModel(model);
             model->setParent(grid);
             grid->setSortingEnabled(true);
             grid->registerHeaderRenderer(
                 QStringLiteral("demoHeaderButton"),
-                QSharedPointer<AgHeaderRenderer>(new HeaderActionButton(
+                QSharedPointer<AuHeaderRenderer>(new HeaderActionButton(
                     [grid](int column) {
                         // 整列数量清零（可见行坐标逐格写值）
                         for (int r = 0; r < grid->model()->rowCount(); ++r)
@@ -1408,7 +1408,7 @@ date.setEditable(true);
                     })));
 
             QPlainTextEdit *log = PageHelpers::makeLog();
-            QObject::connect(grid, &AgGridWidget::sortChanged, grid,
+            QObject::connect(grid, &AuGridWidget::sortChanged, grid,
                              [log](int column, Qt::SortOrder order) {
                                  PageHelpers::appendLog(
                                      log, QString("sortChanged: column=%1 order=%2")
@@ -1420,13 +1420,13 @@ date.setEditable(true);
         page.code = R"snip(
 // 表头渲染器：接管列头绘制；hitTest 命中的区域点击不触发排序，
 // 在 headerMouseClick 里回调（完整实现见演示源码）
-class HeaderButtonRenderer : public AgHeaderRenderer
+class HeaderButtonRenderer : public AuHeaderRenderer
 {
 public:
-    void paint(QPainter *painter, const QRect &rect, const AgColumnDef &columnDef,
-               int column, int level, const AgGridModel *model,
-               const AgGridStyle *style, const QColor &textColor,
-               const AgHeaderRendererContext &context) const override {
+    void paint(QPainter *painter, const QRect &rect, const AuColumnDef &columnDef,
+               int column, int level, const AuGridModel *model,
+               const AuGridStyle *style, const QColor &textColor,
+               const AuHeaderRendererContext &context) const override {
         // 画标题文字 + 右侧按钮（context.hovered / headerPos 做悬停高亮）
         // context.sorted / sortOrder 可自行绘制排序指示
     }
@@ -1441,7 +1441,7 @@ public:
 };
 
 grid->registerHeaderRenderer("headerButton",
-    QSharedPointer<AgHeaderRenderer>(new HeaderButtonRenderer));
+    QSharedPointer<AuHeaderRenderer>(new HeaderButtonRenderer));
 count.setHeaderRenderer("headerButton");
 count.setSortable(true);   // 按钮外的表头区域仍可点击排序
 
@@ -1459,8 +1459,8 @@ count.setSortable(true);   // 按钮外的表头区域仍可点击排序
             u"setSpan(row, column, rowSpan, columnSpan)，语义参考 QTableView::setSpan："
             u"点击 / 悬停 / 编辑都落在锚点单元格上，合并不跨越列停靠区域边界。");
         page.createDemo = []() {
-            AgGridModel *model = nullptr;
-            AgGridWidget *grid = newFlatGrid(10, &model);
+            AuGridModel *model = nullptr;
+            AuGridWidget *grid = newFlatGrid(10, &model);
 
             QHBoxLayout *controls = new QHBoxLayout;
             QPushButton *span1Btn = new QPushButton(QStringLiteral(u"合并 (0,0) 2行"));
@@ -1508,27 +1508,27 @@ grid->hasSpans();        // 是否存在任何合并区域
             u"三种宽度模式：Fixed 固定像素 / AutoFit 按内容自适应（只增不减）/ "
             u"Flex 按权重分享剩余空间；也支持运行时 setColumnWidth 与整体自适应。");
         page.createDemo = []() {
-            AgGridModel *model = new AgGridModel(nullptr);
-            QVector<AgColumnDef> columns;
-            AgColumnDef fixed("name", QStringLiteral(u"Fixed 100"));
-            fixed.setWidthMode(AgColumnDef::ColumnWidthMode::Fixed);
+            AuGridModel *model = new AuGridModel(nullptr);
+            QVector<AuColumnDef> columns;
+            AuColumnDef fixed("name", QStringLiteral(u"Fixed 100"));
+            fixed.setWidthMode(AuColumnDef::ColumnWidthMode::Fixed);
             fixed.setWidth(100);
             columns.append(fixed);
-            AgColumnDef fit("count", QStringLiteral(u"AutoFit"));
-            fit.setWidthMode(AgColumnDef::ColumnWidthMode::AutoFit);
+            AuColumnDef fit("count", QStringLiteral(u"AutoFit"));
+            fit.setWidthMode(AuColumnDef::ColumnWidthMode::AutoFit);
             columns.append(fit);
-            AgColumnDef flex1("category", QStringLiteral(u"Flex 权重1"));
-            flex1.setWidthMode(AgColumnDef::ColumnWidthMode::Flex);
+            AuColumnDef flex1("category", QStringLiteral(u"Flex 权重1"));
+            flex1.setWidthMode(AuColumnDef::ColumnWidthMode::Flex);
             flex1.setFlexWeight(1);
             columns.append(flex1);
-            AgColumnDef flex2("enabled", QStringLiteral(u"Flex 权重2"));
-            flex2.setWidthMode(AgColumnDef::ColumnWidthMode::Flex);
+            AuColumnDef flex2("enabled", QStringLiteral(u"Flex 权重2"));
+            flex2.setWidthMode(AuColumnDef::ColumnWidthMode::Flex);
             flex2.setFlexWeight(2);
             columns.append(flex2);
             model->setColumnDefs(columns);
             model->setRowData(PageHelpers::makeFlatRows(30));
 
-            AgGridWidget *grid = new AgGridWidget;
+            AuGridWidget *grid = new AuGridWidget;
             grid->setModel(model);
             model->setParent(grid);
 
@@ -1546,18 +1546,18 @@ grid->hasSpans();        // 是否存在任何合并区域
         };
         page.code = R"snip(
 // 示例数据：四列，表头与宽度模式与演示一致（数据 30 行，取自 makeFlatRows）
-AgColumnDef fixed("name", "Fixed 100");
-fixed.setWidthMode(AgColumnDef::ColumnWidthMode::Fixed);  // 固定像素
+AuColumnDef fixed("name", "Fixed 100");
+fixed.setWidthMode(AuColumnDef::ColumnWidthMode::Fixed);  // 固定像素
 fixed.setWidth(100);
 
-AgColumnDef fit("count", "AutoFit");
-fit.setWidthMode(AgColumnDef::ColumnWidthMode::AutoFit);  // 按表头 + 可视内容测量
+AuColumnDef fit("count", "AutoFit");
+fit.setWidthMode(AuColumnDef::ColumnWidthMode::AutoFit);  // 按表头 + 可视内容测量
                                                           //（只增不减，受 minWidth/maxWidth 约束）
-AgColumnDef flex1("category", "Flex 权重1");
-flex1.setWidthMode(AgColumnDef::ColumnWidthMode::Flex);   // 弹性填充剩余空间
+AuColumnDef flex1("category", "Flex 权重1");
+flex1.setWidthMode(AuColumnDef::ColumnWidthMode::Flex);   // 弹性填充剩余空间
 flex1.setFlexWeight(1);                                   // 权重越大分得越多
-AgColumnDef flex2("enabled", "Flex 权重2");
-flex2.setWidthMode(AgColumnDef::ColumnWidthMode::Flex);
+AuColumnDef flex2("enabled", "Flex 权重2");
+flex2.setWidthMode(AuColumnDef::ColumnWidthMode::Flex);
 flex2.setFlexWeight(2);
 
 // 运行时调整（对应演示按钮）
@@ -1574,30 +1574,30 @@ grid->setColumnWidth("name", 180);  // 按 field 设宽（分组列作用于全�
         page.description = QStringLiteral(
             u"分组列通过 addChild 携带子列，列定义展开为列树 → 多级表头；叶子列才承载数据。");
         page.createDemo = []() {
-            AgGridModel *model = new AgGridModel(nullptr);
-            AgColumnDef group1(QStringLiteral(u"基本信息"));
-            group1.addChild(AgColumnDef("name", QStringLiteral(u"名称")));
-            group1.addChild(AgColumnDef("count", QStringLiteral(u"数量")));
-            AgColumnDef group2(QStringLiteral(u"其他"));
-            group2.addChild(AgColumnDef("category", QStringLiteral(u"类别")));
-            group2.addChild(AgColumnDef("enabled", QStringLiteral(u"启用")));
+            AuGridModel *model = new AuGridModel(nullptr);
+            AuColumnDef group1(QStringLiteral(u"基本信息"));
+            group1.addChild(AuColumnDef("name", QStringLiteral(u"名称")));
+            group1.addChild(AuColumnDef("count", QStringLiteral(u"数量")));
+            AuColumnDef group2(QStringLiteral(u"其他"));
+            group2.addChild(AuColumnDef("category", QStringLiteral(u"类别")));
+            group2.addChild(AuColumnDef("enabled", QStringLiteral(u"启用")));
             model->setColumnDefs({group1, group2});
             model->setRowData(PageHelpers::makeFlatRows(30));
 
-            AgGridWidget *grid = new AgGridWidget;
+            AuGridWidget *grid = new AuGridWidget;
             grid->setModel(model);
             model->setParent(grid);
             return PageHelpers::composeDemo(nullptr, grid);
         };
         page.code = R"snip(
 // 分组列携带子列 → 多级表头（叶子数据与“最小用法”一致：四列 × 30 行）
-AgColumnDef group1("basic", "基本信息");
-group1.addChild(AgColumnDef("name", "名称"));
-group1.addChild(AgColumnDef("count", "数量"));
+AuColumnDef group1("basic", "基本信息");
+group1.addChild(AuColumnDef("name", "名称"));
+group1.addChild(AuColumnDef("count", "数量"));
 
-AgColumnDef group2("extra", "其他");
-group2.addChild(AgColumnDef("category", "类别"));
-group2.addChild(AgColumnDef("enabled", "启用"));
+AuColumnDef group2("extra", "其他");
+group2.addChild(AuColumnDef("category", "类别"));
+group2.addChild(AuColumnDef("enabled", "启用"));
 
 model->setColumnDefs({group1, group2});   // 两级表头
 
@@ -1618,18 +1618,18 @@ model->setColumnDefs({group1, group2});   // 两级表头
             u"观察两侧停靠效果。");
         page.createDemo = []() {
             // 12 列 × 30 行：列多到撑出水平滚动条，才能滚动观察停靠效果
-            AgGridModel *model = new AgGridModel(nullptr);
-            QVector<AgColumnDef> columns;
-            AgColumnDef name("name", QStringLiteral(u"名称"));
+            AuGridModel *model = new AuGridModel(nullptr);
+            QVector<AuColumnDef> columns;
+            AuColumnDef name("name", QStringLiteral(u"名称"));
             name.setWidth(110);
             columns.append(name);
-            columns.append(AgColumnDef("count", QStringLiteral(u"数量")));
-            columns.append(AgColumnDef("category", QStringLiteral(u"类别")));
-            AgColumnDef enabled("enabled", QStringLiteral(u"启用"));
+            columns.append(AuColumnDef("count", QStringLiteral(u"数量")));
+            columns.append(AuColumnDef("category", QStringLiteral(u"类别")));
+            AuColumnDef enabled("enabled", QStringLiteral(u"启用"));
             enabled.setCheckbox(true);
             columns.append(enabled);
             for (int c = 1; c <= 8; ++c)
-                columns.append(AgColumnDef(QString("col%1").arg(c),
+                columns.append(AuColumnDef(QString("col%1").arg(c),
                                            QStringLiteral(u"字段%1").arg(c)));
             model->setColumnDefs(columns);
 
@@ -1649,7 +1649,7 @@ model->setColumnDefs({group1, group2});   // 两级表头
             }
             model->setRowData(rows);
 
-            AgGridWidget *grid = new AgGridWidget;
+            AuGridWidget *grid = new AuGridWidget;
             grid->setModel(model);
             model->setParent(grid);
 
@@ -1664,18 +1664,18 @@ model->setColumnDefs({group1, group2});   // 两级表头
             controls->addWidget(unpinBtn);
             controls->addStretch(1);
             QObject::connect(pinLeftBtn, &QPushButton::clicked, grid, [grid]() {
-                grid->pinColumn("name", AgColumnDef::PinMode::Left);
+                grid->pinColumn("name", AuColumnDef::PinMode::Left);
             });
             QObject::connect(pinLeft2Btn, &QPushButton::clicked, grid, [grid]() {
-                grid->pinColumn("count", AgColumnDef::PinMode::Left);
+                grid->pinColumn("count", AuColumnDef::PinMode::Left);
             });
             QObject::connect(pinRightBtn, &QPushButton::clicked, grid, [grid]() {
-                grid->pinColumn("col8", AgColumnDef::PinMode::Right);
+                grid->pinColumn("col8", AuColumnDef::PinMode::Right);
             });
             QObject::connect(unpinBtn, &QPushButton::clicked, grid, [grid]() {
-                grid->pinColumn("name", AgColumnDef::PinMode::None);
-                grid->pinColumn("count", AgColumnDef::PinMode::None);
-                grid->pinColumn("col8", AgColumnDef::PinMode::None);
+                grid->pinColumn("name", AuColumnDef::PinMode::None);
+                grid->pinColumn("count", AuColumnDef::PinMode::None);
+                grid->pinColumn("col8", AuColumnDef::PinMode::None);
             });
             return PageHelpers::composeDemo(controls, grid);
         };
@@ -1684,14 +1684,14 @@ model->setColumnDefs({group1, group2});   // 两级表头
 // 列足够多撑出水平滚动条，滚动中间列即可观察停靠效果
 
 // 运行时停靠（对应演示按钮）
-grid->pinColumn("name", AgColumnDef::PinMode::Left);       // 名称列 → 左停靠
-grid->pinColumn("count", AgColumnDef::PinMode::Left);      // 数量列 → 左停靠
-grid->pinColumn("col8", AgColumnDef::PinMode::Right);      // 字段8列 → 右停靠
-grid->pinColumn("name", AgColumnDef::PinMode::None);       // 取消停靠
+grid->pinColumn("name", AuColumnDef::PinMode::Left);       // 名称列 → 左停靠
+grid->pinColumn("count", AuColumnDef::PinMode::Left);      // 数量列 → 左停靠
+grid->pinColumn("col8", AuColumnDef::PinMode::Right);      // 字段8列 → 右停靠
+grid->pinColumn("name", AuColumnDef::PinMode::None);       // 取消停靠
 
 grid->columnPinMode(0);   // 查询停靠状态
 
-// 也可在列定义中指定：name.setPinMode(AgColumnDef::PinMode::Left)
+// 也可在列定义中指定：name.setPinMode(AuColumnDef::PinMode::Left)
 // 合并单元格不会跨越停靠区域边界；
 // 行号 / 复选框 / 拖拽手柄等辅助列始终固定在左侧。
 )snip";
@@ -1705,8 +1705,8 @@ grid->columnPinMode(0);   // 查询停靠状态
         page.description = QStringLiteral(
             u"setColumnVisible 显隐列（带位移动画）；隐藏列的叶子索引不变；field 指向分组列时整组显隐。");
         page.createDemo = []() {
-            AgGridModel *model = nullptr;
-            AgGridWidget *grid = newFlatGrid(30, &model);
+            AuGridModel *model = nullptr;
+            AuGridWidget *grid = newFlatGrid(30, &model);
 
             QHBoxLayout *controls = new QHBoxLayout;
             QPushButton *hideBtn = new QPushButton(QStringLiteral(u"隐藏“数量”列"));
@@ -1748,16 +1748,16 @@ grid->isColumnVisible("count");   // 查询可见性
             u"支持双击 / 键盘切换与批量展开折叠。");
         page.createDemo = []() {
             auto makeTree = []() {
-                QVector<AgTreeRow> roots;
+                QVector<AuTreeRow> roots;
                 for (int i = 0; i < 4; ++i) {
-                    AgTreeRow root;
+                    AuTreeRow root;
                     root.data.insert("name", QStringLiteral(u"分组 %1").arg(i + 1));
                     root.data.insert("count", i * 100);
                     for (int j = 0; j < 3; ++j) {
-                        AgTreeRow child;
+                        AuTreeRow child;
                         child.data.insert("name", QStringLiteral(u"　子项 %1-%2").arg(i + 1).arg(j + 1));
                         child.data.insert("count", i * 100 + j);
-                        AgTreeRow leaf;
+                        AuTreeRow leaf;
                         leaf.data.insert("name", QStringLiteral(u"　　明细 %1-%2-a").arg(i + 1).arg(j + 1));
                         leaf.data.insert("count", j);
                         child.children.append(leaf);
@@ -1768,14 +1768,14 @@ grid->isColumnVisible("count");   // 查询可见性
                 return roots;
             };
 
-            AgGridModel *model = new AgGridModel(nullptr);
-            QVector<AgColumnDef> columns;
-            columns.append(AgColumnDef("name", QStringLiteral(u"名称")));
-            columns.append(AgColumnDef("count", QStringLiteral(u"数量")));
+            AuGridModel *model = new AuGridModel(nullptr);
+            QVector<AuColumnDef> columns;
+            columns.append(AuColumnDef("name", QStringLiteral(u"名称")));
+            columns.append(AuColumnDef("count", QStringLiteral(u"数量")));
             model->setColumnDefs(columns);
             model->setTreeData(makeTree());
 
-            AgGridWidget *grid = new AgGridWidget;
+            AuGridWidget *grid = new AuGridWidget;
             grid->setModel(model);
             model->setParent(grid);
 
@@ -1801,21 +1801,21 @@ grid->isColumnVisible("count");   // 查询可见性
             return PageHelpers::composeDemo(controls, grid);
         };
         page.code = R"snip(
-// 列定义：名称 / 数量（叶子数据放在 AgTreeRow::data，键 = 列 field）
-model->setColumnDefs({AgColumnDef("name", "名称"),
-                      AgColumnDef("count", "数量")});
+// 列定义：名称 / 数量（叶子数据放在 AuTreeRow::data，键 = 列 field）
+model->setColumnDefs({AuColumnDef("name", "名称"),
+                      AuColumnDef("count", "数量")});
 
-// 层级数据：AgTreeRow 携带 data 与 children
+// 层级数据：AuTreeRow 携带 data 与 children
 // 演示数据：4 个分组 × 3 个子项 × 1 条明细（三级）
-AgTreeRow root;
+AuTreeRow root;
 root.data.insert("name", "分组 1");
 root.data.insert("count", 100);
 root.expanded = true;             // 初始展开态（可选，默认折叠）
 
-AgTreeRow child;
+AuTreeRow child;
 child.data.insert("name", "子项 1-1");
 child.data.insert("count", 100);
-AgTreeRow leaf;                   // children 为空 = 叶子行
+AuTreeRow leaf;                   // children 为空 = 叶子行
 leaf.data.insert("name", "明细 1-1-a");
 leaf.data.insert("count", 0);
 child.children.append(leaf);
@@ -1841,19 +1841,19 @@ grid->rowDepth(0);                // 层级（根 = 0）
             u"树形模式 + 复选框列 → 父子级联三态：勾选父行自动勾选全部子行，"
             u"子行部分勾选时父行半选；折叠不可见的子行同样参与级联。");
         page.createDemo = []() {
-            AgGridModel *model = new AgGridModel(nullptr);
-            QVector<AgColumnDef> columns;
-            columns.append(AgColumnDef("name", QStringLiteral(u"名称")));
-            columns.append(AgColumnDef("count", QStringLiteral(u"数量")));
+            AuGridModel *model = new AuGridModel(nullptr);
+            QVector<AuColumnDef> columns;
+            columns.append(AuColumnDef("name", QStringLiteral(u"名称")));
+            columns.append(AuColumnDef("count", QStringLiteral(u"数量")));
             model->setColumnDefs(columns);
 
-            QVector<AgTreeRow> roots;
+            QVector<AuTreeRow> roots;
             for (int i = 0; i < 3; ++i) {
-                AgTreeRow root;
+                AuTreeRow root;
                 root.data.insert("name", QStringLiteral(u"分组 %1").arg(i + 1));
                 root.data.insert("count", i * 100);
                 for (int j = 0; j < 3; ++j) {
-                    AgTreeRow child;
+                    AuTreeRow child;
                     child.data.insert("name", QStringLiteral(u"　子项 %1-%2").arg(i + 1).arg(j + 1));
                     child.data.insert("count", i * 100 + j);
                     root.children.append(child);
@@ -1862,14 +1862,14 @@ grid->rowDepth(0);                // 层级（根 = 0）
             }
             model->setTreeData(roots);
 
-            AgGridWidget *grid = new AgGridWidget;
+            AuGridWidget *grid = new AuGridWidget;
             grid->setModel(model);
             model->setParent(grid);
             grid->setCheckboxColumnVisible(true);
             grid->expandAll();
 
             QPlainTextEdit *log = PageHelpers::makeLog();
-            QObject::connect(grid, &AgGridWidget::rowCheckedChanged, grid,
+            QObject::connect(grid, &AuGridWidget::rowCheckedChanged, grid,
                              [grid, log](int row, bool checked) {
                                  PageHelpers::appendLog(
                                      log, QString("rowCheckedChanged: row=%1 checked=%2 半选=%3")
@@ -1896,8 +1896,8 @@ grid->rowDepth(0);                // 层级（根 = 0）
         };
         page.code = R"snip(
 // 示例数据：名称 / 数量 两列，3 个分组 × 3 个子项（树形）
-model->setColumnDefs({AgColumnDef("name", "名称"),
-                      AgColumnDef("count", "数量")});
+model->setColumnDefs({AuColumnDef("name", "名称"),
+                      AuColumnDef("count", "数量")});
 model->setTreeData(roots);
 
 grid->setCheckboxColumnVisible(true); // 复选框列 → 父子级联三态
@@ -1924,8 +1924,8 @@ grid->checkedOriginalRows();   // 勾选集合（原始行号）
             u"setLoading 用于异步取数场景：半透明蒙层 + 旋转圆环 + 文案，淡入淡出；"
             u"显示期间交互被屏蔽、打开中的编辑器自动关闭。");
         page.createDemo = []() {
-            AgGridModel *model = nullptr;
-            AgGridWidget *grid = newFlatGrid(50, &model);
+            AuGridModel *model = nullptr;
+            AuGridWidget *grid = newFlatGrid(50, &model);
 
             QHBoxLayout *controls = new QHBoxLayout;
             QPushButton *loadBtn = new QPushButton(QStringLiteral(u"模拟请求（遮罩 2 秒）"));
@@ -1969,12 +1969,12 @@ grid->isLoading();   // 遮罩状态（淡出过渡中已返回 false）
             u"两类动画：排序 / 过滤的行位移动画（FLIP），重设数据的切换动画"
             u"（旧内容上移出场、新内容移入）；均可调时长或整体关闭。");
         page.createDemo = []() {
-            AgGridModel *model = nullptr;
-            AgGridWidget *grid = newFlatGrid(30, &model);
+            AuGridModel *model = nullptr;
+            AuGridWidget *grid = newFlatGrid(30, &model);
             grid->setSortingEnabled(true);
             // 让“数量”列可排序，方便触发布移动画
             {
-                QVector<AgColumnDef> columns = model->topLevelColumnDefs();
+                QVector<AuColumnDef> columns = model->topLevelColumnDefs();
                 if (!columns.isEmpty()) {
                     columns[1].setSortable(true);
                     model->setColumnDefs(columns);
@@ -2006,7 +2006,7 @@ grid->isLoading();   // 遮罩状态（淡出过渡中已返回 false）
                 grid->model()->setRowData(rows);
             });
             QObject::connect(sortBtn, &QPushButton::clicked, grid, [grid]() {
-                grid->setSortRules({AgSortRule(1, grid->sortOrder() == Qt::AscendingOrder
+                grid->setSortRules({AuSortRule(1, grid->sortOrder() == Qt::AscendingOrder
                                                         ? Qt::DescendingOrder
                                                         : Qt::AscendingOrder)});
             });
@@ -2027,7 +2027,7 @@ model->setRowData(newRows);
 
 // 排序规则 → 行位移动画：行从旧布局位置移向新位置
 //（对应演示按钮“按数量排序”，按数量列叶子索引 1 升 / 降序切换）
-grid->setSortRules({AgSortRule(1, Qt::AscendingOrder)});
+grid->setSortRules({AuSortRule(1, Qt::AscendingOrder)});
 )snip";
         pages.append(page);
     }
@@ -2040,14 +2040,14 @@ grid->setSortRules({AgSortRule(1, Qt::AscendingOrder)});
             u"TextWrapMode::WordWrap 使单元格按列宽自动换行，行高随内容与列宽自适应；"
             u"调整列宽后行高自动重排。");
         page.createDemo = []() {
-            AgGridModel *model = new AgGridModel(nullptr);
-            QVector<AgColumnDef> columns;
-            AgColumnDef name("name", QStringLiteral(u"名称"));
+            AuGridModel *model = new AuGridModel(nullptr);
+            QVector<AuColumnDef> columns;
+            AuColumnDef name("name", QStringLiteral(u"名称"));
             name.setWidth(90);
             columns.append(name);
-            AgColumnDef desc("desc", QStringLiteral(u"描述（自动换行）"));
+            AuColumnDef desc("desc", QStringLiteral(u"描述（自动换行）"));
             desc.setWidth(260);
-            desc.setTextWrapMode(AgColumnDef::TextWrapMode::WordWrap);
+            desc.setTextWrapMode(AuColumnDef::TextWrapMode::WordWrap);
             columns.append(desc);
             model->setColumnDefs(columns);
 
@@ -2062,7 +2062,7 @@ grid->setSortRules({AgSortRule(1, Qt::AscendingOrder)});
             }
             model->setRowData(rows);
 
-            AgGridWidget *grid = new AgGridWidget;
+            AuGridWidget *grid = new AuGridWidget;
             grid->setModel(model);
             model->setParent(grid);
 
@@ -2080,12 +2080,12 @@ grid->setSortRules({AgSortRule(1, Qt::AscendingOrder)});
         };
         page.code = R"snip(
 // 示例数据：名称（90px）/ 描述（自动换行，260px）两列 × 20 行长描述文本
-AgColumnDef name("name", "名称");
+AuColumnDef name("name", "名称");
 name.setWidth(90);
 
-AgColumnDef desc("desc", "描述（自动换行）");
+AuColumnDef desc("desc", "描述（自动换行）");
 desc.setWidth(260);
-desc.setTextWrapMode(AgColumnDef::TextWrapMode::WordWrap);  // 自动换行
+desc.setTextWrapMode(AuColumnDef::TextWrapMode::WordWrap);  // 自动换行
 // 行高按内容与列宽自适应；调整列宽后自动重排
 //（对应演示按钮：描述列宽 → 420 / 180）
 grid->setColumnWidth("desc", 420);
@@ -2107,8 +2107,8 @@ grid->setColumnWidth("desc", 420);
             u"隐藏后仅保留行方向边框，列未铺满宽度时自动在内容右边缘补一条竖线"
             u"（始终描住当前最右侧列的右边界），辅助列与表头不受影响。");
         page.createDemo = []() {
-            AgGridModel *model = nullptr;
-            AgGridWidget *grid = newFlatGrid(20, &model);
+            AuGridModel *model = nullptr;
+            AuGridWidget *grid = newFlatGrid(20, &model);
 
             QHBoxLayout *controls = new QHBoxLayout;
             QPushButton *showBtn = new QPushButton(QStringLiteral(u"显示纵向网格线"));
@@ -2144,13 +2144,13 @@ grid->isVerticalGridLinesVisible();        // 查询状态
             u"列 tooltipEnabled=true 时，内容超出列宽被裁剪则悬停约 0.7 秒弹出提示；"
             u"可通过回调自定义内容（支持富文本）。");
         page.createDemo = []() {
-            AgGridModel *model = new AgGridModel(nullptr);
-            QVector<AgColumnDef> columns;
-            AgColumnDef name("name", QStringLiteral(u"长文本列"));
+            AuGridModel *model = new AuGridModel(nullptr);
+            QVector<AuColumnDef> columns;
+            AuColumnDef name("name", QStringLiteral(u"长文本列"));
             name.setWidth(150);
             name.setTooltipEnabled(true);
             columns.append(name);
-            AgColumnDef count("count", QStringLiteral(u"数量"));
+            AuColumnDef count("count", QStringLiteral(u"数量"));
             columns.append(count);
             model->setColumnDefs(columns);
 
@@ -2163,11 +2163,11 @@ grid->isVerticalGridLinesVisible();        // 查询状态
             }
             model->setRowData(rows);
 
-            AgGridWidget *grid = new AgGridWidget;
+            AuGridWidget *grid = new AuGridWidget;
             grid->setModel(model);
             model->setParent(grid);
             grid->setCellTooltipTextCallback(
-                [](const AgGridModel *, int row, int column, const QString &text) {
+                [](const AuGridModel *, int row, int column, const QString &text) {
                     return QStringLiteral(u"<b>R%1C%2</b><br/>%3")
                         .arg(row)
                         .arg(column)
@@ -2177,14 +2177,14 @@ grid->isVerticalGridLinesVisible();        // 查询状态
         };
         page.code = R"snip(
 // 示例数据：长文本列（150px，tooltipEnabled）+ 数量列 × 20 行超宽文本
-AgColumnDef name("name", "长文本列");
+AuColumnDef name("name", "长文本列");
 name.setWidth(150);
 name.setTooltipEnabled(true);   // 内容被裁剪时悬停约 0.7 秒弹出
-AgColumnDef count("count", "数量");
+AuColumnDef count("count", "数量");
 
 // 自定义 tooltip 内容（与演示一致：富文本，行 / 列 / 原文）
 grid->setCellTooltipTextCallback(
-    [](const AgGridModel *, int row, int column, const QString &text) {
+    [](const AuGridModel *, int row, int column, const QString &text) {
         return QString("<b>R%1C%2</b><br/>%3")
             .arg(row)
             .arg(column)
@@ -2206,11 +2206,11 @@ grid->setCellTooltipTextCallback(
         page.description = QStringLiteral(
             u"cellRightClicked / headerRightClicked 给出全局坐标，可直接用于 QMenu::exec 弹出菜单。");
         page.createDemo = []() {
-            AgGridModel *model = nullptr;
-            AgGridWidget *grid = newFlatGrid(30, &model);
+            AuGridModel *model = nullptr;
+            AuGridWidget *grid = newFlatGrid(30, &model);
 
             QPlainTextEdit *log = PageHelpers::makeLog();
-            QObject::connect(grid, &AgGridWidget::cellRightClicked, grid,
+            QObject::connect(grid, &AuGridWidget::cellRightClicked, grid,
                              [grid, log](int row, int column, const QPoint &globalPos) {
                                  QMenu menu;
                                  QString field = grid->model()->fieldAtColumn(column);
@@ -2220,7 +2220,7 @@ grid->setCellTooltipTextCallback(
                                  if (act)
                                      PageHelpers::appendLog(log, QString("菜单点击: %1").arg(act->text()));
                              });
-            QObject::connect(grid, &AgGridWidget::headerRightClicked, grid,
+            QObject::connect(grid, &AuGridWidget::headerRightClicked, grid,
                              [log](int column, int level, const QPoint &globalPos) {
                                  QMenu menu;
                                  menu.addAction(QStringLiteral(u"表头操作 c=%1 level=%2").arg(column).arg(level));
@@ -2233,7 +2233,7 @@ grid->setCellTooltipTextCallback(
 
 // 单元格右键：globalPos 为全局坐标，可直接用于 QMenu::exec
 //（与演示一致：菜单项显示列 field 名 + 行列号）
-connect(grid, &AgGridWidget::cellRightClicked,
+connect(grid, &AuGridWidget::cellRightClicked,
         this, [grid](int row, int column, const QPoint &globalPos) {
     QMenu menu;
     QString field = grid->model()->fieldAtColumn(column);
@@ -2245,7 +2245,7 @@ connect(grid, &AgGridWidget::cellRightClicked,
 
 // 表头右键：column 为该节点首个叶子列，level 为 1 起始层级
 //（与演示一致：菜单项显示列与层级）
-connect(grid, &AgGridWidget::headerRightClicked,
+connect(grid, &AuGridWidget::headerRightClicked,
         this, [](int column, int level, const QPoint &globalPos) {
     QMenu menu;
     menu.addAction(QString("表头操作 c=%1 level=%2").arg(column).arg(level));
@@ -2264,8 +2264,8 @@ connect(grid, &AgGridWidget::headerRightClicked,
             u"程序化定位，可选顶端 / 居中 / 底端对齐。");
         page.createDemo = []() {
             constexpr int kRows = 100000;
-            AgGridModel *model = nullptr;
-            AgGridWidget *grid = newFlatGrid(kRows, &model);
+            AuGridModel *model = nullptr;
+            AuGridWidget *grid = newFlatGrid(kRows, &model);
 
             QHBoxLayout *controls = new QHBoxLayout;
             QSpinBox *spin = new QSpinBox;
@@ -2282,7 +2282,7 @@ connect(grid, &AgGridWidget::headerRightClicked,
             controls->addWidget(centerBtn);
             controls->addWidget(bottomBtn);
             controls->addStretch(1);
-            using Hint = AgGridWidget::ScrollHint;
+            using Hint = AuGridWidget::ScrollHint;
             QObject::connect(visibleBtn, &QPushButton::clicked, grid, [grid, spin]() {
                 grid->scrollToRow(spin->value(), Hint::EnsureVisible);
             });
@@ -2303,10 +2303,10 @@ connect(grid, &AgGridWidget::headerRightClicked,
 model->setRowData(rows);
 
 // 垂直定位到某行（演示有目标行输入框 + 四个按钮，默认 99999）
-grid->scrollToRow(99999, AgGridWidget::ScrollHint::EnsureVisible);  // 滚到刚好可见（默认）
-grid->scrollToRow(99999, AgGridWidget::ScrollHint::PositionTop);    // 顶端对齐
-grid->scrollToRow(99999, AgGridWidget::ScrollHint::PositionCenter); // 居中
-grid->scrollToRow(99999, AgGridWidget::ScrollHint::PositionBottom); // 底端对齐
+grid->scrollToRow(99999, AuGridWidget::ScrollHint::EnsureVisible);  // 滚到刚好可见（默认）
+grid->scrollToRow(99999, AuGridWidget::ScrollHint::PositionTop);    // 顶端对齐
+grid->scrollToRow(99999, AuGridWidget::ScrollHint::PositionCenter); // 居中
+grid->scrollToRow(99999, AuGridWidget::ScrollHint::PositionBottom); // 底端对齐
 )snip";
         pages.append(page);
     }
@@ -2316,7 +2316,7 @@ grid->scrollToRow(99999, AgGridWidget::ScrollHint::PositionBottom); // 底端对
         FeaturePage page;
         page.title = QStringLiteral(u"多表格同步");
         page.description = QStringLiteral(
-            u"AgGridSyncGroup 让多个表格的滚动偏移与列宽互相跟随，适合左右对比场景；"
+            u"AuGridSyncGroup 让多个表格的滚动偏移与列宽互相跟随，适合左右对比场景；"
             u"两个表格可共用同一个模型。");
         page.createDemo = []() {
             QWidget *body = new QWidget;
@@ -2324,34 +2324,34 @@ grid->scrollToRow(99999, AgGridWidget::ScrollHint::PositionBottom); // 底端对
             h->setContentsMargins(0, 0, 0, 0);
             h->setSpacing(6);
 
-            AgGridWidget *gridA = new AgGridWidget;
-            AgGridModel *model = PageHelpers::makeFlatModel(100, gridA);
+            AuGridWidget *gridA = new AuGridWidget;
+            AuGridModel *model = PageHelpers::makeFlatModel(100, gridA);
             gridA->setModel(model);
-            AgGridWidget *gridB = new AgGridWidget;
+            AuGridWidget *gridB = new AuGridWidget;
             gridB->setModel(model);   // 共用模型
             h->addWidget(gridA);
             h->addWidget(gridB);
 
-            AgGridSyncGroup *sync = new AgGridSyncGroup(body);
+            AuGridSyncGroup *sync = new AuGridSyncGroup(body);
             sync->addGrid(gridA);
             sync->addGrid(gridB);
-            sync->setFeatures(AgGridSyncGroup::SyncAll);
+            sync->setFeatures(AuGridSyncGroup::SyncAll);
             sync->syncFrom(gridA);
             return PageHelpers::composeDemo(nullptr, body);
         };
         page.code = R"snip(
 // 两个表格并排显示，共用同一个模型（标准四列 × 100 行，构造见“最小用法”）
-AgGridWidget *gridA = new AgGridWidget(this);
-AgGridWidget *gridB = new AgGridWidget(this);
+AuGridWidget *gridA = new AuGridWidget(this);
+AuGridWidget *gridB = new AuGridWidget(this);
 gridA->setModel(model);
 gridB->setModel(model);   // 共用模型
 
-AgGridSyncGroup *sync = new AgGridSyncGroup(this);
+AuGridSyncGroup *sync = new AuGridSyncGroup(this);
 
 sync->addGrid(gridA);   // 左表
 sync->addGrid(gridB);   // 右表
 
-sync->setFeatures(AgGridSyncGroup::SyncAll);
+sync->setFeatures(AuGridSyncGroup::SyncAll);
 // 也可只开一项：SyncScroll 滚动偏移 / SyncColumnWidths 列宽
 
 sync->syncFrom(gridA);  // 初始对齐（一次性把 source 状态推给其他成员）
@@ -2370,8 +2370,8 @@ sync->syncFrom(gridA);  // 初始对齐（一次性把 source 状态推给其他
             u"setSizeMode 切换小 / 中 / 大三档密度（内部克隆样式）；"
             u"setStyle 设置独立亮 / 暗主题（控件接管所有权），传 nullptr 恢复跟随全局。");
         page.createDemo = []() {
-            AgGridModel *model = nullptr;
-            AgGridWidget *grid = newFlatGrid(20, &model);
+            AuGridModel *model = nullptr;
+            AuGridWidget *grid = newFlatGrid(20, &model);
 
             QHBoxLayout *controls = new QHBoxLayout;
             QPushButton *smallBtn = new QPushButton(QStringLiteral(u"小"));
@@ -2388,7 +2388,7 @@ sync->syncFrom(gridA);  // 初始对齐（一次性把 source 状态推给其他
             controls->addWidget(lightBtn);
             controls->addWidget(globalBtn);
             controls->addStretch(1);
-            using SizeMode = AgGridStyle::SizeMode;
+            using SizeMode = AuGridStyle::SizeMode;
             QObject::connect(smallBtn, &QPushButton::clicked, grid,
                              [grid]() { grid->setSizeMode(SizeMode::Small); });
             QObject::connect(mediumBtn, &QPushButton::clicked, grid,
@@ -2396,9 +2396,9 @@ sync->syncFrom(gridA);  // 初始对齐（一次性把 source 状态推给其他
             QObject::connect(largeBtn, &QPushButton::clicked, grid,
                              [grid]() { grid->setSizeMode(SizeMode::Large); });
             QObject::connect(darkBtn, &QPushButton::clicked, grid,
-                             [grid]() { grid->setStyle(AgGridStyle::createDarkStyle()); });
+                             [grid]() { grid->setStyle(AuGridStyle::createDarkStyle()); });
             QObject::connect(lightBtn, &QPushButton::clicked, grid,
-                             [grid]() { grid->setStyle(AgGridStyle::createLightStyle()); });
+                             [grid]() { grid->setStyle(AuGridStyle::createLightStyle()); });
             QObject::connect(globalBtn, &QPushButton::clicked, grid,
                              [grid]() { grid->setStyle(nullptr); });
             return PageHelpers::composeDemo(controls, grid);
@@ -2407,17 +2407,17 @@ sync->syncFrom(gridA);  // 初始对齐（一次性把 source 状态推给其他
 // 演示数据与“最小用法”一致：四列 × 20 行
 
 // 密度档位：小 / 中 / 大（对应演示按钮，内部克隆样式并调整尺寸预设）
-grid->setSizeMode(AgGridStyle::SizeMode::Large);
+grid->setSizeMode(AuGridStyle::SizeMode::Large);
 grid->sizeMode();
 
 // 独立主题：亮 / 暗工厂（控件接管样式所有权并负责销毁）
-grid->setStyle(AgGridStyle::createDarkStyle());
-grid->setStyle(AgGridStyle::createLightStyle());
+grid->setStyle(AuGridStyle::createDarkStyle());
+grid->setStyle(AuGridStyle::createLightStyle());
 
-grid->setStyle(nullptr);   // 恢复跟随全局 AgGridStyle::globalStyle()
+grid->setStyle(nullptr);   // 恢复跟随全局 AuGridStyle::globalStyle()
 
 // 全局设置一次，所有未显式 setStyle 的控件自动生效（本程序 main.cpp 即如此）：
-AgGridStyle::setGlobalStyle(AgGridStyle::createLightStyle());
+AuGridStyle::setGlobalStyle(AuGridStyle::createLightStyle());
 )snip";
         pages.append(page);
     }

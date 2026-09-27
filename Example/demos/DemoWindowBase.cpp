@@ -1,7 +1,7 @@
 #include "DemoWindowBase.h"
 
-#include "AgColumnDef.h"
-#include "AgGridModel.h"
+#include "AuColumnDef.h"
+#include "AuGridModel.h"
 
 #include <QFont>
 #include <QLabel>
@@ -49,33 +49,33 @@ void DemoWindowBase::addNote(const QString &text)
     m_noteLayout->addWidget(note);
 }
 
-QVector<AgColumnDef> DemoWindowBase::makeStandardColumns()
+QVector<AuColumnDef> DemoWindowBase::makeStandardColumns()
 {
-    QVector<AgColumnDef> columns;
+    QVector<AuColumnDef> columns;
 
-    AgColumnDef colA("col0", "A");
-    colA.setWidthMode(AgColumnDef::ColumnWidthMode::Fixed);
+    AuColumnDef colA("col0", "A");
+    colA.setWidthMode(AuColumnDef::ColumnWidthMode::Fixed);
     colA.setWidth(90);
     colA.setSortable(true);
     columns.append(colA);
 
-    AgColumnDef colB("col1", "B");
-    colB.setWidthMode(AgColumnDef::ColumnWidthMode::AutoFit);
+    AuColumnDef colB("col1", "B");
+    colB.setWidthMode(AuColumnDef::ColumnWidthMode::AutoFit);
     colB.setMinWidth(60);
     colB.setEditable(true);
     colB.setSortable(true);
     columns.append(colB);
 
-    AgColumnDef multi("Multi");
+    AuColumnDef multi("Multi");
     multi.setHeaderName("Multi");
-    QVector<AgColumnDef> children;
-    AgColumnDef colC("col2", "C");
-    colC.setWidthMode(AgColumnDef::ColumnWidthMode::Fixed);
+    QVector<AuColumnDef> children;
+    AuColumnDef colC("col2", "C");
+    colC.setWidthMode(AuColumnDef::ColumnWidthMode::Fixed);
     colC.setWidth(120);
     colC.setResizable(false);
     colC.setEditable(true);
-    AgColumnDef colD("col3", "D");
-    colD.setWidthMode(AgColumnDef::ColumnWidthMode::Fixed);
+    AuColumnDef colD("col3", "D");
+    colD.setWidthMode(AuColumnDef::ColumnWidthMode::Fixed);
     colD.setWidth(120);
     colD.setEditable(true);
     children.append(colC);
@@ -83,21 +83,21 @@ QVector<AgColumnDef> DemoWindowBase::makeStandardColumns()
     multi.setChildren(children);
     columns.append(multi);
 
-    AgColumnDef colE("col4", "E");
-    colE.setWidthMode(AgColumnDef::ColumnWidthMode::Flex);
+    AuColumnDef colE("col4", "E");
+    colE.setWidthMode(AuColumnDef::ColumnWidthMode::Flex);
     colE.setFlexWeight(2);
     colE.setMinWidth(100);
     colE.setSortable(true);
     columns.append(colE);
 
-    AgColumnDef colF("col5", "F");
-    colF.setWidthMode(AgColumnDef::ColumnWidthMode::Flex);
+    AuColumnDef colF("col5", "F");
+    colF.setWidthMode(AuColumnDef::ColumnWidthMode::Flex);
     colF.setFlexWeight(1);
     colF.setMinWidth(100);
     columns.append(colF);
 
-    AgColumnDef colG("col6", "Enabled");
-    colG.setWidthMode(AgColumnDef::ColumnWidthMode::Fixed);
+    AuColumnDef colG("col6", "Enabled");
+    colG.setWidthMode(AuColumnDef::ColumnWidthMode::Fixed);
     colG.setWidth(90);
     colG.setCheckbox(true);
     colG.setEditable(true);
@@ -131,9 +131,9 @@ QVector<QVariantMap> DemoWindowBase::makeFlatRows(int rowCount)
     return rows;
 }
 
-AgGridModel *DemoWindowBase::makeStandardModel(int rowCount, QObject *parent)
+AuGridModel *DemoWindowBase::makeStandardModel(int rowCount, QObject *parent)
 {
-    AgGridModel *model = new AgGridModel(parent);
+    AuGridModel *model = new AuGridModel(parent);
     model->setColumnDefs(makeStandardColumns());
     model->setRowData(makeFlatRows(rowCount));
     return model;

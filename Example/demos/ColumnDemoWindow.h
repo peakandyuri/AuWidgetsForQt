@@ -3,8 +3,8 @@
 
 #include "DemoWindowBase.h"
 
-class AgGridModel;
-class AgGridWidget;
+class AuGridModel;
+class AuGridWidget;
 
 /**
  * @brief 列操作示例：列停靠、列显隐（含分组列）、列拖拽重排。
@@ -17,8 +17,8 @@ public:
     explicit ColumnDemoWindow(QWidget *parent = nullptr);
 
 private:
-    AgGridWidget *m_grid;
-    AgGridModel *m_model;
+    AuGridWidget *m_grid;
+    AuGridModel *m_model;
 };
 
 #endif // COLUMNDEMOWINDOW_H

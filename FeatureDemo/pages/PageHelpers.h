@@ -4,7 +4,7 @@
 #include <QVector>
 #include <QVariantMap>
 
-class AgGridModel;
+class AuGridModel;
 class QHBoxLayout;
 class QPlainTextEdit;
 class QWidget;
@@ -18,7 +18,7 @@ namespace PageHelpers {
 QVector<QVariantMap> makeFlatRows(int rowCount);
 
 /// 创建"名称 / 数量 / 类别 / 启用"四列 + 扁平数据的模型（所有权归调用者）。
-AgGridModel *makeFlatModel(int rowCount, QObject *parent);
+AuGridModel *makeFlatModel(int rowCount, QObject *parent);
 
 /// 只读日志部件（固定高度，信号输出用）。
 QPlainTextEdit *makeLog(int maxHeight = 110);

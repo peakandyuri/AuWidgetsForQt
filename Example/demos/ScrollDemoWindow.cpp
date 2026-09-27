@@ -1,8 +1,8 @@
 #include "ScrollDemoWindow.h"
 
-#include "AgColumnDef.h"
-#include "AgGridModel.h"
-#include "AgGridWidget.h"
+#include "AuColumnDef.h"
+#include "AuGridModel.h"
+#include "AuGridWidget.h"
 
 #include <QHBoxLayout>
 #include <QLabel>
@@ -22,11 +22,11 @@ ScrollDemoWindow::ScrollDemoWindow(QWidget *parent)
 {
     const int rowCount = 100000;
 
-    m_model = new AgGridModel(this);
+    m_model = new AuGridModel(this);
     m_model->setColumnDefs(makeStandardColumns());
     m_model->setRowData(makeFlatRows(rowCount));
 
-    m_grid = new AgGridWidget(this);
+    m_grid = new AuGridWidget(this);
     m_grid->setModel(m_model);
     m_grid->setVisibleRowBuffer(5);   // 视口外上下各多渲染 5 行，滚动更平滑
 
@@ -57,19 +57,19 @@ ScrollDemoWindow::ScrollDemoWindow(QWidget *parent)
     buttons->addStretch(1);
 
     connect(rowTopBtn, &QPushButton::clicked, this, [this]() {
-        m_grid->scrollToRow(m_rowSpin->value(), AgGridWidget::ScrollHint::PositionTop);
+        m_grid->scrollToRow(m_rowSpin->value(), AuGridWidget::ScrollHint::PositionTop);
     });
     connect(rowCenterBtn, &QPushButton::clicked, this, [this]() {
-        m_grid->scrollToRow(m_rowSpin->value(), AgGridWidget::ScrollHint::PositionCenter);
+        m_grid->scrollToRow(m_rowSpin->value(), AuGridWidget::ScrollHint::PositionCenter);
     });
     connect(rowBottomBtn, &QPushButton::clicked, this, [this]() {
-        m_grid->scrollToRow(m_rowSpin->value(), AgGridWidget::ScrollHint::PositionBottom);
+        m_grid->scrollToRow(m_rowSpin->value(), AuGridWidget::ScrollHint::PositionBottom);
     });
     connect(cellVisibleBtn, &QPushButton::clicked, this, [this]() {
-        m_grid->scrollToCell(m_rowSpin->value(), m_columnSpin->value(), AgGridWidget::ScrollHint::EnsureVisible);
+        m_grid->scrollToCell(m_rowSpin->value(), m_columnSpin->value(), AuGridWidget::ScrollHint::EnsureVisible);
     });
     connect(cellCenterBtn, &QPushButton::clicked, this, [this]() {
-        m_grid->scrollToCell(m_rowSpin->value(), m_columnSpin->value(), AgGridWidget::ScrollHint::PositionCenter);
+        m_grid->scrollToCell(m_rowSpin->value(), m_columnSpin->value(), AuGridWidget::ScrollHint::PositionCenter);
     });
 
     m_contentLayout->addLayout(positionRow);

@@ -1,8 +1,8 @@
 #include "SelectionCheckDemoWindow.h"
 
-#include "AgColumnDef.h"
-#include "AgGridModel.h"
-#include "AgGridWidget.h"
+#include "AuColumnDef.h"
+#include "AuGridModel.h"
+#include "AuGridWidget.h"
 
 #include <QHBoxLayout>
 #include <QPlainTextEdit>
@@ -19,22 +19,22 @@ SelectionCheckDemoWindow::SelectionCheckDemoWindow(QWidget *parent)
     , m_log(nullptr)
 {
     // 三列示例：名称 / 数量 / 启用（数据列复选框）
-    QVector<AgColumnDef> columns;
-    AgColumnDef colName("name", QStringLiteral(u"名称"));
-    colName.setWidthMode(AgColumnDef::ColumnWidthMode::Flex);
+    QVector<AuColumnDef> columns;
+    AuColumnDef colName("name", QStringLiteral(u"名称"));
+    colName.setWidthMode(AuColumnDef::ColumnWidthMode::Flex);
     columns.append(colName);
-    AgColumnDef colCount("count", QStringLiteral(u"数量"));
-    colCount.setWidthMode(AgColumnDef::ColumnWidthMode::Fixed);
+    AuColumnDef colCount("count", QStringLiteral(u"数量"));
+    colCount.setWidthMode(AuColumnDef::ColumnWidthMode::Fixed);
     colCount.setWidth(120);
     columns.append(colCount);
-    AgColumnDef colEnabled("enabled", QStringLiteral(u"启用"));
-    colEnabled.setWidthMode(AgColumnDef::ColumnWidthMode::Fixed);
+    AuColumnDef colEnabled("enabled", QStringLiteral(u"启用"));
+    colEnabled.setWidthMode(AuColumnDef::ColumnWidthMode::Fixed);
     colEnabled.setWidth(90);
     colEnabled.setCheckbox(true);
     colEnabled.setEditable(true);
     columns.append(colEnabled);
 
-    m_model = new AgGridModel(this);
+    m_model = new AuGridModel(this);
     m_model->setColumnDefs(columns);
 
     QVector<QVariantMap> rows;
@@ -47,13 +47,13 @@ SelectionCheckDemoWindow::SelectionCheckDemoWindow(QWidget *parent)
     }
     m_model->setRowData(rows);
 
-    m_grid = new AgGridWidget(this);
+    m_grid = new AuGridWidget(this);
     m_grid->setModel(m_model);
     m_grid->setRowNumberColumnVisible(true);
     m_grid->setCheckboxColumnVisible(true);
 
     // 行可选回调：名称以 R1 开头的行不可勾选（复选框置灰）
-    m_grid->setRowCheckableCallback([](const AgGridModel *model, int row) {
+    m_grid->setRowCheckableCallback([](const AuGridModel *model, int row) {
         return !model->cellValue(row, "name").toString().startsWith("R1");
     });
 
@@ -66,18 +66,18 @@ SelectionCheckDemoWindow::SelectionCheckDemoWindow(QWidget *parent)
         m_log->appendPlainText(text);
     };
 
-    connect(m_grid, &AgGridWidget::rowCheckedChanged, this, [appendLog](int row, bool checked) {
+    connect(m_grid, &AuGridWidget::rowCheckedChanged, this, [appendLog](int row, bool checked) {
         appendLog(QString("rowCheckedChanged: row=%1 checked=%2").arg(row).arg(checked));
     });
-    connect(m_grid, &AgGridWidget::checkedStateChanged, this, [this, appendLog]() {
+    connect(m_grid, &AuGridWidget::checkedStateChanged, this, [this, appendLog]() {
         appendLog(QString("checkedStateChanged: 可见=%1 原始=%2")
                       .arg(m_grid->checkedRows().size())
                       .arg(m_grid->checkedOriginalRows().size()));
     });
-    connect(m_grid, &AgGridWidget::cellCheckStateChanged, this, [appendLog](int row, int column, bool checked) {
+    connect(m_grid, &AuGridWidget::cellCheckStateChanged, this, [appendLog](int row, int column, bool checked) {
         appendLog(QString("cellCheckStateChanged: row=%1 column=%2 checked=%3").arg(row).arg(column).arg(checked));
     });
-    connect(m_grid, &AgGridWidget::selectionChanged, this, [this, appendLog]() {
+    connect(m_grid, &AuGridWidget::selectionChanged, this, [this, appendLog]() {
         QStringList rows;
         for (int row : m_grid->selectedRows())
             rows.append(QString::number(row));
@@ -101,21 +101,21 @@ SelectionCheckDemoWindow::SelectionCheckDemoWindow(QWidget *parent)
     modeButtons->addWidget(selectRowsBtn);
     modeButtons->addStretch(1);
 
-    auto setModeUi = [singleBtn, multiBtn, noneBtn](AgGridWidget::SelectionMode mode) {
-        singleBtn->setChecked(mode == AgGridWidget::SelectionMode::Single);
-        multiBtn->setChecked(mode == AgGridWidget::SelectionMode::Multiple);
-        noneBtn->setChecked(mode == AgGridWidget::SelectionMode::None);
+    auto setModeUi = [singleBtn, multiBtn, noneBtn](AuGridWidget::SelectionMode mode) {
+        singleBtn->setChecked(mode == AuGridWidget::SelectionMode::Single);
+        multiBtn->setChecked(mode == AuGridWidget::SelectionMode::Multiple);
+        noneBtn->setChecked(mode == AuGridWidget::SelectionMode::None);
     };
     connect(singleBtn, &QPushButton::clicked, this, [this, setModeUi]() {
-        m_grid->setSelectionMode(AgGridWidget::SelectionMode::Single);
+        m_grid->setSelectionMode(AuGridWidget::SelectionMode::Single);
         setModeUi(m_grid->selectionMode());
     });
     connect(multiBtn, &QPushButton::clicked, this, [this, setModeUi]() {
-        m_grid->setSelectionMode(AgGridWidget::SelectionMode::Multiple);
+        m_grid->setSelectionMode(AuGridWidget::SelectionMode::Multiple);
         setModeUi(m_grid->selectionMode());
     });
     connect(noneBtn, &QPushButton::clicked, this, [this, setModeUi]() {
-        m_grid->setSelectionMode(AgGridWidget::SelectionMode::None);
+        m_grid->setSelectionMode(AuGridWidget::SelectionMode::None);
         setModeUi(m_grid->selectionMode());
     });
     connect(printSelBtn, &QPushButton::clicked, this, [this, appendLog]() {

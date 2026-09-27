@@ -31,16 +31,16 @@ QVector<WidgetEntry> widgetEntries()
 {
     return {
         { QStringLiteral("grid"),
-          QStringLiteral(u"AgGrid"),
+          QStringLiteral(u"AuGrid"),
           QStringLiteral(u"数据表格\n行号 / 复选框 / 选择 / 拖拽 / 排序…") },
         { QStringLiteral("select"),
-          QStringLiteral(u"AgSelect"),
+          QStringLiteral(u"AuSelect"),
           QStringLiteral(u"下拉选择\n单选 / 多选 chips / 分组 / 过滤…") },
         { QStringLiteral("datepicker"),
-          QStringLiteral(u"AgDatePicker"),
+          QStringLiteral(u"AuDatePicker"),
           QStringLiteral(u"日期选择\n日 / 月 / 年 / 范围 / footer…") },
         { QStringLiteral("plot"),
-          QStringLiteral(u"AgPlot"),
+          QStringLiteral(u"AuPlot"),
           QStringLiteral(u"曲线绘制\n双轴 / 网格 / 点线面 / 拖动缩放…") },
     };
 }
@@ -50,7 +50,7 @@ QVector<WidgetEntry> widgetEntries()
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
-    setWindowTitle(QStringLiteral(u"AgWidgets 功能细化演示 — 一个功能一个示例"));
+    setWindowTitle(QStringLiteral(u"AuWidgets 功能细化演示 — 一个功能一个示例"));
 
     m_pages.insert(QStringLiteral("grid"), makeGridPages());
     m_pages.insert(QStringLiteral("select"), makeSelectPages());

@@ -1,8 +1,8 @@
 #include "DataAnimationDemoWindow.h"
 
-#include "AgColumnDef.h"
-#include "AgGridModel.h"
-#include "AgGridWidget.h"
+#include "AuColumnDef.h"
+#include "AuGridModel.h"
+#include "AuGridWidget.h"
 
 #include <QCheckBox>
 #include <QHBoxLayout>
@@ -21,30 +21,30 @@ DataAnimationDemoWindow::DataAnimationDemoWindow(QWidget *parent)
     , m_model(nullptr)
     , m_animSwitch(nullptr)
 {
-    m_model = new AgGridModel(this);
+    m_model = new AuGridModel(this);
 
-    QVector<AgColumnDef> columns;
-    AgColumnDef colName("name", QStringLiteral(u"名称"));
-    colName.setWidthMode(AgColumnDef::ColumnWidthMode::Fixed);
+    QVector<AuColumnDef> columns;
+    AuColumnDef colName("name", QStringLiteral(u"名称"));
+    colName.setWidthMode(AuColumnDef::ColumnWidthMode::Fixed);
     colName.setWidth(130);
     colName.setSortable(true);
     columns.append(colName);
-    AgColumnDef colScore("score", QStringLiteral(u"分数"));
-    colScore.setWidthMode(AgColumnDef::ColumnWidthMode::Fixed);
+    AuColumnDef colScore("score", QStringLiteral(u"分数"));
+    colScore.setWidthMode(AuColumnDef::ColumnWidthMode::Fixed);
     colScore.setWidth(100);
     colScore.setSortable(true);
     colScore.setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     columns.append(colScore);
-    AgColumnDef colDesc("desc", QStringLiteral(u"描述"));
-    colDesc.setWidthMode(AgColumnDef::ColumnWidthMode::Flex);
+    AuColumnDef colDesc("desc", QStringLiteral(u"描述"));
+    colDesc.setWidthMode(AuColumnDef::ColumnWidthMode::Flex);
     columns.append(colDesc);
     m_model->setColumnDefs(columns);
     m_model->setRowData(makeRows(40));
 
-    m_grid = new AgGridWidget(this);
+    m_grid = new AuGridWidget(this);
     m_grid->setModel(m_model);
     m_grid->setSortingEnabled(true);   // 点击表头排序同样触发位移动画
-    m_grid->setSelectionMode(AgGridWidget::SelectionMode::Multiple);   // 多选后可整批删除
+    m_grid->setSelectionMode(AuGridWidget::SelectionMode::Multiple);   // 多选后可整批删除
 
     // 控制按钮
     QHBoxLayout *buttons = new QHBoxLayout;

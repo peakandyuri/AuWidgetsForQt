@@ -3,8 +3,8 @@
 
 #include "DemoWindowBase.h"
 
-class AgGridModel;
-class AgGridWidget;
+class AuGridModel;
+class AuGridWidget;
 class QSpinBox;
 
 /**
@@ -18,8 +18,8 @@ public:
     explicit ScrollDemoWindow(QWidget *parent = nullptr);
 
 private:
-    AgGridWidget *m_grid;
-    AgGridModel *m_model;
+    AuGridWidget *m_grid;
+    AuGridModel *m_model;
     QSpinBox *m_rowSpin;
     QSpinBox *m_columnSpin;
 };

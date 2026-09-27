@@ -1,8 +1,8 @@
 #include "StyleDemoWindow.h"
 
-#include "AgGridModel.h"
-#include "AgGridStyle.h"
-#include "AgGridWidget.h"
+#include "AuGridModel.h"
+#include "AuGridStyle.h"
+#include "AuGridWidget.h"
 #include "DemoStyle.h"
 
 #include <QCheckBox>
@@ -18,11 +18,11 @@ StyleDemoWindow::StyleDemoWindow(QWidget *parent)
     , m_grid(nullptr)
     , m_model(nullptr)
 {
-    m_model = new AgGridModel(this);
+    m_model = new AuGridModel(this);
     m_model->setColumnDefs(makeStandardColumns());
     m_model->setRowData(makeFlatRows(60));
 
-    m_grid = new AgGridWidget(this);
+    m_grid = new AuGridWidget(this);
     m_grid->setModel(m_model);
 
     QHBoxLayout *themeRow = new QHBoxLayout;
@@ -32,10 +32,10 @@ StyleDemoWindow::StyleDemoWindow(QWidget *parent)
     themeRow->addWidget(darkBtn);
     themeRow->addStretch(1);
     connect(lightBtn, &QPushButton::clicked, this, []() {
-        AgGridStyle::setGlobalStyle(AgGridStyle::createLightStyle());
+        AuGridStyle::setGlobalStyle(AuGridStyle::createLightStyle());
     });
     connect(darkBtn, &QPushButton::clicked, this, []() {
-        AgGridStyle::setGlobalStyle(AgGridStyle::createDarkStyle());
+        AuGridStyle::setGlobalStyle(AuGridStyle::createDarkStyle());
     });
 
     QHBoxLayout *modeRow = new QHBoxLayout;
@@ -51,21 +51,21 @@ StyleDemoWindow::StyleDemoWindow(QWidget *parent)
     modeRow->addWidget(sizeLargeBtn);
     modeRow->addStretch(1);
 
-    auto updateSizeButtons = [sizeSmallBtn, sizeMediumBtn, sizeLargeBtn](AgGridWidget::SizeMode mode) {
-        sizeSmallBtn->setChecked(mode == AgGridWidget::SizeMode::Small);
-        sizeMediumBtn->setChecked(mode == AgGridWidget::SizeMode::Medium);
-        sizeLargeBtn->setChecked(mode == AgGridWidget::SizeMode::Large);
+    auto updateSizeButtons = [sizeSmallBtn, sizeMediumBtn, sizeLargeBtn](AuGridWidget::SizeMode mode) {
+        sizeSmallBtn->setChecked(mode == AuGridWidget::SizeMode::Small);
+        sizeMediumBtn->setChecked(mode == AuGridWidget::SizeMode::Medium);
+        sizeLargeBtn->setChecked(mode == AuGridWidget::SizeMode::Large);
     };
     connect(sizeSmallBtn, &QPushButton::clicked, this, [this, updateSizeButtons]() {
-        m_grid->setSizeMode(AgGridWidget::SizeMode::Small);
+        m_grid->setSizeMode(AuGridWidget::SizeMode::Small);
         updateSizeButtons(m_grid->sizeMode());
     });
     connect(sizeMediumBtn, &QPushButton::clicked, this, [this, updateSizeButtons]() {
-        m_grid->setSizeMode(AgGridWidget::SizeMode::Medium);
+        m_grid->setSizeMode(AuGridWidget::SizeMode::Medium);
         updateSizeButtons(m_grid->sizeMode());
     });
     connect(sizeLargeBtn, &QPushButton::clicked, this, [this, updateSizeButtons]() {
-        m_grid->setSizeMode(AgGridWidget::SizeMode::Large);
+        m_grid->setSizeMode(AuGridWidget::SizeMode::Large);
         updateSizeButtons(m_grid->sizeMode());
     });
 
@@ -82,7 +82,7 @@ StyleDemoWindow::StyleDemoWindow(QWidget *parent)
         m_grid->setStyle(new DemoStyle());   // 独立样式：控件接管所有权
     });
     connect(defaultStyleBtn, &QPushButton::clicked, this, [this]() {
-        m_grid->setStyle(AgGridStyle::globalStyle()->clone());
+        m_grid->setStyle(AuGridStyle::globalStyle()->clone());
     });
     connect(vLinesBox, &QCheckBox::toggled, this, [this](bool checked) {
         m_grid->setVerticalGridLinesVisible(checked);

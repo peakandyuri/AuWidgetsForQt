@@ -1,7 +1,7 @@
 #include "PageHelpers.h"
 
-#include "AgColumnDef.h"
-#include "AgGridModel.h"
+#include "AuColumnDef.h"
+#include "AuGridModel.h"
 
 #include <QPlainTextEdit>
 #include <QVBoxLayout>
@@ -26,23 +26,23 @@ QVector<QVariantMap> makeFlatRows(int rowCount)
     return rows;
 }
 
-AgGridModel *makeFlatModel(int rowCount, QObject *parent)
+AuGridModel *makeFlatModel(int rowCount, QObject *parent)
 {
-    QVector<AgColumnDef> columns;
-    AgColumnDef name("name", QStringLiteral(u"名称"));
+    QVector<AuColumnDef> columns;
+    AuColumnDef name("name", QStringLiteral(u"名称"));
     name.setWidth(140);
     columns.append(name);
-    AgColumnDef count("count", QStringLiteral(u"数量"));
+    AuColumnDef count("count", QStringLiteral(u"数量"));
     count.setWidth(100);
     columns.append(count);
-    AgColumnDef category("category", QStringLiteral(u"类别"));
+    AuColumnDef category("category", QStringLiteral(u"类别"));
     category.setWidth(110);
     columns.append(category);
-    AgColumnDef enabled("enabled", QStringLiteral(u"启用"));
+    AuColumnDef enabled("enabled", QStringLiteral(u"启用"));
     enabled.setWidth(80);
     columns.append(enabled);
 
-    AgGridModel *model = new AgGridModel(parent);
+    AuGridModel *model = new AuGridModel(parent);
     model->setColumnDefs(columns);
     model->setRowData(makeFlatRows(rowCount));
     return model;
