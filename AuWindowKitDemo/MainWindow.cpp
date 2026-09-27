@@ -333,15 +333,12 @@ QWidget *MainWindow::buildInheritPage()
 void MainWindow::switchGlobalTheme()
 {
     const bool toDark = (m_themeButton->text() == QStringLiteral("切换暗黑主题"));
+    // 全局样式只负责窗体自绘部分（标题栏 / 窗体背景 / 边框色 / 阴影色）；
+    // 内容区控件配色由业务自行控制（QSS / QPalette），库与演示均不代管
     AuWindowStyle::setGlobalStyle(toDark ? AuWindowStyle::createDarkStyle()
                                          : AuWindowStyle::createLightStyle());
     m_themeButton->setText(toDark ? QStringLiteral("切换明亮主题")
                                   : QStringLiteral("切换暗黑主题"));
-    // 同步内容区控件配色，演示整体效果（实际工程可搭配 QSS/调色板）
-    QTabWidget *tabs = qobject_cast<QTabWidget *>(centralWidget());
-    if (tabs)
-        tabs->setStyleSheet(toDark ? QStringLiteral("background:#252526; color:#ddd;")
-                                   : QString());
 }
 
 void MainWindow::onCloseIntercepted()

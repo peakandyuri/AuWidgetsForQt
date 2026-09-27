@@ -18,12 +18,15 @@ class QVBoxLayout;
  *        的统一风格窗体容器（继承自 QWidget）。
  *
  * 平台实现策略：
- *  - Windows：保留 WS_THICKFRAME / WS_CAPTION 等原生样式，通过 WM_NCCALCSIZE
- *    去掉可见边框。由此免费获得系统级特性：DWM 阴影、原生最小化 / 最大化动画、
- *    拖动到屏幕上 / 左 / 右边缘的系统分屏与最大化（Aero Snap）、双击标题栏最大化、
+ *  - Windows：保留 WS_THICKFRAME / WS_SYSMENU 等原生样式并剥离 WS_CAPTION，
+ *    经 DwmExtendFrameIntoClientArea 保住 DWM 框架阴影，通过 WM_NCCALCSIZE
+ *    去掉可见边框、WM_NCHITTEST 把标题栏空白区标记为 HTCAPTION。由此免费
+ *    获得系统级特性：DWM 阴影、原生最小化 / 最大化动画、拖动到屏幕上 /
+ *    左 / 右边缘的系统分屏与最大化（Aero Snap）、双击标题栏最大化、
  *    Alt+Space 系统菜单、任务栏实时缩略图；缩放由系统边框热区完成，
- *    最小宽高经 WM_GETMINMAXINFO 生效。圆角在 Win11 上走 DWM 圆角偏好，
- *    Win10 上使用窗口区域（SetWindowRgn）。
+ *    最小宽高经 WM_GETMINMAXINFO 生效，最大化目标为工作区（不遮挡任务栏）。
+ *    圆角仅 Win11 生效（DWM 圆角偏好 + 阴影并存）；Win10 上为保留系统
+ *    阴影降级为直角（SetWindowRgn 区域圆角会关掉 DWM 框架渲染，弃用）。
  *  - Linux/X11：Qt 无边框 + 透明背景，拖动与缩放通过 _NET_WM_MOVERESIZE
  *    交给窗口管理器（在支持的 WM 上同样具有边缘分屏），阴影为 CSD 风格自绘，
  *    圆角通过区域裁剪实现；缩放尊重 WM_NORMAL_HINTS 中的最小尺寸。
@@ -104,8 +107,9 @@ public:
     bool isButtonVisible(AuTitleBar::Button button) const;
 
     // ---- 圆角 ----
-    /// 窗体圆角半径（四角统一），默认 0（直角）。Windows 上由系统提供圆角与
-    /// 配套阴影：1~5 映射为系统小圆角，>5 映射为系统标准圆角；其它平台按像素裁剪。
+    /// 窗体圆角半径（四角统一），默认 0（直角）。Win11 上由系统提供圆角与
+    /// 配套阴影：1~5 映射为系统小圆角，>5 映射为系统标准圆角；Win10 上为
+    /// 保留 DWM 原生阴影降级为直角（无视觉效果）；其它平台按像素裁剪。
     /// 四角独立控制见 setCornerRadius()。
     void setWindowRadius(int radius);
     /// 四角中的最大圆角半径（独立设置各角后返回最大者；系统圆角 /
@@ -114,7 +118,7 @@ public:
     /// 设置单个角的圆角半径（Qt::Corner 指定角），其余角不变。
     /// 可实现"仅顶部圆角""顶部大圆角 + 底部小圆角"等形态。
     /// Windows 上系统圆角仅支持统一值：Win11 按最大角映射 DWM 偏好，
-    /// Win10 窗口区域按各角半径分别裁剪。
+    /// Win10 直角（见 setWindowRadius 说明）。
     void setCornerRadius(Qt::Corner corner, int radius);
     /// 单角圆角半径。
     int cornerRadius(Qt::Corner corner) const;

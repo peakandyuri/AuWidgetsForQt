@@ -19,6 +19,11 @@ unix:!macx {
     LIBS += -lX11
 }
 
+# Windows：圆角区域 GDI 函数（CreateRoundRectRgn / CombineRgn 等）
+win32 {
+    LIBS += -lgdi32
+}
+
 SOURCES += \
     widget/AuWindow.cpp \
     widget/AuTitleBar.cpp \
