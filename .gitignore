@@ -3,3 +3,4 @@ bin
 .zcode
 *.pro.*
 build-span
+build

@@ -13,10 +13,11 @@
 | **AgSelect** | 下拉选择控件 `AgSelect`（替代 QComboBox） |
 | **AgDatePicker** | 日期选择控件 `AgDatePicker`（替代 QCalendarWidget） |
 | **AgPlot** | 曲线绘制控件 `AgPlot`：双轴坐标、大/小刻度、背景网格、曲线/点/线/面图元、拖动缩放，支持百万级数据 |
+| **AgWindowKit** | 无边框窗体库 `AgWindow`：系统 API 为主实现阴影 / 拖动 / 缩放 / 分屏，自绘标题栏（可插自定义组件）、Dialog 模态、圆角、任务栏与关闭拦截，支持继承定制与 .ui 直接装载 |
 | **Example** | 示例程序：按功能拆分的多个演示窗口，覆盖各控件的主要特性 |
 | **FeatureDemo** | 功能细化演示程序：左侧互斥切换控件，右侧按“一个功能一个 Tab”拆分演示，每页配套实现代码（PlainText），上手最直观 |
 
-依赖关系：AgGrid、AgSelect、AgDatePicker 依赖 AgCommon；AgPlot 独立无依赖；Example、FeatureDemo 依赖以上全部库。
+依赖关系：AgGrid、AgSelect、AgDatePicker 依赖 AgCommon；AgPlot 独立无依赖；AgWindowKit 独立无依赖；Example、FeatureDemo 依赖以上全部库；AgWindowKitDemo 依赖 AgWindowKit。
 
 ## 主要特性
 
@@ -96,6 +97,8 @@ AgWidgetsForQt/
 ├── AgSelect/            # 下拉选择控件
 ├── AgDatePicker/        # 日期选择控件
 ├── AgPlot/              # 曲线绘制控件（坐标轴 / 曲线 / 点线面图元 / 样式）
+├── AgWindowKit/         # 无边框窗体库（窗体容器 / 标题栏 / 样式）
+├── AgWindowKitDemo/     # AgWindowKit 演示程序（特性 / Dialog / 继承与 ui 文件）
 ├── Example/             # 示例程序（demos / CustomAgGrid 自定义扩展示例）
 ├── FeatureDemo/         # 功能细化演示（一个功能一个 Tab + 实现代码）
 └── docs/                # 帮助文档
@@ -106,6 +109,7 @@ AgWidgetsForQt/
 - [docs/AgGrid-帮助文档.md](docs/AgGrid-帮助文档.md)：AgGrid 控件详细用法
 - [docs/AgSelect-帮助文档.md](docs/AgSelect-帮助文档.md)：AgSelect 控件详细用法
 - [docs/AgDatePicker-帮助文档.md](docs/AgDatePicker-帮助文档.md)：AgDatePicker 控件详细用法
+- [docs/AgWindowKit-帮助文档.md](docs/AgWindowKit-帮助文档.md)：AgWindowKit 无边框窗体详细用法
 
 ## 许可证
 
