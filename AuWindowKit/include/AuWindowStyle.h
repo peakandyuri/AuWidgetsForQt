@@ -20,8 +20,10 @@ class AuWindow;
  *  3. 内置主题工厂：createLightStyle() / createDarkStyle()。
  *
  * 说明：
- *  - Windows 平台窗体阴影由系统 DWM 提供，shadow 系列字段在该平台被忽略；
- *    其余平台（X11 等）没有系统级无标题栏窗体阴影，按这些字段自绘 CSD 风格阴影。
+ *  - 窗体阴影：Windows 由系统 DWM 原生提供（无需也无法经此样式定制）；
+ *    X11 对无边框窗口没有窗口管理器侧的阴影通道（_KDE_NET_WM_SHADOW
+ *    需客户端供图，非原生主题阴影），按需求本模块不做客户端阴影，
+ *    shadow 系列字段当前在所有平台均无视觉效果（保留字段，暂勿依赖）。
  *  - 颜色字段为无效 QColor 时表示不绘制对应元素（如关闭窗体描边）。
  */
 class AUWINDOWKIT_EXPORT AuWindowStyle
@@ -82,12 +84,12 @@ public:
     QColor closeButtonGlyphColor() const;               ///< 关闭按钮悬停 / 按下时图标色（默认白）
     void setCloseButtonGlyphColor(const QColor &color);
 
-    // ---- 阴影（非 Windows 平台自绘时生效） ----
-    int shadowMargin() const;                           ///< 阴影外扩留白，默认 12；<=0 关闭阴影
+    // ---- 阴影（当前无视觉效果：Windows 由 DWM 原生提供，其余平台不做客户端阴影） ----
+    int shadowMargin() const;                           ///< 阴影外扩留白（保留字段）
     void setShadowMargin(int margin);
-    int shadowBlurRadius() const;                       ///< 阴影模糊半径
+    int shadowBlurRadius() const;                       ///< 阴影模糊半径（保留字段）
     void setShadowBlurRadius(int radius);
-    QColor shadowColor() const;                         ///< 阴影颜色（可带透明度）
+    QColor shadowColor() const;                         ///< 阴影颜色（保留字段）
     void setShadowColor(const QColor &color);
 
 private:

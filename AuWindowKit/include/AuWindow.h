@@ -28,9 +28,13 @@ class QVBoxLayout;
  *    圆角仅 Win11 生效（DWM 圆角偏好 + 阴影并存）；Win10 上为保留系统
  *    阴影降级为直角（SetWindowRgn 区域圆角会关掉 DWM 框架渲染，弃用）。
  *  - Linux/X11：Qt 无边框 + 透明背景，拖动与缩放通过 _NET_WM_MOVERESIZE
- *    交给窗口管理器（在支持的 WM 上同样具有边缘分屏），阴影为 CSD 风格自绘，
- *    圆角通过区域裁剪实现；缩放尊重 WM_NORMAL_HINTS 中的最小尺寸。
- *  - 其它平台：退化为手动拖动 / 缩放（同样钳制最小宽高）+ 自绘阴影。
+ *    交给窗口管理器（在支持的 WM 上同样具有边缘分屏）。阴影说明：X11 对
+ *    无边框窗口没有窗口管理器侧的阴影通道（KWin 系的 _KDE_NET_WM_SHADOW
+ *    协议要求客户端自制贴图供图，非 WM 主题原生阴影），按需求本模块不做
+ *    任何客户端阴影，Linux 下窗体为纯内容矩形无阴影（Windows 的 DWM
+ *    原生阴影不受影响）。圆角在混成下由 ARGB alpha 平滑呈现，无混成时
+ *    区域裁剪；缩放尊重 WM_NORMAL_HINTS 中的最小尺寸。
+ *  - 其它平台：退化为手动拖动 / 缩放（同样钳制最小宽高），无阴影。
  *
  * 使用方式与 QMainWindow 贴合：
  *  - setWindowTitle() / setWindowIcon() 直接同步到自绘标题栏；
@@ -112,8 +116,8 @@ public:
     /// 保留 DWM 原生阴影降级为直角（无视觉效果）；其它平台按像素裁剪。
     /// 四角独立控制见 setCornerRadius()。
     void setWindowRadius(int radius);
-    /// 四角中的最大圆角半径（独立设置各角后返回最大者；系统圆角 /
-    /// 原生阴影 overlap 等以此为基准）。
+    /// 四角中的最大圆角半径（独立设置各角后返回最大者；Windows 系统圆角
+    /// 映射以此为基准）。
     int windowRadius() const;
     /// 设置单个角的圆角半径（Qt::Corner 指定角），其余角不变。
     /// 可实现"仅顶部圆角""顶部大圆角 + 底部小圆角"等形态。
@@ -217,7 +221,6 @@ private:
     void updateMask();
     int effectiveMargin() const;
     void ensurePolishedFrame();
-    void drawShadow(QPainter &painter, const QRect &contentRect);
     void connectTitleBar();
     /// 四角圆角裁剪浮层：按内容区几何摆放，清除不透明子控件盖住的圆角外像素
     void updateCornerClips(const QRect &content);
@@ -260,8 +263,6 @@ private:
     void showSnapPreview(SnapEdge edge);
     void hideSnapPreview();
     void applyEdgeSnap(SnapEdge edge);
-    /// X11：KWin/UKUI 等支持 _KDE_NET_WM_SHADOW 的 WM 上启用系统原生阴影
-    void applyNativeShadow();
 
 #ifdef Q_OS_WIN
     // Windows 原生辅助
@@ -288,11 +289,9 @@ private:
     int m_result;
     QEventLoop *m_eventLoop;
 
-    QPixmap m_shadowTile;               // 非 Windows 平台的自绘阴影九宫格缓存
-    quint64 m_shadowKey;
     bool m_shownOnce;
     bool m_dwmCornerOk;                 // Windows：DWM 圆角偏好是否可用（Win11+）
-    bool m_x11Compositing;              // X11：透明是否实际生效（决定阴影 / 平滑圆角）
+    bool m_x11Compositing;              // X11：透明是否实际生效（决定平滑圆角 / mask）
     bool m_x11CheckedTranslucency;      // X11：是否已在首显时检测过透明能力
 
     // 手动拖动 / 缩放状态（无系统 move-resize 能力时的兜底路径）
@@ -309,7 +308,6 @@ private:
     QRect m_preSnapGeometry;       ///< 吸附前的浮动几何（还原跟随基准）
     bool m_wmGeometryBroken;       ///< X11：_NET_MOVERESIZE_WINDOW 不可用（已回退）
     bool m_wmGeometryPending;      ///< X11：正在等待一次 WM 位置校验
-    bool m_kwinLike;               ///< X11：KWin/UKUI 等（可用原生阴影协议）
     QVector<QWidget *> m_edgeGrips; ///< 边缘缩放手柄（透明子控件）
     QWidget *m_cornerClips[4];     ///< 四角圆角裁剪浮层（懒创建，仅混成下使用）
     QTimer *m_grabRecoveryTimer;   ///< X11：系统接管后轮询物理按键状态（补发 release）

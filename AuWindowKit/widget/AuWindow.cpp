@@ -36,6 +36,7 @@
 #  if defined(Q_OS_LINUX)
 #    include <X11/Xlib.h>
 #    include <X11/Xatom.h>
+#    include <X11/Xutil.h>   // XImage / XPutImage（原生阴影贴图上传）
 // X11 头文件中的宏与 Qt / 标准类型冲突，按 Qt 源码惯例取消定义
 #    undef Bool
 #    undef CursorShape
@@ -88,33 +89,6 @@ QPainterPath auRoundedRectPath(const QRectF &r, qreal tl, qreal tr, qreal bl, qr
     return path;
 }
 
-// 圆角矩形的带符号距离：>0 在矩形外（到最近边的距离），<=0 在矩形内。
-qreal roundedRectSDF(qreal px, qreal py, const QRectF &rect, qreal radius)
-{
-    const qreal cx = rect.center().x();
-    const qreal cy = rect.center().y();
-    const qreal hx = rect.width() / 2 - radius;
-    const qreal hy = rect.height() / 2 - radius;
-    const qreal dx = qAbs(px - cx) - hx;
-    const qreal dy = qAbs(py - cy) - hy;
-    const qreal ox = qMax(dx, qreal(0));
-    const qreal oy = qMax(dy, qreal(0));
-    const qreal outside = std::sqrt(ox * ox + oy * oy);
-    const qreal inside = qMin(qMax(dx, dy), qreal(0));
-    return outside + inside - radius;
-}
-
-// 同上，但四角半径独立（按象限取所属角的半径）。
-qreal roundedRectSDF(qreal px, qreal py, const QRectF &rect,
-                     qreal tl, qreal tr, qreal bl, qreal br)
-{
-    const qreal cx = rect.center().x();
-    const qreal cy = rect.center().y();
-    const qreal radius = (px < cx) ? (py < cy ? tl : bl)
-                                   : (py < cy ? tr : br);
-    return roundedRectSDF(px, py, rect, radius);
-}
-
 // 极简 Xlib 访问层（不依赖 QtX11Extras）：复用 Qt 使用的 DISPLAY，
 // 进程内缓存 Display 连接，仅供 GUI 线程调用。
 #if defined(Q_OS_LINUX)
@@ -129,40 +103,6 @@ inline Display *display()
 {
     static Display *s_display = XOpenDisplay(nullptr);
     return s_display;
-}
-
-/// 是否 KWin 系窗口管理器（ukui-kwin 等）：支持 _KDE_NET_WM_SHADOW 原生阴影协议
-inline bool isKWinLike()
-{
-    Display *d = display();
-    if (!d)
-        return false;
-    Atom check = XInternAtom(d, "_NET_SUPPORTING_WM_CHECK", False);
-    Atom type;
-    int format;
-    unsigned long n = 0, left = 0;
-    unsigned char *data = nullptr;
-    Window wmCheck = 0;
-    if (XGetWindowProperty(d, XDefaultRootWindow(d), check, 0, 1, False,
-                           XA_WINDOW, &type, &format, &n, &left, &data) == Success
-        && data) {
-        if (n == 1 && type == XA_WINDOW)
-            wmCheck = *reinterpret_cast<Window *>(data);
-        XFree(data);
-    }
-    if (!wmCheck)
-        return false;
-    Atom name = XInternAtom(d, "_NET_WM_NAME", False);
-    Atom utf8 = XInternAtom(d, "UTF8_STRING", False);
-    data = nullptr;
-    bool kwinLike = false;
-    if (XGetWindowProperty(d, wmCheck, name, 0, 64, False,
-                           utf8, &type, &format, &n, &left, &data) == Success && data) {
-        const QString wmName = QString::fromUtf8(reinterpret_cast<const char *>(data), int(n));
-        kwinLike = wmName.contains(QStringLiteral("KWin"), Qt::CaseInsensitive);
-        XFree(data);
-    }
-    return kwinLike;
 }
 
 /// 透明是否实际生效：优先查 EWMH 混成选择；ukui-kwin 等定制混成器
@@ -479,7 +419,6 @@ AuWindow::AuWindow(QWidget *parent, Qt::WindowFlags flags)
     , m_dialogMode(false)
     , m_result(0)
     , m_eventLoop(nullptr)
-    , m_shadowKey(0)
     , m_shownOnce(false)
     , m_dwmCornerOk(false)
     , m_x11Compositing(false)
@@ -502,7 +441,6 @@ AuWindow::AuWindow(QWidget *parent, Qt::WindowFlags flags)
     , m_snapped(false)
     , m_wmGeometryBroken(false)
     , m_wmGeometryPending(false)
-    , m_kwinLike(false)
     , m_systemResizePending(false)
     , m_systemResizeSentMs(0)
     , m_pressGlobal(0, 0)
@@ -683,7 +621,6 @@ void AuWindow::setWindowRadius(int radius)
         return;
     for (int &r : m_cornerRadii)
         r = radius;
-    m_shadowKey = 0; // 阴影贴片圆角随窗体圆角变化
 #ifdef Q_OS_WIN
     applyWindowRoundedCorners();
 #else
@@ -699,7 +636,6 @@ void AuWindow::setCornerRadius(Qt::Corner corner, int radius)
     if (m_cornerRadii[int(corner)] == radius)
         return;
     m_cornerRadii[int(corner)] = radius;
-    m_shadowKey = 0;
 #ifdef Q_OS_WIN
     applyWindowRoundedCorners();
 #else
@@ -890,7 +826,6 @@ void AuWindow::setStyle(AuWindowStyle *style)
         return;
     delete m_style;
     m_style = style;
-    m_shadowKey = 0;
     relayout();
 #ifdef Q_OS_WIN
     applyWindowRoundedCorners();   // DWM 边框线明暗跟随窗体背景色
@@ -907,7 +842,6 @@ void AuWindow::onGlobalStyleChanged()
 {
     if (m_style)
         return; // 独立样式不受全局影响
-    m_shadowKey = 0;
     relayout();
 #ifdef Q_OS_WIN
     applyWindowRoundedCorners();   // DWM 边框线明暗跟随窗体背景色
@@ -955,8 +889,6 @@ void AuWindow::showEvent(QShowEvent *event)
             // 此时原生窗口已建立，透明是否生效以实际 visual 为准
             m_x11Compositing = AuX11::translucencyAvailable(winId());
             m_x11CheckedTranslucency = true;
-            m_kwinLike = AuX11::isKWinLike();
-            m_shadowKey = 0;
             // Qt 的 FramelessWindowHint 会附加 _KDE_NET_WM_WINDOW_TYPE_OVERRIDE，
             // KWin 对该类型禁用拖动预览 / 边缘吸附；覆盖为普通 NORMAL 类型
             Display *display = AuX11::display();
@@ -968,7 +900,6 @@ void AuWindow::showEvent(QShowEvent *event)
                                 reinterpret_cast<unsigned char *>(&normal), 1);
                 XFlush(display);
             }
-            applyNativeShadow();
             relayoutEdgeGrips();
         }
 #endif
@@ -1103,21 +1034,10 @@ void AuWindow::adoptLayout(QLayout *layout)
 
 int AuWindow::effectiveMargin() const
 {
-#ifdef Q_OS_WIN
-    return 0; // 阴影由 DWM 提供，无需留白
-#else
-    if (isMaximized() || isFullScreen())
-        return 0;
-#  if defined(Q_OS_LINUX)
-    if (!AuX11::isPlatformX11())
-        return style()->shadowMargin();
-    if (m_kwinLike)
-        return 0; // KWin 上阴影由 _KDE_NET_WM_SHADOW 原生提供，窗口即纯内容
-    if (!m_x11Compositing)
-        return 0; // 无混成时透明窗会黑底，退化为直角无阴影
-#  endif
-    return style()->shadowMargin();
-#endif
+    // 阴影留白环：Windows 阴影由 DWM 在窗口外绘制；X11 对无边框窗口没有
+    // WM 侧阴影通道（_KDE_NET_WM_SHADOW 需客户端供图，按需求不做客户端
+    // 阴影），故所有平台窗口均为纯内容矩形。
+    return 0;
 }
 
 void AuWindow::relayout()
@@ -1207,11 +1127,6 @@ void AuWindow::paintEvent(QPaintEvent *event)
     const int margin = effectiveMargin();
     const QRect content = rect().adjusted(margin, margin, -margin, -margin);
 
-#ifndef Q_OS_WIN
-    if (margin > 0)
-        drawShadow(painter, content);
-#endif
-
     const bool rounded = !isMaximized() && !isFullScreen()
                          && windowRadius() > 0;
     if (rounded) {
@@ -1242,65 +1157,6 @@ void AuWindow::paintEvent(QPaintEvent *event)
 }
 
 #ifndef Q_OS_WIN
-void AuWindow::drawShadow(QPainter &painter, const QRect &contentRect)
-{
-    const AuWindowStyle *st = style();
-    const int m = effectiveMargin();
-    if (m <= 0 || contentRect.isEmpty())
-        return;
-    const int blur = qMin(st->shadowBlurRadius(), m - 1);
-    const bool noRound = isMaximized() || isFullScreen();
-    const int rTL = noRound ? 0 : m_cornerRadii[0];
-    const int rTR = noRound ? 0 : m_cornerRadii[1];
-    const int rBL = noRound ? 0 : m_cornerRadii[2];
-    const int rBR = noRound ? 0 : m_cornerRadii[3];
-    const QColor color = st->shadowColor();
-
-    const quint64 key = (quint64(m) << 56) | (quint64(blur) << 50)
-                        | (quint64(rTL) << 42) | (quint64(rTR) << 34)
-                        | (quint64(rBL) << 26) | (quint64(rBR) << 18)
-                        | quint64(color.alpha());
-    if (m_shadowKey != key || m_shadowTile.isNull()) {
-        // 阴影贴片：3m x 3m，中心为 m x m 内容区圆角矩形（四周各留 m 阴影带）。
-        // 按圆角矩形 SDF + 高斯距离场逐像素计算 alpha：贴边处最深（color.alphaF），
-        // 向外柔和衰减，观感与系统原生阴影一致（盒式模糊方案峰值过低、扩散过窄）。
-        const int tile = m * 3;
-        QImage img(tile, tile, QImage::Format_ARGB32_Premultiplied);
-        img.fill(Qt::transparent);
-        const qreal sigma = qBound<qreal>(2.0, qreal(blur) / 2.0, qreal(m) / 1.5);
-        const qreal a0 = color.alphaF();
-        const QRectF contentSq(m, m, m, m);
-        const qreal cornerTL = qMin<qreal>(rTL, m / 2);
-        const qreal cornerTR = qMin<qreal>(rTR, m / 2);
-        const qreal cornerBL = qMin<qreal>(rBL, m / 2);
-        const qreal cornerBR = qMin<qreal>(rBR, m / 2);
-        const qreal twoSigmaSq = 2 * sigma * sigma;
-        for (int y = 0; y < tile; ++y) {
-            QRgb *line = reinterpret_cast<QRgb *>(img.scanLine(y));
-            for (int x = 0; x < tile; ++x) {
-                const qreal d = roundedRectSDF(x + 0.5, y + 0.5, contentSq,
-                                               cornerTL, cornerTR, cornerBL, cornerBR);
-                const qreal a = d <= 0 ? a0 : a0 * std::exp(-(d * d) / twoSigmaSq);
-                const int ai = int(a * 255 + 0.5);
-                line[x] = ai <= 0 ? 0 : qPremultiply(qRgba(color.red(), color.green(), color.blue(), ai));
-            }
-        }
-        m_shadowTile = QPixmap::fromImage(img);
-        m_shadowKey = key;
-    }
-
-    // 九宫格：四角原样；四边取远离圆角的纯渐变行/列拉伸（阴影沿边方向均匀）
-    const QPixmap &t = m_shadowTile;
-    painter.drawPixmap(QRect(0, 0, m, m), t, QRect(0, 0, m, m));
-    painter.drawPixmap(QRect(width() - m, 0, m, m), t, QRect(2 * m, 0, m, m));
-    painter.drawPixmap(QRect(0, height() - m, m, m), t, QRect(0, 2 * m, m, m));
-    painter.drawPixmap(QRect(width() - m, height() - m, m, m), t, QRect(2 * m, 2 * m, m, m));
-    painter.drawPixmap(QRect(m, 0, contentRect.width(), m), t, QRect(3 * m / 2, 0, 1, m));
-    painter.drawPixmap(QRect(m, height() - m, contentRect.width(), m), t, QRect(3 * m / 2, 2 * m, 1, m));
-    painter.drawPixmap(QRect(0, m, m, contentRect.height()), t, QRect(0, 3 * m / 2, m, 1));
-    painter.drawPixmap(QRect(width() - m, m, m, contentRect.height()), t, QRect(2 * m, 3 * m / 2, m, 1));
-}
-
 void AuWindow::updateMask()
 {
     const bool noMaskNeeded = windowRadius() <= 0 || isMaximized() || isFullScreen();
@@ -1341,30 +1197,6 @@ void AuWindow::updateMask() {}
 
 // ---- 手动拖动 / 缩放（跨平台兜底路径；X11 细节由函数内的平台宏裁剪，
 //      Windows 走原生 HTCAPTION / 边框热区，本节代码仅作链接兜底） ----
-
-// X11：启用 KWin 原生阴影协议——由窗口管理器在窗口外绘制与原生窗口
-// 完全相同的主题阴影（含 overlap 与窗体圆角对齐）。非 KWin 系 WM 上
-// 回退为自绘阴影（见 drawShadow / effectiveMargin）。
-void AuWindow::applyNativeShadow()
-{
-#if !defined(Q_OS_WIN) && defined(Q_OS_LINUX)
-    if (!m_kwinLike || !AuX11::isPlatformX11())
-        return;
-    Display *display = AuX11::display();
-    if (!display)
-        return;
-    const int extent = 40;
-    const int overlap = qMax(windowRadius() + 8, 16);
-    long data[12] = { extent, extent, extent, extent,
-                      extent, extent, extent, extent,
-                      overlap, overlap, overlap, overlap };
-    XChangeProperty(display, static_cast<Window>(winId()),
-                    XInternAtom(display, "_KDE_NET_WM_SHADOW", False),
-                    XA_CARDINAL, 32, PropModeReplace,
-                    reinterpret_cast<unsigned char *>(data), 12);
-    XFlush(display);
-#endif
-}
 
 /// 边缘缩放手柄：贴窗口边缘的透明子控件，Qt 按悬停位置自动切换缩放光标，
 /// 按下后发起缩放（_NET_WM_MOVERESIZE 原生路径，WM 忽略时回退手动）。
