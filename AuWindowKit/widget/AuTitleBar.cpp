@@ -28,11 +28,13 @@ AuTitleBar::AuTitleBar(AuWindow *window)
     setFocusPolicy(Qt::NoFocus);
     setMouseTracking(true);
 
-    // 三槽位容器：自身对鼠标透明（容器空白处可拖动窗体），
-    // 插入其中的交互组件不受影响（透明属性只作用于容器自身）。
+    // 三槽位容器：普通容器（不可设 WA_TransparentForMouseEvents——该属性
+    // 会连带屏蔽整个子树的鼠标事件，Qt 5.12 实证：childAt 也会跳过透明
+    // 容器的子组件，槽内交互组件将完全收不到点击）。容器空白处可拖动
+    // 窗体靠事件传播实现：容器自身不消费事件，按下的鼠标事件被忽略后
+    // 上抛给标题栏处理；hitTestCaption 沿父链判定交互区时跳过容器本身。
     for (int i = 0; i < 3; ++i) {
         QWidget *section = new QWidget(this);
-        section->setAttribute(Qt::WA_TransparentForMouseEvents, true);
         section->setFocusPolicy(Qt::NoFocus);
         QHBoxLayout *lay = new QHBoxLayout(section);
         lay->setContentsMargins(0, 0, 0, 0);
@@ -192,10 +194,15 @@ bool AuTitleBar::hitTestCaption(const QPoint &pos) const
         return false;
     if (buttonAt(pos) != ButtonNone)
         return false;
-    // 沿父链向上：遇到任何"抢占鼠标"的可见子组件即视为交互区
+    // 沿父链向上：遇到任何"抢占鼠标"的可见子组件即视为交互区。
+    // 三个槽位容器是透传容器（自身不交互，空白处需可拖动窗体），跳过；
+    // 设为不抢占（WA_TransparentForMouseEvents）的组件同理不算交互区。
     QWidget *w = childAt(pos);
     while (w && w != this) {
-        if (w->isVisible() && !w->testAttribute(Qt::WA_TransparentForMouseEvents))
+        const bool isSection = (w == m_sections[0] || w == m_sections[1]
+                                || w == m_sections[2]);
+        if (w->isVisible() && !isSection
+            && !w->testAttribute(Qt::WA_TransparentForMouseEvents))
             return false;
         w = w->parentWidget();
     }
