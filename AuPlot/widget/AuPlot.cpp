@@ -134,11 +134,12 @@ void AuPlot::removeItem(AuPlotItem *item)
         return;
     m_items.removeAt(index);
     item->m_plot = nullptr;
-    if (m_trackerCurve == item) {   // 防止追踪器持有悬空指针
-        m_trackerCurve = nullptr;
-        m_trackerIndex = -1;
-        m_trackerValid = false;
+    for (int i = m_trackerHits.size() - 1; i >= 0; --i) {   // 防止追踪器持有悬空指针
+        if (m_trackerHits.at(i).first == item)
+            m_trackerHits.removeAt(i);
     }
+    if (m_trackerHits.isEmpty())
+        m_trackerValid = false;
     delete item;
     update();
 }
@@ -151,8 +152,7 @@ void AuPlot::clearItems()
         item->m_plot = nullptr;
     qDeleteAll(m_items);
     m_items.clear();
-    m_trackerCurve = nullptr;
-    m_trackerIndex = -1;
+    m_trackerHits.clear();
     m_trackerValid = false;
     update();
 }
@@ -340,12 +340,27 @@ void AuPlot::setTrackerEnabled(bool on)
     if (m_trackerEnabled == on)
         return;
     m_trackerEnabled = on;
-    if (!on && (m_trackerValid || m_trackerCurve)) {
+    if (!on && (m_trackerValid || !m_trackerHits.isEmpty())) {
         m_trackerValid = false;
-        m_trackerCurve = nullptr;
-        m_trackerIndex = -1;
+        m_trackerHits.clear();
         update();
     }
+}
+
+bool AuPlot::trackerSnapOutOfRange() const
+{
+    return m_trackerSnapOutOfRange;
+}
+
+void AuPlot::setTrackerSnapOutOfRange(bool on)
+{
+    if (m_trackerSnapOutOfRange == on)
+        return;
+    m_trackerSnapOutOfRange = on;
+    if (m_trackerValid)
+        updateTracker(m_trackerPos);   // 按新规则立即重算当前吸附
+    else
+        update();
 }
 
 bool AuPlot::crosshairEnabled() const
@@ -362,6 +377,20 @@ void AuPlot::setCrosshairEnabled(bool on)
         m_crosshairValid = false;
         update();
     }
+}
+
+Qt::Orientations AuPlot::crosshairDirections() const
+{
+    return m_crosshairDirections;
+}
+
+void AuPlot::setCrosshairDirections(Qt::Orientations directions)
+{
+    if (m_crosshairDirections == directions)
+        return;
+    m_crosshairDirections = directions;
+    if (m_crosshairValid)
+        update();
 }
 
 void AuPlot::replot()
@@ -432,9 +461,10 @@ void AuPlot::mouseMoveEvent(QMouseEvent *event)
             }
         }
         // 拖动期间隐藏追踪器 / 十字线（位置已失效）
-        if (m_trackerValid || m_crosshairValid) {
+        if (m_trackerValid || m_crosshairValid || !m_trackerHits.isEmpty()) {
             m_trackerValid = false;
             m_crosshairValid = false;
+            m_trackerHits.clear();
         }
         event->accept();
         return;
@@ -465,12 +495,11 @@ void AuPlot::leaveEvent(QEvent *event)
 {
     if (!m_dragging)
         unsetCursor();
-    if (m_trackerValid || m_crosshairValid) {
+    if (m_trackerValid || m_crosshairValid || !m_trackerHits.isEmpty()) {
         m_trackerValid = false;
         m_crosshairValid = false;
-        if (m_trackerCurve) {
-            m_trackerCurve = nullptr;
-            m_trackerIndex = -1;
+        if (!m_trackerHits.isEmpty()) {
+            m_trackerHits.clear();
             emit trackerChanged(nullptr, QPointF());
         }
         update();
@@ -742,7 +771,7 @@ void AuPlot::drawGrid(QPainter *painter, const QRectF &rect, const AuPlotStyle *
 
 void AuPlot::drawCrosshair(QPainter *painter)
 {
-    if (!m_crosshairEnabled || !m_crosshairValid)
+    if (!m_crosshairEnabled || !m_crosshairValid || m_crosshairDirections == 0)
         return;
     AuPlotStyle *st = effectiveStyle();
     QPen pen(st->crosshairColor(), 1, st->crosshairStyle());
@@ -751,22 +780,23 @@ void AuPlot::drawCrosshair(QPainter *painter)
     painter->setClipRect(m_plotRect);
     painter->setPen(pen);
     painter->setBrush(Qt::NoBrush);
-    painter->drawLine(QPointF(m_crosshairPos.x(), m_plotRect.top()),
-                      QPointF(m_crosshairPos.x(), m_plotRect.bottom()));
-    painter->drawLine(QPointF(m_plotRect.left(), m_crosshairPos.y()),
-                      QPointF(m_plotRect.right(), m_crosshairPos.y()));
+    // 十字线最多两条：纵线 + 横线，按方向配置绘制
+    if (m_crosshairDirections & Qt::Vertical) {
+        painter->drawLine(QPointF(m_crosshairPos.x(), m_plotRect.top()),
+                          QPointF(m_crosshairPos.x(), m_plotRect.bottom()));
+    }
+    if (m_crosshairDirections & Qt::Horizontal) {
+        painter->drawLine(QPointF(m_plotRect.left(), m_crosshairPos.y()),
+                          QPointF(m_plotRect.right(), m_crosshairPos.y()));
+    }
     painter->restore();
 }
 
 void AuPlot::drawTracker(QPainter *painter)
 {
-    if (!m_trackerEnabled || !m_trackerValid || !m_trackerCurve || m_trackerIndex < 0)
+    if (!m_trackerEnabled || !m_trackerValid || m_trackerHits.isEmpty())
         return;
     AuPlotStyle *st = effectiveStyle();
-    const AuPlotCurve *curve = m_trackerCurve;
-    const QPointF dataPoint = curve->pointAt(m_trackerIndex);
-    const qreal px = xToPixel(dataPoint.x(), curve->xAxis());
-    const qreal py = yToPixel(dataPoint.y(), curve->yAxis());
 
     // tooltip 值文本：优先用轴的自定义格式化（星期等）；
     // 默认不用刻度格式（刻度步长的小数位会抹掉数据精度），改用 6 位有效数字
@@ -778,45 +808,78 @@ void AuPlot::drawTracker(QPainter *painter)
         return QString::number(value, 'g', 6);
     };
 
-    // 引导线（跟随吸附点，而非原始光标）+ 空心圆标记，裁剪到绘图区
+    // 每条曲线一个吸附标记（曲线色空心圆），并收集 tooltip 的数值行
+    struct TipLine {
+        QColor color;
+        QString text;
+    };
+    QVector<TipLine> lines;
+
     painter->save();
     painter->setClipRect(m_plotRect);
-    QPen guide(st->crosshairColor(), 1, st->crosshairStyle());
-    guide.setCapStyle(Qt::FlatCap);
-    painter->setPen(guide);
-    painter->setBrush(Qt::NoBrush);
-    painter->drawLine(QPointF(px, m_plotRect.top()), QPointF(px, m_plotRect.bottom()));
-    painter->drawLine(QPointF(m_plotRect.left(), py), QPointF(m_plotRect.right(), py));
-    const QColor markerColor = curve->lineColor().isValid() ? curve->lineColor()
-                                                            : QColor(0x2f, 0x6f, 0xdb);
-    AuPlotInternal::drawPointMarker(painter, QPointF(px, py),
-                                    AuPlotPointStyle::HollowCircle, 9, markerColor);
+    for (const auto &hit : m_trackerHits) {
+        AuPlotCurve *curve = hit.first;
+        if (!curve || hit.second < 0 || hit.second >= curve->pointCount())
+            continue;   // 索引已失效（数据被清空且尚未重吸附）
+        const QPointF dataPoint = curve->pointAt(hit.second);
+        const qreal px = xToPixel(dataPoint.x(), curve->xAxis());
+        const qreal py = yToPixel(dataPoint.y(), curve->yAxis());
+        const QColor markerColor = curve->lineColor().isValid() ? curve->lineColor()
+                                                                : QColor(0x2f, 0x6f, 0xdb);
+        AuPlotInternal::drawPointMarker(painter, QPointF(px, py),
+                                        AuPlotPointStyle::HollowCircle, 9, markerColor);
+        const AuPlotAxis *ax = axisAt(curve->xAxis());
+        const AuPlotAxis *ay = axisAt(curve->yAxis());
+        lines.append({ markerColor, QStringLiteral("x: %1  y: %2")
+                                       .arg(valueText(ax, dataPoint.x()),
+                                            valueText(ay, dataPoint.y())) });
+    }
     painter->restore();
 
-    // tooltip：靠近边缘自动翻转
-    const AuPlotAxis *ax = axisAt(curve->xAxis());
-    const AuPlotAxis *ay = axisAt(curve->yAxis());
-    const QString text = QStringLiteral("x: %1\ny: %2")
-                             .arg(valueText(ax, dataPoint.x()),
-                                  valueText(ay, dataPoint.y()));
+    if (lines.isEmpty())
+        return;
+
+    // 汇总 tooltip：一个框显示所有曲线的数值，锚定鼠标位置；
+    // 右侧放不下翻到左侧，上方放不下翻到下方，仍越界则钳制在控件内
     const QFontMetrics fm(st->trackerFont());
-    QRectF box = fm.boundingRect(QRect(0, 0, 0, 0), Qt::TextExpandTabs, text)
-                     .adjusted(-6, -4, 6, 4);
-    if (box.width() < 40)
-        box.setWidth(40);
-    QPointF topLeft(px + 14, py - 14 - box.height());
+    qreal textWidth = 0.0;
+    for (const TipLine &line : lines)
+        textWidth = qMax(textWidth, qreal(fm.horizontalAdvance(line.text)));
+    const qreal dot = qMax<qreal>(6.0, fm.height() / 2.0);   // 行首色点直径
+    const qreal rowHeight = fm.height();
+    const qreal rowGap = 2.0;
+    const qreal padX = 8.0;
+    const qreal padY = 5.0;
+    QRectF box(0, 0,
+               padX * 2.0 + dot + 6.0 + textWidth,
+               padY * 2.0 + lines.size() * rowHeight + (lines.size() - 1) * rowGap);
+
+    const QPoint pos = m_trackerPos;
+    QPointF topLeft(pos.x() + 16, pos.y() - 16 - box.height());
     if (topLeft.x() + box.width() > width() - 2)
-        topLeft.setX(px - 14 - box.width());
+        topLeft.setX(pos.x() - 16 - box.width());
     if (topLeft.y() < 1)
-        topLeft.setY(py + 14);
+        topLeft.setY(pos.y() + 16);
+    topLeft.setX(qBound<qreal>(1.0, topLeft.x(), qMax<qreal>(1.0, width() - box.width() - 1.0)));
+    topLeft.setY(qBound<qreal>(1.0, topLeft.y(), qMax<qreal>(1.0, height() - box.height() - 1.0)));
     box.moveTopLeft(topLeft);
 
     painter->setPen(st->trackerBorderColor());
     painter->setBrush(st->trackerBackgroundColor());
     painter->drawRoundedRect(box, 4, 4);
     painter->setFont(st->trackerFont());
-    painter->setPen(st->trackerTextColor());
-    painter->drawText(box.adjusted(6, 4, -6, -4), Qt::AlignLeft | Qt::AlignVCenter, text);
+
+    qreal rowTop = box.top() + padY;
+    for (const TipLine &line : lines) {
+        painter->setPen(Qt::NoPen);
+        painter->setBrush(line.color);
+        painter->drawEllipse(QPointF(box.left() + padX + dot / 2.0, rowTop + rowHeight / 2.0),
+                             dot / 2.0, dot / 2.0);
+        painter->setPen(st->trackerTextColor());
+        painter->drawText(QPointF(box.left() + padX + dot + 6.0, rowTop + fm.ascent()),
+                          line.text);
+        rowTop += rowHeight + rowGap;
+    }
 }
 
 void AuPlot::updateTracker(const QPoint &pos)
@@ -824,18 +887,17 @@ void AuPlot::updateTracker(const QPoint &pos)
     bool needUpdate = false;
     const bool inPlot = m_plotRect.contains(pos);
 
-    // 十字线跟随原始光标
-    const bool crossValid = m_crosshairEnabled && inPlot;
+    // 十字线跟随原始光标（横竖各最多一条，方向可配置）
+    const bool crossValid = m_crosshairEnabled && m_crosshairDirections != 0 && inPlot;
     if (crossValid != m_crosshairValid || (crossValid && m_crosshairPos != pos)) {
         m_crosshairValid = crossValid;
         m_crosshairPos = pos;
         needUpdate = true;
     }
 
-    // 追踪器：吸附 x 就近的曲线点，多条曲线按像素 y 距离择优
-    AuPlotCurve *bestCurve = nullptr;
-    int bestIndex = -1;
-    qreal bestDistY = 0.0;
+    // 追踪器：以鼠标 x 为基准，每条可见曲线各自吸附最近的数据点；
+    // 追踪线离开曲线数据范围后该曲线不再吸附（标记与 tip 行隐藏）
+    QVector<QPair<AuPlotCurve *, int>> hits;
     if (m_trackerEnabled && inPlot) {
         for (AuPlotItem *item : m_items) {
             if (!item->isVisible())
@@ -844,24 +906,34 @@ void AuPlot::updateTracker(const QPoint &pos)
             if (!curve || curve->pointCount() == 0)
                 continue;
             const double cursorX = pixelToX(pos.x(), curve->xAxis());
-            const int index = curve->nearestIndexForX(cursorX);
-            if (index < 0)
-                continue;
-            const qreal py = yToPixel(curve->pointAt(index).y(), curve->yAxis());
-            const qreal dist = qAbs(py - pos.y());
-            if (!bestCurve || dist < bestDistY) {
-                bestCurve = curve;
-                bestIndex = index;
-                bestDistY = dist;
+            if (!m_trackerSnapOutOfRange) {
+                const QRectF bounds = curve->dataBounds();
+                if (bounds.isValid() && !bounds.isNull()
+                    && (cursorX < bounds.left() || cursorX > bounds.right()))
+                    continue;
             }
+            const int index = curve->nearestIndexForX(cursorX);
+            if (index >= 0)
+                hits.append(qMakePair(curve, index));
         }
     }
 
-    if (bestCurve != m_trackerCurve || bestIndex != m_trackerIndex) {
-        m_trackerCurve = bestCurve;
-        m_trackerIndex = bestIndex;
-        m_trackerValid = (bestCurve != nullptr);
-        emit trackerChanged(bestCurve, bestCurve ? bestCurve->pointAt(bestIndex) : QPointF());
+    if (hits != m_trackerHits) {
+        if (hits.isEmpty() && !m_trackerHits.isEmpty()) {
+            emit trackerChanged(nullptr, QPointF());   // 全部曲线离开吸附
+        } else {
+            for (const auto &hit : hits) {
+                if (!m_trackerHits.contains(hit))
+                    emit trackerChanged(hit.first, hit.first->pointAt(hit.second));
+            }
+        }
+        m_trackerHits = hits;
+        m_trackerValid = !hits.isEmpty();
+        m_trackerPos = pos;
+        needUpdate = true;
+    } else if (m_trackerValid && m_trackerPos != pos) {
+        // 吸附点未变但鼠标在动：tooltip 跟随鼠标，需要重绘
+        m_trackerPos = pos;
         needUpdate = true;
     }
     if (needUpdate)

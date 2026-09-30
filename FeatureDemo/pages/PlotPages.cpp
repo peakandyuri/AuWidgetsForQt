@@ -324,10 +324,14 @@ QVector<FeaturePage> makePlotPages()
         FeaturePage page;
         page.title = QStringLiteral(u"追踪器与十字线");
         page.description = QStringLiteral(
-            u"setTrackerEnabled(true)：鼠标在绘图区内移动时吸附到最近曲线的数据点，"
-            u"绘制空心圆标记 + 引导线 + x/y 值 tooltip（值文本使用绑定轴的刻度格式化，"
-            u"自定义 formatter 同样生效），移出绘图区自动隐藏；setCrosshairEnabled(true)："
-            u"横贯绘图区的十字点线跟随鼠标。trackerChanged() 信号实时输出吸附值（见日志）。");
+            u"setTrackerEnabled(true)：鼠标在绘图区内移动时，以鼠标 x 同时吸附所有可见"
+            u"曲线的最近数据点（每条曲线一个空心圆标记），所有曲线的 x/y 值合并在同一个 "
+            u"tooltip 中逐行显示（行首色点标识曲线），tooltip 跟随鼠标、可视区域放不下时"
+            u"自动翻转到左侧 / 下方；追踪线离开某条曲线的数据范围后，该曲线的标记与数值行"
+            u"自动隐藏（setTrackerSnapOutOfRange(true) 可改为继续吸附端点），移出绘图区"
+            u"自动隐藏。setCrosshairEnabled(true)：横贯绘图区的十字点线跟随鼠标"
+            u"（最多横竖两条，setCrosshairDirections 可单独开启横线或纵线）。"
+            u"trackerChanged() 信号实时输出各曲线吸附值（见日志）。");
         page.createDemo = []() -> QWidget * {
             AuPlot *plot = new AuPlot;
             plot->setTrackerEnabled(true);
@@ -359,12 +363,19 @@ QVector<FeaturePage> makePlotPages()
         page.code = QStringLiteral(
             "AuPlot *plot = new AuPlot;\n"
             "\n"
-            "// 追踪器：吸附最近曲线点 + 标记/引导线/tooltip\n"
+            "// 追踪器：以鼠标 x 同时吸附所有可见曲线，\n"
+            "// 每条曲线一个标记，数值合并在同一个 tooltip 中\n"
             "plot->setTrackerEnabled(true);\n"
-            "// 十字线：横贯绘图区跟随鼠标（横+竖两条点线）\n"
+            "// 追踪线离开曲线数据范围后隐藏其标记与数值行（默认），\n"
+            "// 设 true 则离开后继续吸附最近端点：\n"
+            "// plot->setTrackerSnapOutOfRange(true);\n"
+            "// 十字线：横贯绘图区跟随鼠标（横+竖，最多两条）\n"
             "plot->setCrosshairEnabled(true);\n"
+            "// 只显示纵线 / 横线（追踪参考线按需开启）：\n"
+            "// plot->setCrosshairDirections(Qt::Vertical);\n"
             "\n"
-            "// 吸附值实时回调（curve 为 nullptr 表示已离开曲线）\n"
+            "// 吸附值实时回调（某条曲线吸附点变化时发出；\n"
+            "// curve 为 nullptr 表示已离开所有曲线）\n"
             "connect(plot, &AuPlot::trackerChanged, this,\n"
             "        [log](AuPlotCurve *curve, const QPointF &p) {\n"
             "    if (curve)\n"

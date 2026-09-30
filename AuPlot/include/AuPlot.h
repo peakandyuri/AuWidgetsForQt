@@ -9,8 +9,10 @@
 #include "AuPlotTypes.h"
 
 #include <QList>
+#include <QPair>
 #include <QPointF>
 #include <QRectF>
+#include <QVector>
 #include <QWidget>
 
 /**
@@ -110,15 +112,27 @@ public:
     void setZoomFactor(qreal factor);
 
     // ---- 追踪器与十字线（默认关闭） ----
-    /// 追踪器：鼠标在绘图区内移动时，吸附到最近曲线的数据点（升序曲线二分查找，
-    /// 百万级数据无压力），绘制空心圆标记 + 引导线 + 显示 x / y 值的 tooltip
-    /// （值文本使用绑定轴的刻度格式化，自定义 formatter 同样生效）；移出绘图区
-    /// 或所有曲线后自动隐藏。trackerChanged() 信号实时通知当前吸附值。
+    /// 追踪器：鼠标在绘图区内移动时，以鼠标 x 为基准同时吸附所有可见曲线上
+    /// 最近的数据点（升序曲线二分查找，百万级数据无压力）——每条曲线画一个
+    /// 空心圆标记（曲线色），所有曲线的 x / y 值合并在同一个 tooltip 里逐行
+    /// 显示（行首色点标识曲线），tooltip 锚定鼠标位置，可视区域放不下时自动
+    /// 翻转到左侧 / 下方并钳制在控件内；值文本使用绑定轴的刻度格式化，自定义
+    /// formatter 同样生效。移出绘图区后自动隐藏。trackerChanged() 信号实时
+    /// 通知各曲线的吸附值。
     bool trackerEnabled() const;
     void setTrackerEnabled(bool on);
-    /// 十字线：横贯绘图区的点线（横 + 竖）跟随鼠标移动，移出后隐藏。
+    /// 追踪线（鼠标 x）离开某条曲线的数据 x 范围后，是否继续吸附该曲线的
+    /// 最近端点：默认 false——离开后该曲线的追踪点标记与 tip 中的数值行一并
+    /// 隐藏（所有曲线都离开时整个 tip 隐藏）；true 时保留吸附端点的旧行为。
+    bool trackerSnapOutOfRange() const;
+    void setTrackerSnapOutOfRange(bool on);
+    /// 十字线（追踪参考线）：横贯绘图区的点线跟随鼠标，最多横竖各一条，
+    /// 方向可用 setCrosshairDirections() 单独开启 / 关闭，移出后隐藏。
     bool crosshairEnabled() const;
     void setCrosshairEnabled(bool on);
+    /// 十字线方向（默认横 + 竖）；设为 Qt::Horizontal / Qt::Vertical 只显示一条。
+    Qt::Orientations crosshairDirections() const;
+    void setCrosshairDirections(Qt::Orientations directions);
 
     /// 请求重绘（配置变化一般自动刷新，外部直接改范围后可调用）。
     void replot();
@@ -127,7 +141,8 @@ public:
     QSize minimumSizeHint() const override;
 
 signals:
-    /// 追踪器吸附点变化（curve 为 nullptr 表示鼠标已离开所有曲线 / 绘图区）。
+    /// 追踪吸附点变化：某条可见曲线的吸附点变化时发出该曲线及其新吸附点；
+    /// curve 为 nullptr 表示鼠标已离开所有曲线 / 绘图区。
     void trackerChanged(AuPlotCurve *curve, const QPointF &dataPoint);
 
 protected:
@@ -189,11 +204,14 @@ private:
     qreal m_zoomFactor = 1.2;
 
     bool m_trackerEnabled = false;
+    bool m_trackerSnapOutOfRange = false;   ///< 离开曲线数据范围后仍吸附端点（默认隐藏）
     bool m_crosshairEnabled = false;
+    Qt::Orientations m_crosshairDirections = Qt::Horizontal | Qt::Vertical;
     bool m_trackerValid = false;            ///< 当前有吸附点可显示
     bool m_crosshairValid = false;          ///< 十字线可见（鼠标在绘图区内）
-    AuPlotCurve *m_trackerCurve = nullptr;  ///< 当前吸附的曲线
-    int m_trackerIndex = -1;                ///< 吸附点索引
+    /// 各可见曲线的吸附结果（曲线 + 点索引，按图元顺序），与 trackerChanged 对应。
+    QVector<QPair<AuPlotCurve *, int>> m_trackerHits;
+    QPoint m_trackerPos;                    ///< 追踪 tooltip 锚定的鼠标位置
     QPoint m_crosshairPos;                  ///< 十字线位置（控件局部坐标）
 };
 
