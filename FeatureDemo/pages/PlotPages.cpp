@@ -7,11 +7,15 @@
 #include "AuPlotCurve.h"
 #include "AuPlotPrimitive.h"
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QRandomGenerator>
+#include <QSharedPointer>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <QtMath>
 #include <chrono>
@@ -577,6 +581,190 @@ QVector<FeaturePage> makePlotPages()
             "\n"
             "// 轴刻度不显示数值\n"
             "plot->yAxis()->setTickLabelsVisible(false);\n");
+        pages << page;
+    }
+
+    // ============ 9. 实时绘图与滚动窗口 ============
+    {
+        FeaturePage page;
+        page.title = QStringLiteral(u"实时绘图与滚动窗口");
+        page.description = QStringLiteral(
+            u"定时器 15ms/拍 addPoint 追加数据（O(1)，包围盒增量维护，固定量程下每帧"
+            u"只重绘可见区间，百万点无压力）。x 轴为秒，窗口 10 秒一页：[0,10] 画满后"
+            u"用 setViewRange 推进到 [10,20]，视觉上曲线从左边重新画起（15ms/拍 ≈ "
+            u"667 点/页）。Y 轴默认自动量程（随曲线 min/max 自适应；setRange 固定后"
+            u"可用 setAutoRange(true) 恢复，见\"Y 自动量程\"开关）。拖动与滚轮缩放"
+            u"只作用于时间轴，方向可用 setDragDirections / setZoomDirections 单独"
+            u"配置（下拉可切 仅X / 仅Y / X+Y / 关闭）——横纵耦合缩放在滚动图表里会"
+            u"与翻页互相打架。拖走或缩放查看历史时自动暂停推进，把右缘拖回最新窗口"
+            u"右缘附近自动恢复跟随，或点\"跟随最新\"立即跳回；勾选\"清除窗口外旧数据\""
+            u"后用 removeFirstPoints 裁剪头部（不可回看）。");
+        page.createDemo = []() -> QWidget * {
+            AuPlot *plot = new AuPlot;
+            plot->setDragEnabled(true);
+            plot->setZoomEnabled(true);
+            // 拖动 / 滚轮只作用于时间轴（X）：滚动图表里横纵耦合缩放会互相打架——
+            // 翻页只重置 X，Y 一旦被缩放/拖动改掉，波形就可能显示不全。
+            // 方向可用 setDragDirections / setZoomDirections 单独配置
+            plot->setDragDirections(Qt::Horizontal);
+            plot->setZoomDirections(Qt::Horizontal);
+            plot->xAxis()->setRange(0.0, 10.0);
+            plot->xAxis()->setLabelPrecision(1);
+            // Y 轴不设范围：默认自动量程，随曲线 min/max 自适应（带 5% 留白）
+
+            AuPlotCurve *curve = new AuPlotCurve;
+            curve->setLineColor(QColor(0x2f, 0x6f, 0xdb));
+            plot->addItem(curve);
+
+            struct RtState {
+                double nextX = 0.0;          ///< 下一拍的 x（秒）
+                double windowStart = 0.0;    ///< 最新数据所在窗口起点（始终推进）
+                bool following = true;       ///< 视图贴着最新窗口时自动推进，否则暂停
+                const double window = 10.0;  ///< 10 秒一页
+                const double step = 0.015;   ///< 15ms/拍
+            };
+            QSharedPointer<RtState> state(new RtState);
+
+            QLabel *status = new QLabel;
+            QCheckBox *trimBox = new QCheckBox(QStringLiteral(u"清除窗口外旧数据（不可回看）"));
+            QPushButton *pauseBtn = new QPushButton(QStringLiteral(u"暂停"));
+            QPushButton *followBtn = new QPushButton(QStringLiteral(u"跟随最新"));
+
+            // 滚轮缩放方向演示：仅X / 仅Y / X+Y / 关闭（setZoomDirections）
+            QComboBox *zoomMode = new QComboBox;
+            zoomMode->addItems({ QStringLiteral(u"滚轮缩放：仅X"),
+                                 QStringLiteral(u"滚轮缩放：仅Y"),
+                                 QStringLiteral(u"滚轮缩放：X+Y"),
+                                 QStringLiteral(u"滚轮缩放：关闭") });
+            QObject::connect(zoomMode, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                             plot, [plot](int index) {
+                switch (index) {
+                case 1: plot->setZoomDirections(Qt::Vertical); break;
+                case 2: plot->setZoomDirections(Qt::Horizontal | Qt::Vertical); break;
+                case 3: plot->setZoomDirections(0); break;
+                default: plot->setZoomDirections(Qt::Horizontal); break;
+                }
+            });
+
+            // Y 自动量程：勾选=随曲线 min/max 自适应（默认）；
+            // 取消=固定在当前范围；重新勾选即恢复自动（setAutoRange(true)）
+            QCheckBox *yAutoBox = new QCheckBox(QStringLiteral(u"Y 自动量程"));
+            yAutoBox->setChecked(true);
+            QObject::connect(yAutoBox, &QCheckBox::toggled, plot, [plot](bool on) {
+                if (on)
+                    plot->yAxis()->setAutoRange(true);
+                else
+                    plot->yAxis()->setRange(plot->yAxis()->minimum(),
+                                            plot->yAxis()->maximum());
+            });
+
+            // 跟随判定：视图右缘贴着最新窗口右缘（±2% 窗口宽）视为跟随。
+            // 拖动 / 缩放（含 setViewRange 翻页本身）都会发 rangeChanged；
+            // 拖走或缩放后暂停推进，把右缘拖回来即磁吸恢复
+            QObject::connect(plot->xAxis(), &AuPlotAxis::rangeChanged, plot,
+                             [state](double mn, double mx) {
+                const double tol = state->window * 0.02;
+                const double span = mx - mn;
+                state->following = qAbs(mx - (state->windowStart + state->window)) < tol
+                                   && span < state->window + tol * 2.5;
+            });
+
+            QTimer *timer = new QTimer(plot);
+            timer->setInterval(15);
+            QObject::connect(timer, &QTimer::timeout, plot,
+                             [plot, curve, state, status, trimBox]() {
+                const double x = state->nextX;
+                const double y = qSin(2.0 * M_PI * x / 4.0) * 3.0
+                                 + (int(QRandomGenerator::global()->bounded(200)) - 100) / 500.0;
+                curve->addPoint(x, y);
+                state->nextX += state->step;
+
+                // 最新数据所在窗口始终推进（与是否跟随无关）
+                while (state->nextX > state->windowStart + state->window)
+                    state->windowStart += state->window;
+
+                // 仅在跟随模式下推进可视范围：视觉上曲线从左边重新画起；
+                // 用户拖走 / 缩放查看历史时暂停，不抢视图
+                if (state->following) {
+                    const double mn = state->windowStart;
+                    const double mx = state->windowStart + state->window;
+                    if (qAbs(plot->xAxis()->minimum() - mn) > 1e-9
+                        || qAbs(plot->xAxis()->maximum() - mx) > 1e-9)
+                        plot->xAxis()->setViewRange(mn, mx);
+                }
+
+                // 可选：裁掉窗口外旧数据，避免内存无限增长
+                if (trimBox->isChecked()) {
+                    const int keep = qRound(state->window / state->step) + 40;
+                    const int drop = curve->pointCount() - keep;
+                    if (drop > 0)
+                        curve->removeFirstPoints(drop);
+                }
+                status->setText(QStringLiteral(u"%1 | 已追加 %2 点 | 最新窗口 [%3, %4] 秒")
+                                    .arg(state->following ? QStringLiteral(u"跟随中")
+                                                          : QStringLiteral(u"已暂停推进（拖回右缘或点\"跟随最新\"恢复）"))
+                                    .arg(curve->pointCount())
+                                    .arg(state->windowStart, 0, 'f', 0)
+                                    .arg(state->windowStart + state->window, 0, 'f', 0));
+            });
+            timer->start();
+
+            QObject::connect(pauseBtn, &QPushButton::clicked, plot, [timer, pauseBtn]() {
+                if (timer->isActive()) {
+                    timer->stop();
+                    pauseBtn->setText(QStringLiteral(u"继续"));
+                } else {
+                    timer->start();
+                    pauseBtn->setText(QStringLiteral(u"暂停"));
+                }
+            });
+            QObject::connect(followBtn, &QPushButton::clicked, plot, [plot, state]() {
+                plot->xAxis()->setViewRange(state->windowStart,
+                                            state->windowStart + state->window);
+                state->following = true;
+            });
+
+            QHBoxLayout *controls = new QHBoxLayout;
+            controls->addWidget(pauseBtn);
+            controls->addWidget(followBtn);
+            controls->addWidget(zoomMode);
+            controls->addWidget(yAutoBox);
+            controls->addWidget(trimBox);
+            controls->addWidget(status, 1);
+            return plotPanel(plot, controls);
+        };
+        page.code = QStringLiteral(
+            "// 交互默认关闭：拖动 / 缩放要先开启；方向可单独配置\n"
+            "plot->setDragEnabled(true);\n"
+            "plot->setZoomEnabled(true);\n"
+            "plot->setDragDirections(Qt::Horizontal);   // 拖动只平移时间轴\n"
+            "plot->setZoomDirections(Qt::Horizontal);   // 滚轮只缩放时间轴：\n"
+            "                                           //   仅X=Horizontal / 仅Y=Vertical\n"
+            "                                           //   两者一起=Horizontal|Vertical\n"
+            "\n"
+            "// Y 轴默认自动量程（随曲线 min/max 自适应，带 5% 留白）：\n"
+            "// 不调用 setRange 即可；固定后再恢复自动：\n"
+            "plot->yAxis()->setAutoRange(true);\n"
+            "\n"
+            "// 定时器 15ms/拍：addPoint O(1)，固定量程下每帧只画可见区间\n"
+            "// x 轴为秒，10 秒一页：step=0.015，window=10（≈667 点/页）\n"
+            "auto *timer = new QTimer(plot);\n"
+            "timer->setInterval(15);\n"
+            "connect(timer, &QTimer::timeout, plot, [plot, curve]() {\n"
+            "    curve->addPoint(x, y);              // x 递增（秒）\n"
+            "    while (x > windowStart + window)    // 最新窗口始终推进\n"
+            "        windowStart += window;\n"
+            "    if (following)                      // 视图贴着最新窗口才推进：\n"
+            "        plot->xAxis()->setViewRange(windowStart, windowStart + window);\n"
+            "    if (trim)\n"
+            "        curve->removeFirstPoints(dropCount);\n"
+            "});\n"
+            "timer->start();\n"
+            "\n"
+            "// 跟随判定：监听 xAxis 的 rangeChanged，视图右缘贴着最新窗口\n"
+            "// 右缘即跟随；用户拖走 / 缩放查看历史时暂停推进，拖回或点\n"
+            "// \"跟随最新\"按钮恢复。\n"
+            "// setViewRange 只推进可见范围、不设交互边界，历史数据可自由回看。\n");
         pages << page;
     }
 

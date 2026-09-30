@@ -18,6 +18,7 @@
  * 范围语义（对应"设置了最小值和最大值后，缩放与拖动只能在此范围内"）：
  *  - 默认 autoRange：范围随绑定到该轴的图元数据自适应（两侧留白 setRangePadding）；
  *  - setRange(min, max)：固定为该范围，同时该范围成为交互（拖动 / 缩放）边界；
+ *  - setViewRange(min, max)：只推进当前可见范围，不设交互边界（滚动窗口）；
  *  - setLimits(min, max)：不固定当前范围，只给交互加硬边界，自适应结果同样
  *    被夹在边界内；clearLimits() 清除；
  *  - setAutoRange(true) 重新回到自适应（清除 setRange 的固定边界，保留 setLimits）。
@@ -57,6 +58,10 @@ public:
     double maximum() const;
     /// 固定范围为 [min, max]（同时作为拖动 / 缩放边界，见类注释）。
     void setRange(double min, double max);
+    /// 只推进当前可见范围，不设置交互边界（区别于 setRange 的"固定 + 边界"），
+    /// 同时脱离数据自适应（否则会被 fitAutoRanges 覆盖）。滚动窗口推进可视区用：
+    /// 数据未清除时仍可拖动 / 缩放回看历史数据；已设置的 setLimits 仍然生效。
+    void setViewRange(double min, double max);
     bool autoRange() const;
     /// 切换数据自适应（默认开）。开启时清除 setRange 的固定边界，保留 setLimits。
     /// 注意：拖动 / 缩放交互会自动把该轴切出自适应（手动量程），需要恢复时

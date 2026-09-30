@@ -163,12 +163,24 @@ void AuPlotCurve::setPoints(const QVector<QPointF> &points)
 {
     m_points = points;
     m_xAscending = true;
-    for (int i = 1; i < m_points.size(); ++i) {
-        if (m_points.at(i).x() < m_points.at(i - 1).x()) {
+    bool boundsValid = !m_points.isEmpty();
+    double minX = 0.0, maxX = 0.0, minY = 0.0, maxY = 0.0;
+    for (int i = 0; i < m_points.size(); ++i) {
+        const QPointF &pt = m_points.at(i);
+        if (i > 0 && pt.x() < m_points.at(i - 1).x())
             m_xAscending = false;
-            break;
+        if (i == 0) {
+            minX = maxX = pt.x();
+            minY = maxY = pt.y();
+        } else {
+            minX = qMin(minX, pt.x());
+            maxX = qMax(maxX, pt.x());
+            minY = qMin(minY, pt.y());
+            maxY = qMax(maxY, pt.y());
         }
     }
+    m_runningBounds = QRectF(minX, minY, maxX - minX, maxY - minY);
+    m_runningBoundsValid = boundsValid;
     invalidateBounds();
 }
 
@@ -177,6 +189,35 @@ void AuPlotCurve::addPoint(double x, double y)
     if (!m_points.isEmpty() && x < m_points.last().x())
         m_xAscending = false;
     m_points.append(QPointF(x, y));
+    // 增量扩展包围盒：实时追加时避免每帧 O(N) 全量重扫。
+    // 缓存无效（removeFirstPoints / 初始）时保持无效，由下一次 computeBounds
+    // 全量重建——单靠新点重建会丢掉存量数据的极值
+    if (m_runningBoundsValid) {
+        if (x < m_runningBounds.left())
+            m_runningBounds.setLeft(x);
+        if (x > m_runningBounds.right())
+            m_runningBounds.setRight(x);
+        if (y < m_runningBounds.top())
+            m_runningBounds.setTop(y);
+        if (y > m_runningBounds.bottom())
+            m_runningBounds.setBottom(y);
+    }
+    invalidateBounds();
+}
+
+void AuPlotCurve::removeFirstPoints(int count)
+{
+    const int n = m_points.size();
+    if (count <= 0 || n == 0)
+        return;
+    if (count >= n) {
+        clearPoints();
+        return;
+    }
+    m_points.remove(0, count);
+    // 移除前缀不破坏剩余数据的相对顺序（升序标记不变），
+    // 但极值可能随被移除的点丢失，包围盒下次全量重算一次
+    m_runningBoundsValid = false;
     invalidateBounds();
 }
 
@@ -184,6 +225,7 @@ void AuPlotCurve::clearPoints()
 {
     m_points.clear();
     m_xAscending = true;
+    m_runningBoundsValid = false;
     invalidateBounds();
 }
 
@@ -401,6 +443,16 @@ QRectF AuPlotCurve::computeBounds() const
     if (m_points.isEmpty())
         return QRectF();
 
+    // 增量缓存在（addPoint 逐点扩展）：O(1) 返回，实时追加不必全量重扫
+    if (m_runningBoundsValid) {
+        QRectF bounds = m_runningBounds;
+        if (m_fillVisible) {
+            bounds.setTop(qMin(bounds.top(), m_fillBaseline));
+            bounds.setBottom(qMax(bounds.bottom(), m_fillBaseline));
+        }
+        return bounds;
+    }
+
     double minX = m_points.constFirst().x();
     double maxX = minX;
     double minY = m_points.constFirst().y();
@@ -415,7 +467,9 @@ QRectF AuPlotCurve::computeBounds() const
         minY = qMin(minY, m_fillBaseline);
         maxY = qMax(maxY, m_fillBaseline);
     }
-    return QRectF(minX, minY, maxX - minX, maxY - minY);
+    m_runningBounds = QRectF(minX, minY, maxX - minX, maxY - minY);
+    m_runningBoundsValid = true;
+    return m_runningBounds;
 }
 
 void AuPlotCurve::paint(QPainter *painter, const AuPlot *plot)

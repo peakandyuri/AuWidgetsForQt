@@ -569,6 +569,19 @@ void AuPlot::resizeEvent(QResizeEvent *event)
 
 void AuPlot::fitAutoRanges()
 {
+    // 全部轴都是固定量程时无需自适应：直接返回，避免每帧为数据边界做
+    // 全量计算（实时追加场景的关键热路径）
+    bool anyAutoRange = false;
+    for (const AuPlotAxisPos pos : { AuPlotAxisPos::X1, AuPlotAxisPos::X2,
+                                     AuPlotAxisPos::Y1, AuPlotAxisPos::Y2 }) {
+        if (axisAt(pos)->m_autoRange) {
+            anyAutoRange = true;
+            break;
+        }
+    }
+    if (!anyAutoRange)
+        return;
+
     struct AxisFit {
         bool has = false;
         double min = 0.0;

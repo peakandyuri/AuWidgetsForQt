@@ -29,6 +29,10 @@ class AuPlot;
  * 时按像素列做 min/max 抽稀（每列保留首、最小、最大、末 4 个点），百万级数据
  * 依旧流畅，且极值峰谷形状不丢。
  *
+ * 实时追加：addPoint() 为 O(1)（均摊），数据包围盒增量维护，追加后无需全量
+ * 重扫（配合固定量程轴可支撑 15ms/拍 级别的滚动绘制）；removeFirstPoints()
+ * 用于滚动窗口裁剪头部旧数据。
+ *
  * 层级（需求 10）：默认 zLevel = 0；setZLevel() 控制与其它图元的上下关系。
  */
 class AUPLOT_EXPORT AuPlotCurve : public AuPlotItem
@@ -41,6 +45,9 @@ public:
     /// 整体替换数据点（内部自动检测 x 是否升序）。
     void setPoints(const QVector<QPointF> &points);
     void addPoint(double x, double y);
+    /// 从头部移除 count 个数据点（实时滚动窗口裁剪旧数据用；count >= 点数时清空）。
+    /// 一次性 O(N) 重建内部缓存（包围盒 / 升序标记按剩余数据修正）。
+    void removeFirstPoints(int count);
     void clearPoints();
     int pointCount() const;
     QPointF pointAt(int index) const;
@@ -96,6 +103,8 @@ protected:
 private:
     QVector<QPointF> m_points;
     bool m_xAscending = true;
+    mutable QRectF m_runningBounds;      ///< 增量维护的数据包围盒（addPoint O(1)）
+    mutable bool m_runningBoundsValid = false;
     bool m_lineVisible = true;
     QColor m_lineColor;
     qreal m_lineWidth = 1.5;

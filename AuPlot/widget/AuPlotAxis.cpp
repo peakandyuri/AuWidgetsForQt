@@ -90,6 +90,19 @@ void AuPlotAxis::setRange(double min, double max)
     setCurrentRange(min, max);
 }
 
+void AuPlotAxis::setViewRange(double min, double max)
+{
+    if (min > max)
+        std::swap(min, max);
+    m_autoRange = false;    // 防止数据自适应覆盖滚动窗口
+    m_fixedRange = false;   // 不作为拖动 / 缩放边界，数据保留时可回看历史
+    if (m_hasLimits)
+        clampToBounds(min, max);
+    setCurrentRange(min, max);
+    if (AuPlot *plot = qobject_cast<AuPlot *>(parent()))
+        plot->update();
+}
+
 bool AuPlotAxis::autoRange() const
 {
     return m_autoRange;
