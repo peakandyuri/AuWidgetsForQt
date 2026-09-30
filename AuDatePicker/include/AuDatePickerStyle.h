@@ -113,6 +113,24 @@ public:
     int panelHorizontalPadding() const;                 ///< 面板内容左右内边距
     void setPanelHorizontalPadding(int padding);
 
+    // ---- 时间面板（时 / 分 / 秒列，AuTimePanel 与日历右栏共用）----
+    int timeColumnWidth() const;                        ///< 时 / 分 / 秒单列宽度
+    void setTimeColumnWidth(int width);
+    int timeItemHeight() const;                         ///< 时间条目高度（列头行高复用星期行高度）
+    void setTimeItemHeight(int height);
+
+    // ---- 确定按钮（footer 右侧，含时间部分的弹层面板显示）----
+    QColor confirmBackgroundColor() const;
+    void setConfirmBackgroundColor(const QColor &color);
+    QColor confirmHoverBackgroundColor() const;
+    void setConfirmHoverBackgroundColor(const QColor &color);
+    QColor confirmForegroundColor() const;
+    void setConfirmForegroundColor(const QColor &color);
+    QColor confirmDisabledBackgroundColor() const;      ///< 当前值不合法（超窗口 / 未选完）时
+    void setConfirmDisabledBackgroundColor(const QColor &color);
+    QColor confirmDisabledForegroundColor() const;
+    void setConfirmDisabledForegroundColor(const QColor &color);
+
     // ---- 面板头部（年月导航行）----
     int headHeight() const;                             ///< 头部行高
     void setHeadHeight(int height);
@@ -166,7 +184,7 @@ public:
     // ---- footer ----
     int footerHeight() const;
     void setFooterHeight(int height);
-    QColor footerTopLineColor() const;                  ///< footer 顶部分隔线（无效色 = 不绘制）
+    QColor footerTopLineColor() const;                  ///< footer 顶部 / 时间栏与日历间分隔线（无效色 = 不绘制）
     void setFooterTopLineColor(const QColor &color);
     QColor footerLinkColor() const;                     ///< 快捷链接文本颜色
     void setFooterLinkColor(const QColor &color);
@@ -217,6 +235,17 @@ private:
     QColor m_panelShadowColor;
     int m_panelShadowRadius;
     int m_panelHorizontalPadding;
+
+    // 时间面板
+    int m_timeColumnWidth;
+    int m_timeItemHeight;
+
+    // 确定按钮
+    QColor m_confirmBackgroundColor;
+    QColor m_confirmHoverBackgroundColor;
+    QColor m_confirmForegroundColor;
+    QColor m_confirmDisabledBackgroundColor;
+    QColor m_confirmDisabledForegroundColor;
 
     // 面板头部
     int m_headHeight;

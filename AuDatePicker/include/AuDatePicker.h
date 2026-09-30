@@ -3,9 +3,11 @@
 
 #include "AuDatePicker_global.h"
 #include "AuDatePickerStyle.h"
+#include "AuTimePanel.h"
 
 #include <QWidget>
 #include <QDate>
+#include <QDateTime>
 #include <QPointer>
 #include <functional>
 
@@ -62,19 +64,44 @@ class AuDateRangePanel;
  *    后面板收起；
  *  - 清除：setClearButtonEnabled(true) 后，已选日期时悬停编辑框，日历图标切换为
  *    实心圆圈 ×，点击即清除；
- *  - footer：默认居中显示 "今天" / "当月" / "今年"（无下划线超链接效果，点击选择
- *    当前日期），setFooterVisible(false) 可隐藏；setFooterLink() 可配置左 / 中 /
- *    右三个超链接位（文本 + 点击回调），setFooterWidget() 可整体替换为自定义部件；
+ *  - footer：左下角默认显示内置快捷项 "今天" / "当月" / "今年"（无下划线超链接
+ *    效果，点击选择当前日期 / 当月 / 今年）；含时间部分时变为 "此刻"（点击等同
+ *    于选择今天 + 当前时刻并确认提交，面板收起；当前时刻在时间窗口外时自动取
+ *    与当前时刻最近的合法边界值——下限 / 上限中较近者，快捷项不因此禁用）。
+ *    setFooterVisible(false) 可隐藏；setFooterLink() 可配置左 / 中 /
+ *    右三个超链接位（自定义左槽位覆盖内置快捷项），setFooterWidget() 可整体替换
+ *    为自定义部件；含时间部分时右槽位链接让位到确定按钮左侧；
  *    范围模式（双日历面板）同样支持 setFooterLink 三槽位自定义链接（无内置快捷项，
  *    setFooterWidget 不生效），回调里调用 hidePopup() 可控制面板收起；
  *  - 面板展开 / 收起带动画，通过 popupAboutToShow()/popupShown()/
  *    popupAboutToHide()/popupHidden() 回调；Esc 关闭面板；
+ *  - 时间选择：displayFormat 含时间 token（大小写敏感，M = 月、m = 分）时启用，
+ *    弹层日历右侧出现时间栏（AuTimePanel：时 / 分 / 秒列，列头 "时/分/秒"，
+ *    滚轮滚动 + 点击选定，选中项主题色高亮）；format 含 s 显示时、分、秒三列
+ *    （如 "yyyy-MM-dd HH:mm:ss"），仅含 m 显示时、分两列（如 "yyyy-MM-dd HH:mm"），
+ *    无时间 token 为默认纯日期选择（点日期即选中并收起，行为不变）；
+ *  - 含时间部分时点击日期 / 时间（含 footer 快捷项）只更新待选值并在编辑框实时
+ *    预览，footer 右侧出现确定按钮（或按回车）提交；Esc / 点击面板外部取消，
+ *    恢复已提交值；format 仅含时间 token（如 "HH:mm"）为纯时间模式：面板只显示
+ *    时间列 + 确定按钮（时间无法一次点击完成选择，必须提交）；
+ *  - 时间窗口：setMinimumTime() / setMaximumTime() / setTimeRange() 限制每日
+ *    可选时刻（与日期范围正交组合；min > max 自动交换，不支持跨午夜）。级联
+ *    禁用：限制大于 12:30 时 0 ~ 11 时整列不可选，选中 12 时后 0 ~ 29 分不可选，
+ *    选中 13 时后全部分可选；点击使更细字段非法时自动钳位到该列范围内最近的
+ *    合法值；
+ *  - 非法预设：设置的时间（或日期）超出窗口时值保留并正常显示，但弹层确定按钮
+ *    置灰（回车同样不提交），调整为合法值后方可提交；
+ *  - 组合值读写：dateTime() / setDateTime(QDateTime) / time() / setTime(QTime)，
+ *    信号 dateTimeChanged / timeChanged / dateTimeActivated；原 QDate 系 API
+ *    继续可用（仅操作日期部分）；仅选月 / 仅选年 / 日期范围模式下时间部分忽略
+ *    （范围模式的显示与估宽按 format 的日期部分）；
  *  - setEnabled(false) 整体禁用。
  */
 class AUDATEPICKER_EXPORT AuDatePicker : public QWidget
 {
     Q_OBJECT
     Q_PROPERTY(QDate date READ date WRITE setDate NOTIFY dateChanged)
+    Q_PROPERTY(QDateTime dateTime READ dateTime WRITE setDateTime NOTIFY dateTimeChanged)
     Q_PROPERTY(QString displayFormat READ displayFormat WRITE setDisplayFormat)
     Q_PROPERTY(SelectionMode selectionMode READ selectionMode WRITE setSelectionMode)
     Q_PROPERTY(QDate startDate READ startDate WRITE setStartDate NOTIFY dateRangeChanged)
@@ -91,9 +118,9 @@ public:
 
     /// footer 快捷链接槽位。
     enum FooterSlot {
-        FooterLeft,    ///< 左侧
-        FooterCenter,  ///< 中间（默认 "今天" / "当月" / "今年"）
-        FooterRight    ///< 右侧
+        FooterLeft,    ///< 左侧（内置快捷项 "今天 / 此刻 / 当月 / 今年" 默认在此，自定义后覆盖）
+        FooterCenter,  ///< 中间
+        FooterRight    ///< 右侧（含时间部分时位于确定按钮左侧）
     };
 
     /// 编辑框宽度模式。
@@ -111,6 +138,14 @@ public:
     QDate startDate() const;            ///< 范围模式：开始日期（无值返回无效 QDate）
     QDate endDate() const;              ///< 范围模式：结束日期（无值返回无效 QDate）
 
+    // ---- 时间部分（displayFormat 含时间 token 时生效，见"时间选择"说明）----
+    QDateTime dateTime() const;         ///< 日期 + 时间组合值（时间未设置时 QDateTime 无效）
+    QTime time() const;                 ///< 时间部分（未设置 / 无时间粒度返回无效 QTime）
+    AuTimePanel::Granularity timeGranularity() const; ///< 当前时间粒度（format 解析结果）
+    bool hasTimePart() const;           ///< 当前是否启用时间选择（决定确认按钮等交互）
+    bool isTimeOnly() const;            ///< format 仅含时间 token（无日期部分）
+    bool isTimeValid(const QTime &time) const;        ///< 时刻是否落在每日时间窗口内
+
     // ---- 显示格式 ----
     QString displayFormat() const;
 
@@ -121,6 +156,10 @@ public:
     QDate minimumDate() const;                      ///< 无效 QDate = 不限
     QDate maximumDate() const;                      ///< 无效 QDate = 不限
     bool isDateSelectable(const QDate &date) const; ///< 范围判断（无范围时恒 true）
+
+    // ---- 时间窗口（每日生效的时刻范围；与日期范围正交组合）----
+    QTime minimumTime() const;                      ///< 无效 QTime = 不限
+    QTime maximumTime() const;                      ///< 无效 QTime = 不限
 
     // ---- 编辑框 ----
     QString placeholderText() const;
@@ -153,6 +192,12 @@ public:
 public Q_SLOTS:
     // ---- 当前值 ----
     void setDate(const QDate &date);                ///< 传无效 QDate 清空；范围模式下仅设置开始日期
+    /// 设置日期 + 时间组合值（时间粒度生效时写入时间部分；传无效 QDateTime 整体清空；
+    /// 无时间粒度时时间部分被忽略，仅设置日期）。
+    void setDateTime(const QDateTime &dateTime);
+    /// 仅设置时间部分（需当前 format 启用时间粒度；可为窗口外值——面板中确定按钮
+    /// 将置灰直至调整为合法值；无时间粒度时忽略）。
+    void setTime(const QTime &time);
     /// 设置范围值（自动按时间先后排序；传无效开始日期则整体清空）。
     void setSelectedRange(const QDate &start, const QDate &end);
     void setStartDate(const QDate &start);          ///< 范围模式：仅设置开始日期
@@ -170,6 +215,11 @@ public Q_SLOTS:
     void setMaximumDate(const QDate &max);          ///< 传无效 QDate 取消上限
     void setDateRange(const QDate &min, const QDate &max);
 
+    // ---- 时间窗口（每日生效的时刻范围；min > max 时自动交换，不支持跨午夜）----
+    void setMinimumTime(const QTime &min);          ///< 传无效 QTime 取消下限
+    void setMaximumTime(const QTime &max);          ///< 传无效 QTime 取消上限
+    void setTimeRange(const QTime &min, const QTime &max);
+
     // ---- 编辑框 ----
     void setPlaceholderText(const QString &text);
     void setEditorHeight(int height);               ///< 覆盖尺寸档位编辑框高度（派生独立样式）
@@ -184,7 +234,7 @@ public Q_SLOTS:
     /// 配置 footer 快捷链接（覆盖该槽位的默认项；callback 为空则仅展示）。
     void setFooterLink(FooterSlot slot, const QString &text,
                        const std::function<void()> &callback = nullptr);
-    /// 恢复该槽位默认（中间槽位恢复 "今天" / "当月" / "今年"，左右恢复为空）。
+    /// 恢复该槽位默认（左槽位恢复内置快捷项 "今天 / 此刻 / 当月 / 今年"，中 / 右恢复为空）。
     void resetFooterLink(FooterSlot slot);
     /// 整体替换 footer 为自定义部件（所有权转移给控件）；传 nullptr 恢复内置 footer。
     void setFooterWidget(QWidget *widget);
@@ -202,10 +252,16 @@ public Q_SLOTS:
 Q_SIGNALS:
     /// 日期变化（程序设置或用户选择；无效 QDate = 已清空）。
     void dateChanged(const QDate &date);
+    /// 时间部分变化（程序设置或弹层确认提交；未启用时间粒度时不发出）。
+    void timeChanged(const QTime &time);
+    /// 日期 + 时间组合值变化（dateChanged / timeChanged 触发时一并发出）。
+    void dateTimeChanged(const QDateTime &dateTime);
     /// 范围模式：范围值变化（程序设置或用户选择；无效 QDate = 已清空）。
     void dateRangeChanged(const QDate &start, const QDate &end);
-    /// 用户在面板中选择日期（含 footer 快捷选择；范围模式下为开始日期）。
+    /// 用户在面板中确定日期（含 footer 快捷选择；范围模式下为开始日期）。
     void activated(const QDate &date);
+    /// 用户在弹层中点击确定按钮完成日期 + 时间提交（仅含时间部分时发出）。
+    void dateTimeActivated(const QDateTime &dateTime);
     /// 用户在面板中确定日期范围（第二次点击 / 回车）。
     void rangeActivated(const QDate &start, const QDate &end);
     /// 用户通过清除按钮 / clear() 清空。
@@ -257,8 +313,20 @@ private:
     void pushFooterConfig();                ///< footer 配置同步到面板（未弹出时挂起）
     void setFixedRange(const QDate &min, const QDate &max);
 
+    // 时间部分
+    void updateTimeGranularity();           ///< 按 format / 粒度解析时间粒度（联动面板与几何）
+    void initPendingForPopup();             ///< 弹层展开时初始化待选状态
+    QTime initialPendingTime() const;       ///< 待选时间初值（预设 / 默认 00:00 钳入窗口）
+    QTime clampTimeToRange(const QTime &time) const; ///< 钳入每日时间窗口（不改变窗口外预设值）
+    bool pendingValid() const;              ///< 待选值是否完整且合法（确定按钮 / 回车依据）
+    void refreshConfirmState();             ///< 待选值合法性同步到面板确定按钮
+    void commitPending();                   ///< 确定按钮 / 回车：提交待选值并收起
+    void handlePanelTimeSelected(const QTime &time);
+    void handleConfirmClicked();
+
     // 范围模式交互
     void updateRangePreview();              ///< 预览终点 = 悬停日期（无则键盘焦点日期）
+    QString rangeDisplayFormat() const;     ///< 范围模式显示格式：format 剥离时间 token 后的日期部分
     qreal rangeEditorTextX() const;         ///< 编辑框文本起始 x（借输入法光标几何）
     QRectF rangeUnderlineRect(bool endSegment) const; ///< 下划线目标段几何
     void animateUnderlineTo(bool endSegment);         ///< 下划线移动（带动画 / 首次直接就位）
@@ -292,6 +360,18 @@ private:
     QDate m_minimumDate;
     QDate m_maximumDate;
     EditorWidthMode m_editorWidthMode;      ///< 编辑框宽度模式（默认按格式自适应）
+
+    // 时间部分
+    AuTimePanel::Granularity m_timeGranularity; ///< 时间粒度（format 解析；非选日粒度恒 NoTime）
+    bool m_timeOnly;                        ///< format 仅含时间部分（无日期 token）
+    QTime m_time;                           ///< 时间部分（时间粒度下使用）
+    QTime m_minimumTime;                    ///< 每日时刻窗口下限（无效 = 不限）
+    QTime m_maximumTime;                    ///< 每日时刻窗口上限（无效 = 不限）
+
+    // 时间选择待选状态（面板展开期间有效；确定按钮 / 回车提交，Esc / 点外部回滚）
+    bool m_pending;
+    QDate m_pendingDate;
+    QTime m_pendingTime;
 
     // 范围选择过程状态（仅面板展开期间有效）
     bool m_picking;                         ///< 已选起点、待选终点

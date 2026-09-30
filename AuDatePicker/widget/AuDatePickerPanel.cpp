@@ -23,7 +23,8 @@ enum HoverKind {
     HoverDayCell,        ///< index = row * 7 + col
     HoverMonthCell,      ///< index 0-11
     HoverYearCell,       ///< index 0-11（当前页内）
-    HoverFooterLink      ///< index = 槽位 0-2
+    HoverFooterLink,     ///< index = 槽位 0-2
+    HoverConfirmButton   ///< footer 确定按钮
 };
 
 // 箭头方向
@@ -51,6 +52,11 @@ AuDatePickerPanel::AuDatePickerPanel(QWidget *parent)
     , m_rangeMode(false)
     , m_navMask(0xF)
     , m_titleNavEnabled(true)
+    , m_timePanel(nullptr)
+    , m_timeGranularity(AuTimePanel::NoTime)
+    , m_timeOnly(false)
+    , m_confirmVisible(false)
+    , m_confirmEnabled(false)
     , m_footerVisible(true)
     , m_footerWidget(nullptr)
     , m_hoverKind(HoverNone)
@@ -89,6 +95,8 @@ void AuDatePickerPanel::setStyle(AuDatePickerStyle *style)
     if (m_style == style || !style)
         return;
     m_style = style;
+    if (m_timePanel)
+        m_timePanel->setStyle(style);
     updateGeometry();
     update();
 }
@@ -362,6 +370,113 @@ void AuDatePickerPanel::setNavButtonsMask(int mask)
     update();
 }
 
+// ---------------------------------------------------------------------------
+// 时间部分（内嵌 AuTimePanel 右栏 / 纯时间模式）
+
+void AuDatePickerPanel::setTimeGranularity(AuTimePanel::Granularity granularity)
+{
+    if (m_timeGranularity == granularity)
+        return;
+    m_timeGranularity = granularity;
+    if (granularity == AuTimePanel::NoTime) {
+        if (m_timePanel) {
+            m_timePanel->deleteLater();
+            m_timePanel = nullptr;
+        }
+    } else if (!m_timePanel) {
+        m_timePanel = new AuTimePanel(this);
+        m_timePanel->setStyle(m_style);
+        m_timePanel->setGranularity(granularity);
+        connect(m_timePanel, &AuTimePanel::timeChanged, this,
+                &AuDatePickerPanel::timeSelected);
+        layoutTimePanel();
+    } else {
+        m_timePanel->setGranularity(granularity);
+    }
+    updateGeometry();
+    update();
+}
+
+AuTimePanel::Granularity AuDatePickerPanel::timeGranularity() const
+{
+    return m_timeGranularity;
+}
+
+void AuDatePickerPanel::setTimeOnly(bool timeOnly)
+{
+    if (m_timeOnly == timeOnly)
+        return;
+    m_timeOnly = timeOnly;
+    layoutTimePanel();
+    updateGeometry();
+    update();
+}
+
+bool AuDatePickerPanel::isTimeOnly() const
+{
+    return m_timeOnly;
+}
+
+void AuDatePickerPanel::setSelectedTime(const QTime &time)
+{
+    if (m_timePanel)
+        m_timePanel->setSelectedTime(time);
+}
+
+QTime AuDatePickerPanel::selectedTime() const
+{
+    return m_timePanel ? m_timePanel->selectedTime() : QTime();
+}
+
+void AuDatePickerPanel::setTimeRange(const QTime &min, const QTime &max)
+{
+    if (m_timePanel)
+        m_timePanel->setTimeRange(min, max);
+}
+
+AuTimePanel *AuDatePickerPanel::timePanel() const
+{
+    return m_timePanel;
+}
+
+void AuDatePickerPanel::setConfirmButtonVisible(bool visible)
+{
+    if (m_confirmVisible == visible)
+        return;
+    m_confirmVisible = visible;
+    update();
+}
+
+bool AuDatePickerPanel::isConfirmButtonVisible() const
+{
+    return m_confirmVisible;
+}
+
+void AuDatePickerPanel::setConfirmButtonEnabled(bool enabled)
+{
+    if (m_confirmEnabled == enabled)
+        return;
+    m_confirmEnabled = enabled;
+    update();
+}
+
+bool AuDatePickerPanel::isConfirmButtonEnabled() const
+{
+    return m_confirmEnabled;
+}
+
+QRect AuDatePickerPanel::confirmButtonRect() const
+{
+    if (!m_confirmVisible || m_footerWidget || !m_footerVisible)
+        return QRect();
+    const QFontMetrics fm(m_style->font());
+    const int w = fm.horizontalAdvance(QStringLiteral(u"确定")) + 24;
+    const QRect footer = footerRect();
+    const int h = qMax(16, m_style->footerHeight() - 8);
+    return QRect(width() - m_style->panelHorizontalPadding() - w,
+                 footer.top() + (footer.height() - h) / 2, w, h);
+}
+
 
 void AuDatePickerPanel::setFooterVisible(bool visible)
 {
@@ -370,6 +485,7 @@ void AuDatePickerPanel::setFooterVisible(bool visible)
     m_footerVisible = visible;
     if (m_footerWidget)
         m_footerWidget->setVisible(visible);
+    layoutTimePanel(); // bodyRect 高度随 footer 变化，时间栏几何联动
     updateGeometry();
     update();
 }
@@ -439,6 +555,13 @@ int AuDatePickerPanel::displayedMonth() const
 
 void AuDatePickerPanel::resetView()
 {
+    if (m_timeOnly) {
+        // 纯时间模式：无日历页面状态，仅复位悬停
+        m_hoverKind = HoverNone;
+        m_hoverIndex = -1;
+        update();
+        return;
+    }
     const QDate anchor = m_selected.isValid() ? m_selected : QDate::currentDate();
     m_year = anchor.year();
     m_month = anchor.month();
@@ -467,6 +590,8 @@ void AuDatePickerPanel::resetView()
 
 bool AuDatePickerPanel::goBack()
 {
+    if (m_timeOnly)
+        return false; // 纯时间模式无上级视图
     switch (m_mode) {
     case AuDatePicker::SelectDay:
     case AuDatePicker::SelectDateRange: // 双日历组合恒为日历页（不会进入此分支）
@@ -500,7 +625,26 @@ QSize AuDatePickerPanel::sizeHint() const
 {
     const int pad = m_style->panelHorizontalPadding();
     const int sp = m_style->cellSpacing();
-    const int w = 2 * pad + 7 * m_style->dayCellWidth() + 6 * sp;
+    if (m_timeOnly) {
+        // 纯时间模式：仅时间列（水平居中）+ footer
+        const int cols = timeColumnCount();
+        const int cw = m_style->timeColumnWidth();
+        int w = cols * cw + qMax(0, cols - 1) * sp + 2 * 8;
+        // 保证左下角快捷项与右下角确定按钮不重叠的最小宽度
+        //（HH:mm 两列 + 小字号时列宽不足以并排容纳两者）
+        const QFontMetrics fm(m_style->font());
+        const QString shortcutText = m_footerLinks[0].custom
+                                         ? m_footerLinks[0].text
+                                         : footerShortcutText();
+        const int shortcutW = shortcutText.isEmpty()
+                                  ? 0 : fm.horizontalAdvance(shortcutText) + 16;
+        const int confirmW = fm.horizontalAdvance(QStringLiteral(u"确定")) + 24;
+        w = qMax(w, 2 * pad + shortcutW + confirmW + 12);
+        int h = m_style->weekdayRowHeight() + 10 * m_style->timeItemHeight();
+        h += m_footerVisible ? m_style->footerHeight() : pad;
+        return QSize(qMax(w, 80), h);
+    }
+    const int w = 2 * pad + 7 * m_style->dayCellWidth() + 6 * sp + timeRailWidth();
     int h = m_style->headHeight() + m_style->weekdayRowHeight()
             + 6 * m_style->dayCellHeight() + 5 * sp;
     // footer 隐藏时底部保留与左右一致的内边距（与 bodyRect 保持一致）
@@ -601,9 +745,10 @@ QRect AuDatePickerPanel::footerLinkRect(int slot) const
 {
     if (slot < 0 || slot > 2 || !m_footerVisible || m_footerWidget)
         return QRect();
+    // 内置快捷项（今天 / 此刻 / 当月 / 今年）固定在左下角槽位
     const QString text = m_footerLinks[slot].custom
                              ? m_footerLinks[slot].text
-                             : (slot == 1 ? footerShortcutText() : QString());
+                             : (slot == 0 ? footerShortcutText() : QString());
     if (text.isEmpty())
         return QRect();
     const QFontMetrics fm(m_style->font());
@@ -611,9 +756,22 @@ QRect AuDatePickerPanel::footerLinkRect(int slot) const
     const int w = fm.horizontalAdvance(text) + 16;
     switch (slot) {
     case 0: return QRect(m_style->panelHorizontalPadding() + 4, footer.top(), w, footer.height());
-    case 1: return QRect((width() - w) / 2, footer.top(), w, footer.height());
-    default: return QRect(width() - m_style->panelHorizontalPadding() - 4 - w,
-                          footer.top(), w, footer.height());
+    case 1: {
+        // 中间槽位：确定按钮可见时向左收敛避免重叠（窄面板如纯时间模式）
+        int x = (width() - w) / 2;
+        const QRect confirm = confirmButtonRect();
+        if (confirm.isValid() && x + w > confirm.left() - 6)
+            x = qMax(m_style->panelHorizontalPadding() + 4, confirm.left() - 6 - w);
+        return QRect(x, footer.top(), w, footer.height());
+    }
+    default: {
+        // 右槽位：确定按钮可见时让位到按钮左侧
+        int right = width() - m_style->panelHorizontalPadding() - 4;
+        const QRect confirm = confirmButtonRect();
+        if (confirm.isValid())
+            right = confirm.left() - 6;
+        return QRect(right - w, footer.top(), w, footer.height());
+    }
     }
 }
 
@@ -622,16 +780,66 @@ QRect AuDatePickerPanel::footerLinkRect(int slot) const
 
 QRect AuDatePickerPanel::headRect() const
 {
+    if (m_timeOnly)
+        return QRect(); // 纯时间模式无头部
     return QRect(0, 0, width(), m_style->headHeight());
 }
 
 QRect AuDatePickerPanel::bodyRect() const
 {
-    const int top = m_style->headHeight();
+    const int top = m_timeOnly ? 0 : m_style->headHeight();
     const int pad = m_style->panelHorizontalPadding();
     // 底部：footer 可见时让位给 footer，否则留出与左右一致的内边距（不贴面板边缘）
     const int bottom = height() - (m_footerVisible ? m_style->footerHeight() : pad);
     return QRect(0, top, width(), qMax(0, bottom - top));
+}
+
+QRect AuDatePickerPanel::calendarRect() const
+{
+    if (m_timeOnly)
+        return QRect(); // 纯时间模式无日历
+    if (m_timeGranularity == AuTimePanel::NoTime)
+        return bodyRect();
+    const QRect body = bodyRect();
+    return body.adjusted(0, 0, -timeRailWidth(), 0);
+}
+
+int AuDatePickerPanel::timeRailWidth() const
+{
+    const int cols = timeColumnCount();
+    if (cols <= 0)
+        return 0;
+    const int cw = m_style->timeColumnWidth();
+    const int sp = m_style->cellSpacing();
+    return 1 /*分隔线*/ + 8 + cols * cw + (cols - 1) * sp + 8;
+}
+
+QRect AuDatePickerPanel::timePanelRect() const
+{
+    if (m_timeGranularity == AuTimePanel::NoTime)
+        return QRect();
+    const QRect body = bodyRect();
+    if (m_timeOnly)
+        return body;
+    const int rail = timeRailWidth();
+    return QRect(width() - rail + 1, body.top(), rail - 1, body.height());
+}
+
+void AuDatePickerPanel::layoutTimePanel()
+{
+    if (!m_timePanel)
+        return;
+    m_timePanel->setGeometry(timePanelRect());
+}
+
+int AuDatePickerPanel::timeColumnCount() const
+{
+    switch (m_timeGranularity) {
+    case AuTimePanel::HoursOnly: return 1;
+    case AuTimePanel::HoursMinutes: return 2;
+    case AuTimePanel::HoursMinutesSeconds: return 3;
+    default: return 0;
+    }
 }
 
 QRect AuDatePickerPanel::footerRect() const
@@ -643,7 +851,7 @@ QRect AuDatePickerPanel::footerRect() const
 
 QRect AuDatePickerPanel::weekdayRowRect() const
 {
-    const QRect body = bodyRect();
+    const QRect body = calendarRect();
     const int pad = m_style->panelHorizontalPadding();
     return QRect(body.left() + pad, body.top(), qMax(0, body.width() - 2 * pad),
                  m_style->weekdayRowHeight());
@@ -651,7 +859,7 @@ QRect AuDatePickerPanel::weekdayRowRect() const
 
 QRect AuDatePickerPanel::dayGridRect() const
 {
-    const QRect body = bodyRect();
+    const QRect body = calendarRect();
     const int pad = m_style->panelHorizontalPadding();
     const int top = body.top() + m_style->weekdayRowHeight();
     const int sp = m_style->cellSpacing();
@@ -675,10 +883,10 @@ QRect AuDatePickerPanel::dayCellRect(int row, int col) const
 
 QRect AuDatePickerPanel::monthCellRect(int row, int col) const
 {
-    // 月 / 年页共用 body 区域（含星期行空间），4 列 x 3 行铺满；与日历页一致
+    // 月 / 年页共用日历区域（含星期行空间），4 列 x 3 行铺满；与日历页一致
     // 左右内缩 panelHorizontalPadding（双日历 / 单日历边距一致）
     const int pad = m_style->panelHorizontalPadding();
-    return gridCellRect(bodyRect().adjusted(pad, 0, -pad, 0), 3, 4, row, col);
+    return gridCellRect(calendarRect().adjusted(pad, 0, -pad, 0), 3, 4, row, col);
 }
 
 QRect AuDatePickerPanel::yearCellRect(int row, int col) const
@@ -693,11 +901,13 @@ QRect AuDatePickerPanel::navButtonRect(int index) const
     const int y = head.top() + (head.height() - b) / 2;
     const int pad = m_style->panelHorizontalPadding();
     const int gap = 2;
+    // 时间栏存在时右缘让位（未启用时间栏时 timeRailWidth 为 0，与原布局一致）
+    const int rightEdge = width() - timeRailWidth();
     switch (index) {
-    case 0: return QRect(pad, y, b, b);                          // "<<"
-    case 1: return QRect(pad + b + gap, y, b, b);                // "<"
-    case 2: return QRect(width() - pad - 2 * b - gap, y, b, b);  // ">"
-    default: return QRect(width() - pad - b, y, b, b);           // ">>"
+    case 0: return QRect(pad, y, b, b);                              // "<<"
+    case 1: return QRect(pad + b + gap, y, b, b);                    // "<"
+    case 2: return QRect(rightEdge - pad - 2 * b - gap, y, b, b);    // ">"
+    default: return QRect(rightEdge - pad - b, y, b, b);             // ">>"
     }
 }
 
@@ -708,7 +918,9 @@ void AuDatePickerPanel::titleRects(QRect *yearRect, QRect *monthRect) const
     const QString monthText = QString::number(m_month) + QStringLiteral(u"月");
     const int wYear = fm.horizontalAdvance(yearText);
     const int wMonth = fm.horizontalAdvance(monthText);
-    const int startX = (width() - wYear - wMonth) / 2;
+    // 相对日历区居中（时间栏存在时避免标题偏移到时间栏下方）
+    const QRect calendar = calendarRect();
+    const int startX = calendar.center().x() - (wYear + wMonth) / 2;
     const QRect head = headRect();
     if (yearRect)
         *yearRect = QRect(startX - 2, head.top(), wYear + 2, head.height());
@@ -723,8 +935,9 @@ QRect AuDatePickerPanel::scrollButtonRect(bool up) const
     const int y = head.top() + (head.height() - b) / 2;
     const int pad = m_style->panelHorizontalPadding();
     const int gap = 2;
-    return up ? QRect(width() - pad - 2 * b - gap, y, b, b)
-              : QRect(width() - pad - b, y, b, b);
+    const int rightEdge = width() - timeRailWidth(); // 同 navButtonRect：让位时间栏
+    return up ? QRect(rightEdge - pad - 2 * b - gap, y, b, b)
+              : QRect(rightEdge - pad - b, y, b, b);
 }
 
 QRect AuDatePickerPanel::monthHeadYearRect() const
@@ -846,7 +1059,11 @@ QString AuDatePickerPanel::footerShortcutText() const
     switch (m_mode) {
     case AuDatePicker::SelectMonth: return QStringLiteral(u"当月");
     case AuDatePicker::SelectYear: return QStringLiteral(u"今年");
-    default: return QStringLiteral(u"今天");
+    default:
+        // 含时间部分时为 "此刻"：填入今天 + 当前时刻（时间无法一次点击完成，仍需确认提交）
+        if (m_timeGranularity != AuTimePanel::NoTime)
+            return QStringLiteral(u"此刻");
+        return QStringLiteral(u"今天");
     }
 }
 
@@ -866,7 +1083,10 @@ bool AuDatePickerPanel::footerShortcutEnabled() const
     switch (m_mode) {
     case AuDatePicker::SelectMonth: return isMonthSelectable(today.year(), today.month());
     case AuDatePicker::SelectYear: return isYearSelectable(today.year());
-    default: return isDateSelectable(today);
+    default:
+        // 含时间部分时快捷项始终可用：当前时刻在时间窗口外时，点击自动取
+        // 与当前时刻最近的合法边界值（下限 / 上限中较近者），见 activateAt
+        return isDateSelectable(today);
     }
 }
 
@@ -879,10 +1099,20 @@ void AuDatePickerPanel::paintEvent(QPaintEvent * /*event*/)
     painter.setRenderHint(QPainter::Antialiasing);
     painter.setFont(m_style->font());
 
-    switch (m_view) {
-    case DayView: paintDayView(painter); break;
-    case MonthView: paintMonthView(painter); break;
-    case YearView: paintYearView(painter); break;
+    if (!m_timeOnly) {
+        switch (m_view) {
+        case DayView: paintDayView(painter); break;
+        case MonthView: paintMonthView(painter); break;
+        case YearView: paintYearView(painter); break;
+        }
+        // 时间栏与日历之间的分隔线（配色同 footer 分隔线）
+        if (m_timeGranularity != AuTimePanel::NoTime
+            && m_style->footerTopLineColor().isValid()) {
+            const QRect body = bodyRect();
+            const qreal x = width() - timeRailWidth() + 0.5;
+            painter.setPen(QPen(m_style->footerTopLineColor(), 1.0));
+            painter.drawLine(QPointF(x, body.top() + 0.5), QPointF(x, body.bottom() + 0.5));
+        }
     }
     paintFooter(painter);
 }
@@ -890,6 +1120,7 @@ void AuDatePickerPanel::paintEvent(QPaintEvent * /*event*/)
 void AuDatePickerPanel::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
+    layoutTimePanel();
     if (m_footerWidget)
         m_footerWidget->setGeometry(footerRect());
 }
@@ -1222,8 +1453,24 @@ void AuDatePickerPanel::paintFooter(QPainter &painter)
             color = m_style->footerLinkHoverColor();
         painter.setPen(color);
         const QString text = custom ? m_footerLinks[slot].text
-                                    : (slot == 1 ? footerShortcutText() : QString());
+                                    : (slot == 0 ? footerShortcutText() : QString());
         painter.drawText(rect, Qt::AlignCenter, text);
+    }
+
+    // 确定按钮（含时间部分的弹层：点击日期 / 时间不再直接提交，由此二次确认）
+    const QRect confirm = confirmButtonRect();
+    if (confirm.isValid()) {
+        painter.setPen(Qt::NoPen);
+        if (m_confirmEnabled)
+            painter.setBrush(m_hoverKind == HoverConfirmButton
+                                 ? m_style->confirmHoverBackgroundColor()
+                                 : m_style->confirmBackgroundColor());
+        else
+            painter.setBrush(m_style->confirmDisabledBackgroundColor());
+        painter.drawRoundedRect(QRectF(confirm), confirm.height() / 2.0, confirm.height() / 2.0);
+        painter.setPen(m_confirmEnabled ? m_style->confirmForegroundColor()
+                                        : m_style->confirmDisabledForegroundColor());
+        painter.drawText(confirm, Qt::AlignCenter, QStringLiteral(u"确定"));
     }
 }
 
@@ -1266,12 +1513,18 @@ void AuDatePickerPanel::updateHover(const QPoint &pos)
     bool enabled = false;
 
     if (m_footerVisible && !m_footerWidget && footerRect().contains(pos)) {
-        for (int slot = 0; slot < 3; ++slot) {
-            if (footerLinkRect(slot).contains(pos)) {
-                kind = HoverFooterLink;
-                index = slot;
-                enabled = m_footerLinks[slot].custom ? true : footerShortcutEnabled();
-                break;
+        const QRect confirm = confirmButtonRect();
+        if (m_confirmVisible && confirm.contains(pos)) {
+            kind = HoverConfirmButton;
+            enabled = m_confirmEnabled;
+        } else {
+            for (int slot = 0; slot < 3; ++slot) {
+                if (footerLinkRect(slot).contains(pos)) {
+                    kind = HoverFooterLink;
+                    index = slot;
+                    enabled = m_footerLinks[slot].custom ? true : footerShortcutEnabled();
+                    break;
+                }
             }
         }
     } else if (headRect().contains(pos)) {
@@ -1377,6 +1630,14 @@ void AuDatePickerPanel::updateHover(const QPoint &pos)
 
 void AuDatePickerPanel::activateAt(const QPoint &pos)
 {
+    // 确定按钮（优先于快捷链接）
+    const QRect confirm = confirmButtonRect();
+    if (m_confirmVisible && confirm.contains(pos)) {
+        if (m_confirmEnabled)
+            emit confirmClicked();
+        return;
+    }
+
     // footer 快捷链接
     if (m_footerVisible && !m_footerWidget && footerRect().contains(pos)) {
         for (int slot = 0; slot < 3; ++slot) {
@@ -1385,8 +1646,25 @@ void AuDatePickerPanel::activateAt(const QPoint &pos)
             if (m_footerLinks[slot].custom) {
                 if (m_footerLinks[slot].callback)
                     m_footerLinks[slot].callback();
-            } else if (slot == 1 && footerShortcutEnabled()) {
+            } else if (slot == 0 && footerShortcutEnabled()) {
+                // 内置快捷项（左下角）：今天 / 此刻 / 当月 / 今年。
+                // "此刻" = 选择今天 + 当前时刻并确认提交（等同点击确定按钮，面板收起）；
+                // 当前时刻在时间窗口外时自动取与当前时刻最近的合法边界值
+                //（窗口下限 / 上限中较近者），快捷项不因此禁用
                 emit dateSelected(footerShortcutDate());
+                if (m_timeGranularity != AuTimePanel::NoTime) {
+                    QTime now = QTime::currentTime();
+                    if (m_timePanel) {
+                        const QTime lo = m_timePanel->minimumTime();
+                        const QTime hi = m_timePanel->maximumTime();
+                        if (lo.isValid() && now < lo)
+                            now = lo;
+                        else if (hi.isValid() && now > hi)
+                            now = hi;
+                    }
+                    emit timeSelected(now);
+                    emit confirmClicked();
+                }
             }
             return;
         }

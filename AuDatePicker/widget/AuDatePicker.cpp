@@ -4,6 +4,7 @@
 #include "AuDatePickerPanel.h"
 #include "AuDateRangePanel.h"
 
+#include <QDateTime>
 #include <QFontMetrics>
 #include <QKeyEvent>
 #include <QLineEdit>
@@ -17,6 +18,124 @@ namespace {
 const QString kRangeSeparator = QStringLiteral(u" ~ ");
 const QString kRangeStartPlaceholder = QStringLiteral(u"开始日期");
 const QString kRangeEndPlaceholder = QStringLiteral(u"结束日期");
+
+/// 去掉 Qt 格式中单引号字面量段落（'' 转义为字面单引号），用于 token 扫描。
+QString stripQuotedLiterals(const QString &format)
+{
+    QString out;
+    out.reserve(format.size());
+    bool inQuote = false;
+    for (int i = 0; i < format.size(); ++i) {
+        const QChar c = format.at(i);
+        if (c == QLatin1Char('\'')) {
+            // '' 表示字面单引号（跳过第二个引号本身，不产生 token）
+            if (inQuote && i + 1 < format.size() && format.at(i + 1) == QLatin1Char('\''))
+                ++i;
+            else
+                inQuote = !inQuote;
+            continue;
+        }
+        if (!inQuote)
+            out.append(c);
+    }
+    return out;
+}
+
+/// 显示格式的时间 token 信息（大小写敏感：M = 月、m = 分）。
+struct FormatTimeInfo {
+    bool hasDate = false;    ///< 含 y / M / d token
+    bool hasHour = false;    ///< 含 h / H token
+    bool hasMinute = false;  ///< 含 m token
+    bool hasSecond = false;  ///< 含 s token
+};
+
+FormatTimeInfo parseDisplayFormat(const QString &format)
+{
+    const QString tokens = stripQuotedLiterals(format);
+    FormatTimeInfo info;
+    for (const QChar &c : tokens) {
+        switch (c.unicode()) {
+        case 'y': case 'Y': case 'M': case 'd':
+            info.hasDate = true;
+            break;
+        case 'h': case 'H':
+            info.hasHour = true;
+            break;
+        case 'm':
+            info.hasMinute = true;
+            break;
+        case 's':
+            info.hasSecond = true;
+            break;
+        default:
+            break;
+        }
+    }
+    // 列依赖补全：出现秒必含分列，出现分必含时列（月 / 分大小写可区分，直接按 token 映射）
+    if (info.hasSecond)
+        info.hasMinute = true;
+    if (info.hasMinute)
+        info.hasHour = true;
+    return info;
+}
+
+/// 单个日期 / 时间 token 的"实际最大取值"样本文本：月最大 12、日最大 31、
+/// 时最大 23（12 小时制最大 12）、分 / 秒最大 59，年保留逐 8（等宽 9999）。
+/// 比逐字符替换 '8' 更贴近真实显示宽度，并修复单字母 M/d/h/H 形式的低估
+/// （如 "M" 此前按 "8" 估宽，而 12 月实际渲染 "12" 更宽）
+QString tokenSampleText(QChar token, int runLength)
+{
+    switch (token.unicode()) {
+    case 'y': case 'Y':
+        return QStringLiteral("8888").left(qMin(runLength, 4));
+    case 'M': return QStringLiteral("12");
+    case 'd': return QStringLiteral("31");
+    case 'h': return QStringLiteral("12");
+    case 'H': return QStringLiteral("23");
+    case 'm': return QStringLiteral("59");
+    case 's': return QStringLiteral("59");
+    default: return QString();
+    }
+}
+
+/// 按格式构造"最宽"样本文本：日期 / 时间 token 按其最大取值展开
+/// （如 yyyy-MM-dd -> 8888-12-31、HH:mm -> 23:59），用于编辑框固定宽度估算，
+/// 保证任何取值不截断。引号段按字面保留。
+QString widestTextForFormat(const QString &format)
+{
+    QString out;
+    out.reserve(format.size());
+    bool inQuote = false;
+    for (int i = 0; i < format.size(); ++i) {
+        const QChar c = format.at(i);
+        if (c == QLatin1Char('\'')) {
+            if (inQuote && i + 1 < format.size() && format.at(i + 1) == QLatin1Char('\'')) {
+                out.append(c);
+                ++i;
+            } else {
+                inQuote = !inQuote;
+            }
+            continue;
+        }
+        if (!inQuote) {
+            switch (c.unicode()) {
+            case 'y': case 'Y': case 'M': case 'd':
+            case 'h': case 'H': case 'm': case 's': {
+                int j = i;
+                while (j < format.size() && format.at(j) == c)
+                    ++j;
+                out.append(tokenSampleText(c, j - i));
+                i = j - 1;
+                continue;
+            }
+            default:
+                break;
+            }
+        }
+        out.append(c);
+    }
+    return out;
+}
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -105,6 +224,9 @@ AuDatePicker::AuDatePicker(QWidget *parent)
     , m_formatCustom(false)
     , m_selectionMode(SelectDay)
     , m_editorWidthMode(WidthFitContent)
+    , m_timeGranularity(AuTimePanel::NoTime)
+    , m_timeOnly(false)
+    , m_pending(false)
     , m_picking(false)
     , m_rangePlaceholderAuto(false)
     , m_rangeStartPlaceholder(kRangeStartPlaceholder)
@@ -124,6 +246,7 @@ AuDatePicker::AuDatePicker(QWidget *parent)
     setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
 
     m_displayFormat = defaultFormatForMode(m_selectionMode);
+    updateTimeGranularity();
 
     m_lineEdit->setFrame(false);
     m_lineEdit->setReadOnly(true);
@@ -170,6 +293,42 @@ QDate AuDatePicker::date() const
     return m_date;
 }
 
+QDateTime AuDatePicker::dateTime() const
+{
+    return QDateTime(m_date, m_time);
+}
+
+QTime AuDatePicker::time() const
+{
+    return m_time;
+}
+
+AuTimePanel::Granularity AuDatePicker::timeGranularity() const
+{
+    return m_timeGranularity;
+}
+
+bool AuDatePicker::hasTimePart() const
+{
+    return m_timeGranularity != AuTimePanel::NoTime;
+}
+
+bool AuDatePicker::isTimeOnly() const
+{
+    return m_timeOnly;
+}
+
+bool AuDatePicker::isTimeValid(const QTime &time) const
+{
+    if (!time.isValid())
+        return false;
+    if (m_minimumTime.isValid() && time < m_minimumTime)
+        return false;
+    if (m_maximumTime.isValid() && time > m_maximumTime)
+        return false;
+    return true;
+}
+
 bool AuDatePicker::hasSelection() const
 {
     if (m_selectionMode == SelectDateRange)
@@ -193,13 +352,51 @@ void AuDatePicker::setDate(const QDate &date)
         setStartDate(date); // 范围模式下 setDate 只设置开始日期
         return;
     }
-    const QDate normalized = date.isValid() ? date : QDate();
-    if (normalized == m_date)
+    // 保留已设置的时间部分；时间未设置且启用时间粒度时补默认值（钳入时间窗口）
+    setDateTime(QDateTime(date, m_time));
+}
+
+void AuDatePicker::setDateTime(const QDateTime &dateTime)
+{
+    if (m_selectionMode == SelectDateRange) {
+        setStartDate(dateTime.date()); // 范围模式忽略时间部分
         return;
-    m_date = normalized;
+    }
+    const QDate newDate = dateTime.date().isValid() ? dateTime.date() : QDate();
+    QTime newTime = m_time;
+    if (m_selectionMode == SelectDay && hasTimePart()) {
+        if (dateTime.time().isValid())
+            newTime = dateTime.time(); // 允许写入窗口外的预设值（面板确定按钮置灰提示）
+        else if (newDate.isValid())
+            newTime = clampTimeToRange(QTime(0, 0)); // 组合模式未设时间：默认 00:00 钳入窗口
+        else
+            newTime = QTime(); // 清空
+    }
+    const bool dateDiffers = newDate != m_date;
+    const bool timeDiffers = hasTimePart() && newTime != m_time;
+    if (!dateDiffers && !timeDiffers)
+        return;
+    m_date = newDate;
+    m_time = newTime;
     updateEditorText();
-    syncPanelToValue(); // 自定义 footer 等程序设值：展开中的面板同步高亮新日期
-    emit dateChanged(m_date);
+    syncPanelToValue(); // 自定义 footer 等程序设值：展开中的面板同步高亮新值
+    if (dateDiffers)
+        emit dateChanged(m_date);
+    if (timeDiffers)
+        emit timeChanged(m_time);
+    emit dateTimeChanged(QDateTime(m_date, m_time));
+    update();
+}
+
+void AuDatePicker::setTime(const QTime &time)
+{
+    if (!hasTimePart() || m_time == time)
+        return;
+    m_time = time;
+    updateEditorText();
+    syncPanelToValue();
+    emit timeChanged(m_time);
+    emit dateTimeChanged(QDateTime(m_date, m_time));
     update();
 }
 
@@ -244,11 +441,11 @@ void AuDatePicker::clear()
 {
     const bool had = m_selectionMode == SelectDateRange
                          ? (m_date.isValid() || m_endDate.isValid())
-                         : m_date.isValid();
+                         : (m_date.isValid() || m_time.isValid());
     if (m_selectionMode == SelectDateRange)
         setSelectedRange(QDate(), QDate());
     else
-        setDate(QDate());
+        setDateTime(QDateTime()); // 日期与时间一并清空
     if (had) {
         emit cleared();
         update();
@@ -269,6 +466,7 @@ void AuDatePicker::setDisplayFormat(const QString &format)
         return;
     m_displayFormat = format;
     m_formatCustom = true;
+    updateTimeGranularity(); // 时间 token 变化联动时间粒度（面板 / 几何）
     updateEditorText();
     updateGeometry(); // 固定宽度按格式计算，格式变化后同步
     update();
@@ -304,10 +502,14 @@ void AuDatePicker::setSelectionMode(SelectionMode mode)
     m_picking = false;
     m_pickStart = QDate();
     m_hoverDate = QDate();
+    m_pending = false;
+    m_pendingDate = QDate();
+    m_pendingTime = QTime();
     m_underlineAnim->stop();
     m_underlineRect = QRectF();
     if (!m_formatCustom)
         m_displayFormat = defaultFormatForMode(mode); // 默认格式随粒度切换
+    updateTimeGranularity(); // 粒度变化联动时间部分（非选日粒度恒为 NoTime）
     if (mode == SelectDateRange && m_lineEdit->placeholderText().isEmpty()) {
         m_lineEdit->setPlaceholderText(m_rangeStartPlaceholder + kRangeSeparator
                                        + m_rangeEndPlaceholder);
@@ -373,6 +575,43 @@ void AuDatePicker::setFixedRange(const QDate &min, const QDate &max)
         m_rangeContent->setDateRange(m_minimumDate, m_maximumDate);
         m_rangeContent->update();
     }
+}
+
+QTime AuDatePicker::minimumTime() const
+{
+    return m_minimumTime;
+}
+
+QTime AuDatePicker::maximumTime() const
+{
+    return m_maximumTime;
+}
+
+void AuDatePicker::setMinimumTime(const QTime &min)
+{
+    setTimeRange(min, m_maximumTime);
+}
+
+void AuDatePicker::setMaximumTime(const QTime &max)
+{
+    setTimeRange(m_minimumTime, max);
+}
+
+void AuDatePicker::setTimeRange(const QTime &min, const QTime &max)
+{
+    QTime lo = min.isValid() ? min : QTime();
+    QTime hi = max.isValid() ? max : QTime();
+    if (lo.isValid() && hi.isValid() && lo > hi)
+        qSwap(lo, hi); // 与日期范围一致：自动交换（不支持跨午夜窗口）
+    if (lo == m_minimumTime && hi == m_maximumTime)
+        return;
+    m_minimumTime = lo;
+    m_maximumTime = hi;
+    if (m_dayContent) {
+        m_dayContent->setTimeRange(lo, hi);
+        refreshConfirmState(); // 窗口变化后待选值合法性可能翻转，确定按钮联动
+    }
+    update();
 }
 
 // ---------------------------------------------------------------------------
@@ -637,8 +876,16 @@ void AuDatePicker::showPopup()
     } else {
         m_dayContent->setStyle(style());
         m_dayContent->setSelectionMode(m_selectionMode);
-        m_dayContent->setSelectedDate(m_date);
         m_dayContent->setDateRange(m_minimumDate, m_maximumDate);
+        // 时间部分：粒度 / 窗口 / 纯时间模式，展开前配置（影响面板尺寸）
+        m_dayContent->setTimeGranularity(m_timeGranularity);
+        m_dayContent->setTimeOnly(m_timeOnly);
+        m_dayContent->setTimeRange(m_minimumTime, m_maximumTime);
+        initPendingForPopup();
+        m_dayContent->setSelectedDate(m_date);
+        m_dayContent->setSelectedTime(m_pendingTime);
+        m_dayContent->setConfirmButtonVisible(hasTimePart());
+        refreshConfirmState();
         m_dayContent->resetView();
         pushFooterConfig();
         m_panel->popupOver(this, m_dayContent->sizeHint());
@@ -675,6 +922,13 @@ void AuDatePicker::ensurePopup()
             m_hoverDate = QDate();
             if (m_rangeContent)
                 m_rangeContent->endPicking();
+            updateEditorText();
+        }
+        // 时间选择未确认即收起：丢弃待选值，编辑框恢复已提交文本
+        if (m_selectionMode != SelectDateRange && m_pending) {
+            m_pending = false;
+            m_pendingDate = QDate();
+            m_pendingTime = QTime();
             updateEditorText();
         }
         // 清掉下划线并立即重绘：收起动画期间与结束后编辑框都不能残留旧下划线
@@ -723,6 +977,10 @@ void AuDatePicker::ensurePopupContent()
         m_dayContent = new AuDatePickerPanel();
         connect(m_dayContent, &AuDatePickerPanel::dateSelected, this,
                 &AuDatePicker::handlePanelDateSelected);
+        connect(m_dayContent, &AuDatePickerPanel::timeSelected, this,
+                &AuDatePicker::handlePanelTimeSelected);
+        connect(m_dayContent, &AuDatePickerPanel::confirmClicked, this,
+                &AuDatePicker::handleConfirmClicked);
         m_panel->setContentWidget(m_dayContent);
         m_content = m_dayContent.data();
     }
@@ -755,6 +1013,17 @@ void AuDatePicker::handlePanelDateSelected(const QDate &date)
         }
         return;
     }
+    if (hasTimePart()) {
+        // 含时间部分：点击日期（含 footer 快捷项）只更新待选值并实时预览，
+        // 由确定按钮 / 回车提交（时间不能一次点击完成选择）
+        m_pendingDate = date;
+        if (!m_pendingTime.isValid())
+            m_pendingTime = initialPendingTime();
+        m_dayContent->setSelectedDate(date);
+        refreshConfirmState();
+        updateEditorText();
+        return;
+    }
     setDate(date);
     emit activated(date);
     hidePopup();
@@ -785,7 +1054,170 @@ void AuDatePicker::handleEscape()
 }
 
 // ---------------------------------------------------------------------------
+// 时间选择（待选 / 确认）
+
+void AuDatePicker::updateTimeGranularity()
+{
+    AuTimePanel::Granularity granularity = AuTimePanel::NoTime;
+    bool timeOnly = false;
+    if (m_selectionMode == SelectDay) {
+        // 时间 token 仅在选日粒度生效（月 / 年 / 范围模式无时间语义）
+        const FormatTimeInfo info = parseDisplayFormat(m_displayFormat);
+        if (info.hasSecond)
+            granularity = AuTimePanel::HoursMinutesSeconds;
+        else if (info.hasMinute)
+            granularity = AuTimePanel::HoursMinutes;
+        else if (info.hasHour)
+            granularity = AuTimePanel::HoursOnly;
+        timeOnly = granularity != AuTimePanel::NoTime && !info.hasDate;
+    }
+    if (granularity == m_timeGranularity && timeOnly == m_timeOnly)
+        return;
+    m_timeGranularity = granularity;
+    m_timeOnly = timeOnly;
+    m_pending = false; // 粒度切换作废未提交的待选值
+    m_pendingDate = QDate();
+    m_pendingTime = QTime();
+    updateGeometry(); // 固定宽度 / 面板尺寸随时间部分变化
+    update();
+}
+
+void AuDatePicker::initPendingForPopup()
+{
+    m_pending = hasTimePart();
+    if (!m_pending) {
+        m_pendingDate = QDate();
+        m_pendingTime = QTime();
+        return;
+    }
+    m_pendingDate = m_date; // 可能为无效（尚未选择日期）
+    m_pendingTime = initialPendingTime();
+}
+
+QTime AuDatePicker::initialPendingTime() const
+{
+    if (m_timeOnly)
+        return m_time; // 可能为无效：未设置时不高亮，待用户选择
+    if (m_time.isValid())
+        return m_time; // 预设值（可为窗口外：确定按钮置灰，符合范围限制语义）
+    return clampTimeToRange(QTime(0, 0)); // 组合模式未设时间：默认 00:00 钳入窗口
+}
+
+QTime AuDatePicker::clampTimeToRange(const QTime &time) const
+{
+    if (!time.isValid())
+        return time;
+    if (m_minimumTime.isValid() && time < m_minimumTime)
+        return m_minimumTime;
+    if (m_maximumTime.isValid() && time > m_maximumTime)
+        return m_maximumTime;
+    return time;
+}
+
+bool AuDatePicker::pendingValid() const
+{
+    if (!m_pending)
+        return false;
+    if (m_timeOnly)
+        return isTimeValid(m_pendingTime);
+    // 日期需在可选范围内（窗口外预设日期同样禁止直接提交）
+    return m_pendingDate.isValid() && isDateSelectable(m_pendingDate)
+           && m_pendingTime.isValid() && isTimeValid(m_pendingTime);
+}
+
+void AuDatePicker::refreshConfirmState()
+{
+    if (m_dayContent)
+        m_dayContent->setConfirmButtonEnabled(pendingValid());
+}
+
+void AuDatePicker::commitPending()
+{
+    if (!pendingValid())
+        return;
+    const QDate prevDate = m_date;
+    const QTime prevTime = m_time;
+    m_date = m_pendingDate;
+    m_time = m_pendingTime;
+    m_pending = false;
+    m_pendingDate = QDate();
+    m_pendingTime = QTime();
+    updateEditorText();
+    syncPanelToValue();
+    if (m_date != prevDate)
+        emit dateChanged(m_date);
+    if (m_time != prevTime)
+        emit timeChanged(m_time);
+    if (m_date != prevDate || m_time != prevTime)
+        emit dateTimeChanged(QDateTime(m_date, m_time));
+    emit activated(m_date);
+    emit dateTimeActivated(QDateTime(m_date, m_time));
+    hidePopup();
+}
+
+void AuDatePicker::handlePanelTimeSelected(const QTime &time)
+{
+    if (!m_pending)
+        return;
+    m_pendingTime = time;
+    refreshConfirmState();
+    updateEditorText(); // 编辑框实时预览待选时间
+}
+
+void AuDatePicker::handleConfirmClicked()
+{
+    commitPending();
+}
+
+// ---------------------------------------------------------------------------
 // 范围模式交互
+
+QString AuDatePicker::rangeDisplayFormat() const
+{
+    if (m_selectionMode != SelectDateRange)
+        return m_displayFormat;
+    // 范围模式为纯日期语义：format 中的时间 token（及其后缀）不参与显示与估宽，
+    // 如 "yyyy-MM-dd HH:mm" 按 "yyyy-MM-dd"；纯时间格式退回默认日期格式
+    bool inQuote = false;
+    int cut = -1;
+    for (int i = 0; i < m_displayFormat.size() && cut < 0; ++i) {
+        const QChar c = m_displayFormat.at(i);
+        if (c == QLatin1Char('\'')) {
+            if (inQuote && i + 1 < m_displayFormat.size()
+                && m_displayFormat.at(i + 1) == QLatin1Char('\'')) {
+                ++i;
+            } else {
+                inQuote = !inQuote;
+            }
+            continue;
+        }
+        if (inQuote)
+            continue;
+        switch (c.unicode()) {
+        case 'h': case 'H': case 'm': case 's':
+            cut = i;
+            break;
+        default:
+            break;
+        }
+    }
+    if (cut < 0)
+        return m_displayFormat;
+    QString date = m_displayFormat.left(cut);
+    while (!date.isEmpty()) {
+        const QChar last = date.at(date.size() - 1);
+        if (last == QLatin1Char(' ') || last == QLatin1Char('-')
+            || last == QLatin1Char('/') || last == QLatin1Char('.')
+            || last == QLatin1Char(',') || last == QLatin1Char(':')
+            || last == QLatin1Char('T'))
+            date.chop(1);
+        else
+            break;
+    }
+    if (date.trimmed().isEmpty())
+        date = QStringLiteral("yyyy-MM-dd");
+    return date;
+}
 
 void AuDatePicker::updateRangePreview()
 {
@@ -819,11 +1251,12 @@ QRectF AuDatePicker::rangeUnderlineRect(bool endSegment) const
     const QDate start = m_picking ? m_pickStart : m_date;
     const QDate end = m_picking ? QDate() : m_endDate;
     // 未选侧用占位文本宽度估算
-    const QString startText = start.isValid() ? start.toString(m_displayFormat)
+    const QString fmt = rangeDisplayFormat();
+    const QString startText = start.isValid() ? start.toString(fmt)
                                               : m_rangeStartPlaceholder;
-    const QString endText = end.isValid() ? end.toString(m_displayFormat)
+    const QString endText = end.isValid() ? end.toString(fmt)
                                           : m_rangeEndPlaceholder;
-    const QString fallback = QDate(8888, 12, 31).toString(m_displayFormat);
+    const QString fallback = widestTextForFormat(fmt);
     const int wStart = fm.horizontalAdvance(startText.isEmpty() ? fallback : startText);
     const int wSep = fm.horizontalAdvance(kRangeSeparator);
     const int wEnd = fm.horizontalAdvance(endText.isEmpty() ? fallback : endText);
@@ -960,7 +1393,7 @@ void AuDatePicker::paintEvent(QPaintEvent * /*event*/)
             const qreal x0 = rangeEditorTextX();
             if (x0 >= 0) {
                 const QFontMetrics fm(m_lineEdit->font());
-                const int wStart = fm.horizontalAdvance(start.toString(m_displayFormat));
+                const int wStart = fm.horizontalAdvance(start.toString(rangeDisplayFormat()));
                 const int wSep = fm.horizontalAdvance(kRangeSeparator);
                 const int ghostX = qRound(x0) + wStart + wSep;
                 const int right = iconSlotRect().left() - 4;
@@ -1130,7 +1563,16 @@ bool AuDatePicker::eventFilter(QObject *watched, QEvent *event)
                     return true;
                 case Qt::Key_Enter:
                 case Qt::Key_Return:
-                    activatePopupFocus();
+                    if (hasTimePart()) {
+                        // 含时间部分：日历子页（年 / 月九宫格）回车激活焦点格，
+                        // 初始页回车 = 确认提交（时间无法一次点击完成选择）
+                        if (m_dayContent && m_dayContent->view() != AuDatePickerPanel::DayView)
+                            activatePopupFocus();
+                        else if (pendingValid())
+                            commitPending();
+                    } else {
+                        activatePopupFocus();
+                    }
                     return true;
                 default:
                     break;
@@ -1230,10 +1672,11 @@ int AuDatePicker::effectiveEditorHeight() const
 
 int AuDatePicker::fixedEditorWidth() const
 {
-    // 以格式能呈现的最长文本（8888-12-31）估算宽度，保证日期完整显示不截断
+    // 估宽 = 格式各 token 最大取值样本文本（如 yyyy-MM-dd -> 8888-12-31）的字体度量；
+    // 范围模式按 format 的日期部分双侧拼接（时间 token 不参与显示与估宽）
     AuDatePickerStyle *s = style();
     const QFontMetrics fm(m_lineEdit->font());
-    QString text = QDate(8888, 12, 31).toString(m_displayFormat);
+    QString text = widestTextForFormat(rangeDisplayFormat());
     if (m_selectionMode == SelectDateRange) {
         // "开始 ~ 结束" 双侧最长文本；占位文本更长时按占位算
         const QString full = text + kRangeSeparator + text;
@@ -1291,6 +1734,13 @@ void AuDatePicker::syncPanelToValue()
         }
     } else if (m_dayContent) {
         m_dayContent->setSelectedDate(m_date);
+        if (hasTimePart()) {
+            // 程序设值：待选状态重新初始化（高亮 + 确定按钮联动）
+            initPendingForPopup();
+            m_dayContent->setSelectedTime(m_pendingTime);
+            m_dayContent->setConfirmButtonVisible(true);
+            refreshConfirmState();
+        }
         m_dayContent->resetView();
     }
 }
@@ -1303,9 +1753,21 @@ void AuDatePicker::updateEditorText()
         const QDate start = m_picking ? m_pickStart : m_date;
         const QDate end = m_picking ? QDate() : m_endDate;
         if (start.isValid()) {
-            text = start.toString(m_displayFormat) + kRangeSeparator;
+            const QString fmt = rangeDisplayFormat();
+            text = start.toString(fmt) + kRangeSeparator;
             if (end.isValid())
-                text += end.toString(m_displayFormat);
+                text += end.toString(fmt);
+        }
+    } else if (hasTimePart()) {
+        // 时间模式：面板展开期间预览待选值（未确认不写回已提交值）
+        const QDate date = m_pending ? m_pendingDate : m_date;
+        const QTime time = m_pending ? m_pendingTime : m_time;
+        if (m_timeOnly) {
+            text = time.isValid() ? time.toString(m_displayFormat) : QString();
+        } else if (date.isValid() && time.isValid()) {
+            text = QDateTime(date, time).toString(m_displayFormat);
+        } else if (date.isValid()) {
+            text = date.toString(m_displayFormat); // 兜底：时间未定先显示日期部分
         }
     } else {
         text = m_date.isValid() ? m_date.toString(m_displayFormat) : QString();

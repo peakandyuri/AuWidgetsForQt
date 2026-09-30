@@ -35,12 +35,14 @@ SOURCES += \
     widget/AuDatePicker.cpp \
     widget/AuDatePickerPanel.cpp \
     widget/AuDateRangePanel.cpp \
+    widget/AuTimePanel.cpp \
     style/AuDatePickerStyle.cpp
 
 HEADERS += \
     include/AuDatePicker_global.h \
     include/AuDatePicker.h \
     include/AuDatePickerStyle.h \
+    include/AuTimePanel.h \
     widget/AuDatePickerPanel.h \
     widget/AuDateRangePanel.h
 

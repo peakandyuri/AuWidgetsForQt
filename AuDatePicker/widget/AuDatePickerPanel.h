@@ -3,6 +3,7 @@
 
 #include "AuDatePicker_global.h"
 #include "AuDatePicker.h"
+#include "AuTimePanel.h"
 
 #include <QWidget>
 #include <QDate>
@@ -35,6 +36,13 @@ class QVariantAnimation;
  * 范围选择模式（setRangeSelectionMode，配合 AuDateRangePanel 双日历组合使用）：
  * 起点与终点之间的日期绘制淡色范围带（setRangeStart / setRangeEnd），选终点
  * 过程中可通过 setRangePreviewEnd 实时预览范围；单一选中高亮在该模式下关闭。
+ *
+ * 时间部分（setTimeGranularity 粒度非 NoTime 时启用）：body 右侧出现时间栏
+ * （内嵌 AuTimePanel 子部件，时 / 分 / 秒列滚动选择），日历格子区域相应收窄，
+ * 月 / 年九宫格页同样保留时间栏；setTimeOnly(true) 为纯时间模式——隐藏头部与
+ * 日历，body 整体只放时间列。footer 确定按钮（setConfirmButtonVisible）用于
+ * 需要二次确认的场景（含时间部分时点击日期 / 时间不再直接提交），当前值合法
+ * 与否由上层通过 setConfirmButtonEnabled 控制，点击发出 confirmClicked()。
  */
 class AUDATEPICKER_EXPORT AuDatePickerPanel : public QWidget
 {
@@ -102,6 +110,24 @@ public:
     void setFooterWidget(QWidget *widget);
     QWidget *footerWidget() const;
 
+    // ---- 时间部分（内嵌 AuTimePanel 右栏 / 纯时间模式）----
+    void setTimeGranularity(AuTimePanel::Granularity granularity); ///< NoTime = 无时间栏
+    AuTimePanel::Granularity timeGranularity() const;
+    /// 纯时间模式：隐藏头部与日历，body 整体只放时间列（粒度需非 NoTime）。
+    void setTimeOnly(bool timeOnly);
+    bool isTimeOnly() const;
+    void setSelectedTime(const QTime &time);     ///< 转发给时间栏（无时间栏时忽略）
+    QTime selectedTime() const;                  ///< 无时间栏返回无效 QTime
+    void setTimeRange(const QTime &min, const QTime &max); ///< 每日时刻窗口（转发给时间栏）
+    AuTimePanel *timePanel() const;              ///< 内嵌时间栏（未启用返回 nullptr）
+
+    // ---- footer 确定按钮 ----
+    void setConfirmButtonVisible(bool visible);  ///< 含时间部分时显示（footer 右侧）
+    bool isConfirmButtonVisible() const;
+    void setConfirmButtonEnabled(bool enabled);  ///< 当前值不合法时置灰（由上层判定）
+    bool isConfirmButtonEnabled() const;
+    QRect confirmButtonRect() const;             ///< 按钮矩形（隐藏 / 自定义 footer 时为空）
+
     // ---- 页面状态 ----
     View view() const;
     int displayedYear() const;       ///< Day：当前年；Month：当前年；Year：当前页首年
@@ -132,6 +158,10 @@ public:
 Q_SIGNALS:
     /// 最终确定选择（点击可选日期 / 月份 / 年份，或 footer 内置快捷项）。
     void dateSelected(const QDate &date);
+    /// 时间栏选定时间（转发自内嵌 AuTimePanel 的 timeChanged）。
+    void timeSelected(const QTime &time);
+    /// footer 确定按钮点击（仅 setConfirmButtonEnabled(true) 时可点）。
+    void confirmClicked();
     /// DayView 实际切换显示月之后发出（双日历组合据此联动翻月）。
     void monthShownChanged(int year, int month);
     /// 悬停可选日期变化（移出日期格 / 离开面板时为无效 QDate；范围预览用）。
@@ -155,6 +185,11 @@ private:
     // 布局
     QRect headRect() const;
     QRect bodyRect() const;                  ///< head 与 footer 之间（月/年格子整体区域）
+    QRect calendarRect() const;              ///< bodyRect 去掉时间栏后的日历区（纯时间模式为空）
+    int timeRailWidth() const;               ///< 时间栏总宽（分隔线 + 内边距 + 列）；未启用为 0
+    QRect timePanelRect() const;             ///< 时间栏子部件几何
+    void layoutTimePanel();                  ///< 重排时间栏子部件
+    int timeColumnCount() const;             ///< 时间列数（由粒度换算）
     QRect footerRect() const;                ///< footer 隐藏时为空矩形
     QRect weekdayRowRect() const;            ///< DayView 星期行
     QRect dayGridRect() const;               ///< DayView 6 周日期区
@@ -242,6 +277,13 @@ private:
 
     int m_navMask;                             ///< DayView 箭头显示掩码
     bool m_titleNavEnabled;                    ///< head 年 / 月分段可点击
+
+    // 时间部分
+    AuTimePanel *m_timePanel;                  ///< 内嵌时间栏（粒度非 NoTime 时创建）
+    AuTimePanel::Granularity m_timeGranularity;
+    bool m_timeOnly;                           ///< 纯时间模式（无日历与头部）
+    bool m_confirmVisible;                     ///< footer 确定按钮
+    bool m_confirmEnabled;
 
     int m_year;          ///< DayView 当前显示年
     int m_month;         ///< DayView 当前显示月（1-12）

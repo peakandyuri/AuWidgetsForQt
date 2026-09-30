@@ -38,6 +38,15 @@ AuDatePickerStyle::AuDatePickerStyle()
     m_panelShadowColor = QColor(0, 0, 0, 45);
     m_panelShadowRadius = 10;
 
+    // 时间面板（尺寸类字段在 applySizeModePreset 中设置）
+
+    // 确定按钮
+    m_confirmBackgroundColor = QColor(0x16, 0x77, 0xff);
+    m_confirmHoverBackgroundColor = QColor(0x40, 0x96, 0xff);
+    m_confirmForegroundColor = QColor(Qt::white);
+    m_confirmDisabledBackgroundColor = QColor(0, 0, 0, 25);
+    m_confirmDisabledForegroundColor = QColor(0, 0, 0, 102);
+
     // 面板头部
     m_navIconColor = QColor(0, 0, 0, 165);
     m_navIconDisabledColor = QColor(0, 0, 0, 45);
@@ -133,6 +142,13 @@ AuDatePickerStyle *AuDatePickerStyle::createDarkStyle(SizeMode mode)
     style->m_footerLinkHoverColor = QColor(0x70, 0xb8, 0xff);
     style->m_footerLinkDisabledColor = QColor(255, 255, 255, 40);
 
+    // 确定按钮
+    style->m_confirmBackgroundColor = QColor(0x16, 0x77, 0xff);
+    style->m_confirmHoverBackgroundColor = QColor(0x40, 0x96, 0xff);
+    style->m_confirmForegroundColor = QColor(Qt::white);
+    style->m_confirmDisabledBackgroundColor = QColor(255, 255, 255, 25);
+    style->m_confirmDisabledForegroundColor = QColor(255, 255, 255, 102);
+
     return style;
 }
 
@@ -184,6 +200,8 @@ void AuDatePickerStyle::applySizeModePreset(SizeMode mode)
         m_cellSpacing = 2;
         m_cellRadius = 3;
         m_footerHeight = 30;
+        m_timeColumnWidth = 36;
+        m_timeItemHeight = 20;
         break;
     case SizeMode::Large:
         fontPixelSize = 16;
@@ -201,6 +219,8 @@ void AuDatePickerStyle::applySizeModePreset(SizeMode mode)
         m_cellSpacing = 2;
         m_cellRadius = 6;
         m_footerHeight = 40;
+        m_timeColumnWidth = 44;
+        m_timeItemHeight = 28;
         break;
     case SizeMode::Medium:
     default:
@@ -219,6 +239,8 @@ void AuDatePickerStyle::applySizeModePreset(SizeMode mode)
         m_cellSpacing = 2;
         m_cellRadius = 4;
         m_footerHeight = 36;
+        m_timeColumnWidth = 40;
+        m_timeItemHeight = 24;
         break;
     }
 
@@ -297,6 +319,24 @@ int AuDatePickerStyle::panelShadowRadius() const { return m_panelShadowRadius; }
 void AuDatePickerStyle::setPanelShadowRadius(int radius) { m_panelShadowRadius = qMax(0, radius); }
 int AuDatePickerStyle::panelHorizontalPadding() const { return m_panelHorizontalPadding; }
 void AuDatePickerStyle::setPanelHorizontalPadding(int padding) { m_panelHorizontalPadding = qMax(0, padding); }
+
+// ---- 时间面板 ----
+int AuDatePickerStyle::timeColumnWidth() const { return m_timeColumnWidth; }
+void AuDatePickerStyle::setTimeColumnWidth(int width) { m_timeColumnWidth = qMax(24, width); }
+int AuDatePickerStyle::timeItemHeight() const { return m_timeItemHeight; }
+void AuDatePickerStyle::setTimeItemHeight(int height) { m_timeItemHeight = qMax(14, height); }
+
+// ---- 确定按钮 ----
+QColor AuDatePickerStyle::confirmBackgroundColor() const { return m_confirmBackgroundColor; }
+void AuDatePickerStyle::setConfirmBackgroundColor(const QColor &color) { m_confirmBackgroundColor = color; }
+QColor AuDatePickerStyle::confirmHoverBackgroundColor() const { return m_confirmHoverBackgroundColor; }
+void AuDatePickerStyle::setConfirmHoverBackgroundColor(const QColor &color) { m_confirmHoverBackgroundColor = color; }
+QColor AuDatePickerStyle::confirmForegroundColor() const { return m_confirmForegroundColor; }
+void AuDatePickerStyle::setConfirmForegroundColor(const QColor &color) { m_confirmForegroundColor = color; }
+QColor AuDatePickerStyle::confirmDisabledBackgroundColor() const { return m_confirmDisabledBackgroundColor; }
+void AuDatePickerStyle::setConfirmDisabledBackgroundColor(const QColor &color) { m_confirmDisabledBackgroundColor = color; }
+QColor AuDatePickerStyle::confirmDisabledForegroundColor() const { return m_confirmDisabledForegroundColor; }
+void AuDatePickerStyle::setConfirmDisabledForegroundColor(const QColor &color) { m_confirmDisabledForegroundColor = color; }
 
 // ---- 面板头部 ----
 int AuDatePickerStyle::headHeight() const { return m_headHeight; }

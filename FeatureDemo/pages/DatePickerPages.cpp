@@ -218,7 +218,6 @@ QDate date = picker->date();   // 显示按 yyyy
         page.createDemo = []() {
             AuDatePicker *picker = newPicker();
             picker->setSelectionMode(AuDatePicker::SelectDateRange);
-            picker->setFixedWidth(360);
 
             QPlainTextEdit *log = PageHelpers::makeLog();
             QObject::connect(picker, &AuDatePicker::dateRangeChanged, picker,
@@ -398,9 +397,11 @@ picker->clear();   // API 清除同样发出 cleared()
         FeaturePage page;
         page.title = QStringLiteral(u"Footer 定制");
         page.description = QStringLiteral(
-            u"面板底部默认居中显示“今天”；setFooterLink 可配置左 / 中 / 右三个超链接位"
-            u"（文本 + 点击回调），setFooterVisible(false) 隐藏 footer。范围模式（双日历）"
-            u"同样支持三槽位自定义链接；回调里调用 hidePopup() 可控制面板收起"
+            u"面板底部左下角默认显示内置快捷项（无时间 “今天”；含时间部分为 “此刻”，"
+            u"点击直接选中并提交收起；选月 / 选年为 “当月 / 今年”）；setFooterLink 可配置"
+            u"左 / 中 / 右三个超链接位（自定义左槽位会覆盖内置快捷项），"
+            u"setFooterVisible(false) 隐藏 footer。范围模式（双日历）同样支持三槽位"
+            u"自定义链接；回调里调用 hidePopup() 可控制面板收起"
             u"（见范围面板的“完成”链接）。");
         page.createDemo = []() {
             AuDatePicker *picker = newPicker();
@@ -415,7 +416,6 @@ picker->clear();   // API 清除同样发出 cleared()
             // 范围模式：footer 自定义链接同样可用，回调可控制面板收起
             AuDatePicker *rangePicker = newPicker();
             rangePicker->setSelectionMode(AuDatePicker::SelectDateRange);
-            rangePicker->setFixedWidth(360);
             rangePicker->setFooterLink(AuDatePicker::FooterLeft, QStringLiteral(u"近 7 天"), [rangePicker]() {
                 rangePicker->setSelectedRange(QDate::currentDate().addDays(-6), QDate::currentDate());
             });
@@ -434,7 +434,7 @@ picker->clear();   // API 清除同样发出 cleared()
             QHBoxLayout *controls = new QHBoxLayout;
             QPushButton *hideBtn = new QPushButton(QStringLiteral(u"隐藏 footer"));
             QPushButton *showBtn = new QPushButton(QStringLiteral(u"显示 footer"));
-            QPushButton *resetBtn = new QPushButton(QStringLiteral(u"恢复中间槽位默认"));
+            QPushButton *resetBtn = new QPushButton(QStringLiteral(u"恢复左槽位内置快捷项"));
             controls->addWidget(hideBtn);
             controls->addWidget(showBtn);
             controls->addWidget(resetBtn);
@@ -450,7 +450,7 @@ picker->clear();   // API 清除同样发出 cleared()
             });
             QObject::connect(resetBtn, &QPushButton::clicked, body, [body]() {
                 for (AuDatePicker *p : body->findChildren<AuDatePicker *>())
-                    p->resetFooterLink(AuDatePicker::FooterCenter);
+                    p->resetFooterLink(AuDatePicker::FooterLeft);
             });
             return PageHelpers::composeDemo(controls, body);
         };
@@ -473,9 +473,9 @@ rangePicker->setFooterLink(AuDatePicker::FooterRight, "完成（收起面板）"
     rangePicker->hidePopup();   // footer 回调里调用 hidePopup() 控制面板收起
 });
 
-picker->resetFooterLink(AuDatePicker::FooterCenter);   // 恢复该槽位默认（演示按钮）
-picker->setFooterVisible(false);                       // 隐藏 footer（演示按钮）
-picker->setFooterVisible(true);                        // 显示 footer（演示按钮）
+picker->resetFooterLink(AuDatePicker::FooterLeft);    // 恢复左槽位内置快捷项（演示按钮）
+picker->setFooterVisible(false);                      // 隐藏 footer（演示按钮）
+picker->setFooterVisible(true);                       // 显示 footer（演示按钮）
 )snip";
         pages.append(page);
     }
@@ -554,6 +554,97 @@ picker->setStyle(nullptr);   // 恢复跟随全局样式（对应演示按钮）
 
 // 全局设置一次，所有未显式 setStyle 的控件自动生效（本程序 main.cpp 即如此）：
 AuDatePickerStyle::setGlobalStyle(AuDatePickerStyle::createLightStyle());
+)snip";
+        pages.append(page);
+    }
+
+    // ============ 11. 日期时间选择 ============
+    {
+        FeaturePage page;
+        page.title = QStringLiteral(u"日期时间选择");
+        page.description = QStringLiteral(
+            u"displayFormat 含时间 token 时启用时间选择：日历右侧出现时 / 分 / 秒列"
+            u"（仅 HH:mm 显示时、分；HH:mm:ss 显示全部），点击日期 / 时间仅更新待选值，"
+            u"右下角确定按钮或回车提交，左下角快捷项变为“此刻”（点击直接选中今天 + 当前时刻并提交收起；当前时刻在时间窗口外时自动取最近的合法边界值），Esc / 点击外部取消。format 仅含时间（HH:mm）"
+            u"为纯时间模式。setTimeRange 限制每日时刻窗口（如大于 12:30：0~11 时不可选，"
+            u"12 时的 0~29 分不可选），窗口外的预设时间无法直接提交。");
+        page.createDemo = []() {
+            AuDatePicker *picker = newPicker();
+            picker->setDateTime(QDateTime(QDate::currentDate(), QTime(14, 30)));
+
+            QPlainTextEdit *log = PageHelpers::makeLog();
+            QObject::connect(picker, &AuDatePicker::dateTimeChanged, picker,
+                             [log](const QDateTime &dateTime) {
+                                 PageHelpers::appendLog(
+                                     log, QString("dateTimeChanged: %1")
+                                              .arg(dateTime.toString("yyyy-MM-dd HH:mm:ss")));
+                             });
+            QObject::connect(picker, &AuDatePicker::dateTimeActivated, picker,
+                             [log](const QDateTime &dateTime) {
+                                 PageHelpers::appendLog(
+                                     log, QString("dateTimeActivated: %1")
+                                              .arg(dateTime.toString("yyyy-MM-dd HH:mm:ss")));
+                             });
+
+            QHBoxLayout *controls = new QHBoxLayout;
+            QPushButton *hmBtn = new QPushButton(QStringLiteral(u"yyyy-MM-dd HH:mm"));
+            QPushButton *hmsBtn = new QPushButton(QStringLiteral(u"yyyy-MM-dd HH:mm:ss"));
+            QPushButton *timeOnlyBtn = new QPushButton(QStringLiteral(u"HH:mm（纯时间）"));
+            QPushButton *rangeBtn = new QPushButton(QStringLiteral(u"限 12:30 ~ 18:00"));
+            QPushButton *noRangeBtn = new QPushButton(QStringLiteral(u"取消时刻限制"));
+            controls->addWidget(hmBtn);
+            controls->addWidget(hmsBtn);
+            controls->addWidget(timeOnlyBtn);
+            controls->addWidget(rangeBtn);
+            controls->addWidget(noRangeBtn);
+            controls->addStretch(1);
+            QObject::connect(hmBtn, &QPushButton::clicked, picker, [picker]() {
+                picker->setDisplayFormat(QStringLiteral("yyyy-MM-dd HH:mm"));
+            });
+            QObject::connect(hmsBtn, &QPushButton::clicked, picker, [picker]() {
+                picker->setDisplayFormat(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
+            });
+            QObject::connect(timeOnlyBtn, &QPushButton::clicked, picker, [picker]() {
+                picker->setDisplayFormat(QStringLiteral("HH:mm"));
+            });
+            // 时刻窗口：大于 12:30 才可选（0~11 时禁用，12 时的 0~29 分禁用）
+            QObject::connect(rangeBtn, &QPushButton::clicked, picker, [picker, log]() {
+                picker->setTimeRange(QTime(12, 30), QTime(18, 0));
+                PageHelpers::appendLog(log, QStringLiteral(u"setTimeRange(12:30, 18:00)"));
+            });
+            QObject::connect(noRangeBtn, &QPushButton::clicked, picker, [picker, log]() {
+                picker->setTimeRange(QTime(), QTime());
+                PageHelpers::appendLog(log, QStringLiteral(u"setTimeRange(取消)"));
+            });
+            return pickerPanel(picker, controls, log);
+        };
+        page.code = R"snip(
+AuDatePicker *picker = new AuDatePicker(this);
+
+// format 含时间 token 即启用时间选择（决定时 / 分 / 秒列与确认交互）
+picker->setDisplayFormat(QStringLiteral("yyyy-MM-dd HH:mm"));   // 时 + 分
+picker->setDisplayFormat(QStringLiteral("yyyy-MM-dd HH:mm:ss")); // 时 + 分 + 秒
+picker->setDisplayFormat(QStringLiteral("HH:mm"));              // 纯时间模式（无日历）
+
+// 读写组合值（时间部分未设置时 QDateTime 无效）
+picker->setDateTime(QDateTime(QDate::currentDate(), QTime(14, 30)));
+picker->setTime(QTime(9, 0));          // 仅改时间部分
+QDateTime value = picker->dateTime();
+QTime time = picker->time();
+
+// 每日时刻窗口（大于 12:30：0~11 时不可选，12 时的 0~29 分不可选）
+picker->setTimeRange(QTime(12, 30), QTime(18, 0));
+picker->setMinimumTime(QTime(12, 30));
+picker->setMaximumTime(QTime(18, 0));
+bool ok = picker->isTimeValid(QTime(13, 0));
+
+// 交互：点日期 / 时间仅更新待选值（编辑框实时预览），
+// footer 确定按钮或回车提交，Esc / 点击外部取消；
+// 窗口外的预设时间打开面板后确定按钮置灰，调整为合法值才能提交
+connect(picker, &AuDatePicker::dateTimeChanged,
+        this, [](const QDateTime &dateTime) { /* ... */ });
+connect(picker, &AuDatePicker::dateTimeActivated,
+        this, [](const QDateTime &dateTime) { /* ... */ });
 )snip";
         pages.append(page);
     }
