@@ -656,6 +656,11 @@ void AuSelect::showPopup()
         content.setWidth(qMax(width(), fitContentWidth()));
     content.setHeight(qMin(content.height(), effectiveMaxPopupHeight()));
 
+    // 展开动画期间面板高度自收起尺寸逐帧增长，列表内容相对视口“溢出”，
+    // ScrollBarAsNeeded 会让滚动条在动画期间闪现（选项不满一屏时同样出现）。
+    // 动画期间隐藏滚动条（编程滚动不受影响），展开动画结束（shown 回调）再恢复按需显示
+    m_listView->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+
     m_panel->popupOver(this, content);
     scrollToCurrentRow();
     // 某些平台（如 offscreen）面板显示时窗口被激活会短暂夺焦，重新落回行编辑框，
@@ -1072,6 +1077,8 @@ void AuSelect::ensurePopup()
                 setViewHighlightRow(current.isValid() ? m_proxy->mapToSource(current).row() : -1);
             });
     connect(m_panel, &AuPopupPanel::aboutToClose, this, [this]() {
+        // 收起动画同样逐帧缩小面板，隐藏滚动条避免闪现（下次展开结束再恢复）
+        m_listView->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
         rotateArrow(false); // 箭头随收起转回（覆盖所有收起路径）
         emit popupAboutToHide();
     });
@@ -1080,6 +1087,7 @@ void AuSelect::ensurePopup()
         revertUnmatchedText();
     });
     connect(m_panel, &AuPopupPanel::shown, this, [this]() {
+        m_listView->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded); // 展开动画结束：恢复按需显示
         emit popupShown();
         scrollToCurrentRow(); // 展开动画结束后按最终视口再校正一次定位
     });
