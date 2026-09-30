@@ -23,6 +23,7 @@ DialogWindow::DialogWindow(AuWindow::Modality modality, QWidget *parent)
     lay->setSpacing(16);
 
     m_message = new QLabel(QStringLiteral("这是 setDialogMode(true) + exec() 的模态对话框。\n"
+                                           "回车触发默认按钮（确定），Esc 关闭；"
                                            "Windows 上模态时点击父窗口会触发系统提示音，"
                                            "父窗口标题栏闪烁（操作系统行为）。"));
     m_message->setWordWrap(true);
@@ -37,6 +38,7 @@ DialogWindow::DialogWindow(AuWindow::Modality modality, QWidget *parent)
     QPushButton *ok = new QPushButton(QStringLiteral("确定"), content);
     connect(cancel, &QPushButton::clicked, this, &DialogWindow::reject);
     connect(ok, &QPushButton::clicked, this, &DialogWindow::accept);
+    ok->setDefault(true);        // exec() 期间回车触发默认按钮（QDialog 语义）
     buttonRow->addStretch(1);
     buttonRow->addWidget(cancel);
     buttonRow->addWidget(ok);

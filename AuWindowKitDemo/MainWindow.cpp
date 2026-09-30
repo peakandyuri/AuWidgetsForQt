@@ -199,7 +199,7 @@ QWidget *MainWindow::buildDialogPage()
     QWidget *page = new QWidget(this);
     QVBoxLayout *pageLayout = makePageLayout(page);
 
-    QPushButton *windowModal = new QPushButton(QStringLiteral("父窗口模态（exec，Esc 关闭）"));
+    QPushButton *windowModal = new QPushButton(QStringLiteral("父窗口模态（exec，Esc 关闭，回车确定）"));
     connect(windowModal, &QPushButton::clicked, this, [this]() {
         DialogWindow dialog(AuWindow::Modality::WindowModal, this);
         const int code = dialog.exec();
@@ -244,6 +244,7 @@ QWidget *MainWindow::buildDialogPage()
         lay->addStretch(1);
         QPushButton *ok = new QPushButton(QStringLiteral("确定"));
         connect(ok, &QPushButton::clicked, &dialog, &AuWindow::accept);
+        ok->setDefault(true);   // 回车触发默认按钮（QDialog 语义）
         lay->addWidget(ok, 0, Qt::AlignRight);
         // 布局直接装在窗体上：AuWindow 自动劫持到标题栏下方内容区
         dialog.setFixedSize(440, 260);
@@ -269,6 +270,7 @@ QWidget *MainWindow::buildDialogPage()
         lay->addStretch(1);
         QPushButton *ok = new QPushButton(QStringLiteral("确定"));
         connect(ok, &QPushButton::clicked, &dialog, &AuWindow::accept);
+        ok->setDefault(true);   // 回车触发默认按钮（QDialog 语义）
         lay->addWidget(ok, 0, Qt::AlignRight);
         // 布局直接装在窗体上：AuWindow 自动劫持到标题栏下方内容区
         dialog.setMinimumSize(380, 220);

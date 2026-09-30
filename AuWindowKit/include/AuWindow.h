@@ -173,6 +173,9 @@ public:
     /// 模态阻塞执行（QDialog::exec 风格）。未显式设置模态范围时，
     /// 有父窗口默认 WindowModal，无父窗口默认 ApplicationModal。
     /// 返回值由 setResult()/accept()/reject()/done() 决定。
+    /// exec() 期间键盘交互与 QDialog 一致：Esc 触发 reject()，
+    /// Enter/Return 触发当前焦点的 QPushButton，焦点不在按钮上时触发
+    /// setDefault(true) 的默认按钮。
     int exec();
     void done(int result);
     void accept();

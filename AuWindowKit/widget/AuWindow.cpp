@@ -9,6 +9,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPushButton>
 #include <QScreen>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -978,9 +979,30 @@ void AuWindow::closeEvent(QCloseEvent *event)
 
 void AuWindow::keyPressEvent(QKeyEvent *event)
 {
-    if (event->key() == Qt::Key_Escape && m_eventLoop) {
-        reject();
-        return;
+    if (m_eventLoop) {
+        if (event->key() == Qt::Key_Escape) {
+            reject();
+            return;
+        }
+        // QDialog 的默认按钮语义：回车优先触发当前焦点的 QPushButton（QDialog
+        // 内按钮均为 autoDefault，回车总是触发焦点按钮），焦点不在按钮上时触发
+        // setDefault(true) 的默认按钮。被焦点控件吃掉的回车（多行文本换行、
+        // 表格进入编辑等）不会传播到这里，与 QDialog 的按键传播行为一致。
+        if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
+            if (auto *focused = qobject_cast<QPushButton *>(focusWidget())) {
+                if (focused->isEnabled()) {
+                    focused->click();
+                    return;
+                }
+            }
+            const auto buttons = findChildren<QPushButton *>();
+            for (QPushButton *btn : buttons) {
+                if (btn->isDefault() && btn->isVisible() && btn->isEnabled()) {
+                    btn->click();
+                    return;
+                }
+            }
+        }
     }
     QWidget::keyPressEvent(event);
 }

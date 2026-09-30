@@ -11,6 +11,7 @@ class QLabel;
  * setDialogMode(true) 使窗体挂 Qt::Dialog 标志（作为父窗口的对话框：
  * 居中于父窗口、Windows 上与父窗口建立系统对话框所有权关系），
  * setModality() 决定阻塞范围，exec() 进入模态事件循环。
+ * exec() 期间回车触发 setDefault(true) 的默认按钮，Esc 触发 reject()。
  */
 class DialogWindow : public AuWindow
 {

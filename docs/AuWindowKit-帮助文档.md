@@ -88,13 +88,16 @@ private:
 
 ```cpp
 DialogWindow dialog(AuWindow::Modality::WindowModal, parentWindow);
-const int code = dialog.exec();          // 模态阻塞，Esc 默认 reject
+const int code = dialog.exec();          // 模态阻塞：Esc=reject，Enter=默认按钮
 if (code == AuWindow::Accepted) { ... }
 ```
 
 - `setDialogMode(true)`：挂 `Qt::Dialog` 标志，显示时自动居中于父窗口；
 - `setModality(Modality::WindowModal / ApplicationModal)`：模态范围；
 - `exec()` / `accept()` / `reject()` / `done()` / `result()` 与 `QDialog` 语义一致；
+- `exec()` 期间键盘交互与 `QDialog` 一致：Esc 触发 `reject()`；Enter/Return
+  触发当前焦点的 `QPushButton`（焦点不在按钮上时触发 `setDefault(true)`
+  的默认按钮）。按钮 `setDefault(true)` 的用法可直接从 `QDialog` 代码迁移；
 - Windows 上模态期间点击父窗口的系统提示音、父窗口标题栏闪烁等效果
   由操作系统基于窗口所有权关系保证，与原生对话框一致。
 
