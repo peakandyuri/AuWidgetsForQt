@@ -26,6 +26,9 @@ win32 {
 
 SOURCES += \
     widget/AuWindow.cpp \
+    widget/AuWindowWin.cpp \
+    widget/AuWindowX11.cpp \
+    widget/AuWindowFallback.cpp \
     widget/AuTitleBar.cpp \
     style/AuWindowStyle.cpp
 
@@ -33,7 +36,8 @@ HEADERS += \
     include/AuWindowKit_global.h \
     include/AuWindow.h \
     include/AuTitleBar.h \
-    include/AuWindowStyle.h
+    include/AuWindowStyle.h \
+    widget/AuWindow_p.h
 
 # Default rules for deployment.
 unix {

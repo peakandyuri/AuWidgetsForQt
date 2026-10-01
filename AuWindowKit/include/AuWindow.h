@@ -211,9 +211,7 @@ protected:
     bool event(QEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
-#ifdef Q_OS_WIN
     bool nativeEvent(const QByteArray &eventType, void *message, long *result) override;
-#endif
 
 private:
     friend class AuTitleBar;
@@ -239,24 +237,22 @@ private:
     // 布局劫持：把子类 setupUi(this) 安装到窗体上的布局转移到内容区
     void adoptLayout(QLayout *layout);
 
-    // 平台相关：标题栏拖动 / 边框缩放（非 Windows 路径）
+    // 标题栏拖动 / 边框缩放：系统原生接管优先（平台钩子），失败回退手动
     void performTitleBarDrag(const QPoint &pressGlobal);
     /// pressGlobal：按下时刻的全局光标位置，用于兜底拖动时贴合整体位移
     void startManualMove(const QPoint &pressGlobal = QCursor::pos());
     void startManualResize(Qt::Edges edges, const QPoint &pressGlobal = QCursor::pos());
     void manualResizeStep(const QPoint &globalPos);
-    /// 发起边缘缩放：优先 _NET_WM_MOVERESIZE（KWin 原生路径），WM 忽略时回退手动
+    /// 发起边缘缩放：优先系统原生缩放，未接管时回退手动
     void performBorderResize(Qt::Edges edges, const QPoint &pressGlobal);
     bool m_systemResizePending;    ///< X11：已发系统缩放请求、等待确认 WM 是否接管
     qint64 m_systemResizeSentMs;   ///< 系统缩放请求发出时刻（宽限期判定）
     Qt::Edges m_pendingEdges;
     QPoint m_pressGlobal;          ///< 左键按下时刻的全局光标位置
-    /// X11：经 _NET_MOVERESIZE_WINDOW（仅 x 字段）由 WM 应用窗口 x 位置
-    /// （可拖出屏幕左右，与原生一致）；y 经只带 CWY 的 XConfigureWindow
-    /// 屏内跟随。WM 忽略时首次校验失败自动回退 QWidget::move()。
+    /// 拖动跟随定位：X11 拖出屏幕左缘时经 _NET_MOVERESIZE_WINDOW（仅 x 字段）
+    /// 绕过 WM 的边界钳制（可拖出屏幕左右，与原生一致）；其余平台为 move()。
     void applyPositionViaWM(const QPoint &pos);
-    bool sendNetMoveResizeWindow(const QPoint &pos);
-    /// X11：创建边缘缩放手柄（透明子控件，自带缩放光标）
+    /// 创建边缘缩放手柄（透明子控件，自带缩放光标）；Windows 不创建
     void setupEdgeGrips();
     void relayoutEdgeGrips();
     /// 手动拖动路径的边缘吸附：目标判定 / 预览浮层 / 松手应用
@@ -267,15 +263,39 @@ private:
     void hideSnapPreview();
     void applyEdgeSnap(SnapEdge edge);
 
-#ifdef Q_OS_WIN
-    // Windows 原生辅助
+    // ---- 平台实现 ----
+    // Win32/DWM 实现位于 AuWindowWin.cpp，Xlib/EWMH 实现位于 AuWindowX11.cpp，
+    // 其它平台见 AuWindowFallback.cpp；本头文件保持平台无关（无 Q_OS_* 条件）。
+    void platformInit();                    ///< 构造：窗口标志/属性、内容区容器、缩放手柄、系统移动通道
+    void platformWinIdChanged();            ///< 原生窗口句柄建立后（Windows：应用原生样式/圆角/任务栏）
+    void platformFirstShow();               ///< 首次显示（X11：混成检测 + 窗口类型覆盖）
+    void platformResized();                 ///< 尺寸变化（Windows：DWM 圆角跟随）
+    void platformStateChanged();            ///< 最大化状态切换后（Windows：清除残影的重绘）
+    void platformRadiusChanged();           ///< 圆角设置变化（Windows：DWM 偏好；其余：mask 裁剪）
+    /// 生效圆角半径（Windows：Win10 直角降级 / Win11 系统圆角；其余平台原值）
+    int platformEffectiveRadius(int radius) const;
+    void platformButtonVisibilityChanged(); ///< 最大化按钮显隐（Windows：WS_MAXIMIZEBOX 跟随）
+    void platformStyleChanged();            ///< 样式切换（Windows：DWM 边框明暗跟随）
+    /// 应用任务栏可见性；返回 false 表示平台不支持运行中切换（调用方提示）
+    bool platformSetTaskbarVisible(bool visible);
+    /// 标题栏拖动交给系统 / 窗口管理器原生完成；返回 false 回退手动拖动
+    bool platformStartSystemMove();
+    /// 边框缩放交给系统 / 窗口管理器原生完成；返回 false 回退手动缩放
+    bool platformStartSystemResize(Qt::Edges edges);
+    /// 系统缩放请求未被 WM 接管的宽限期回退判定（X11 专属，其余平台空实现）
+    void platformMouseMoveEvent(QMouseEvent *event);
+    /// 窗口是否运行在 alpha 合成环境（决定圆角浮层 / 吸附预览浮层可用性）
+    bool platformIsComposited() const;
+    /// 窗体形状是否由系统裁剪（Windows：DWM/窗口区域，客户端圆角浮层无用）
+    bool platformClipsWindowShape() const;
+
+    // Windows 原生辅助（仅在 AuWindowWin.cpp 中定义与调用）
     void applyWindowStyles();
     void applyWindowRoundedCorners();
     void applyTaskbarVisibility();
     bool handleNcCalcSize(void *message, long *result);
     bool handleNcHitTest(void *message, long *result);
     bool handleMinMaxInfo(void *message, long *result);
-#endif
 
     AuWindowStyle *m_style;             // nullptr = 跟随全局样式
     AuTitleBar *m_titleBar;
