@@ -173,6 +173,7 @@ AuWindow::AuWindow(QWidget *parent, Qt::WindowFlags flags)
     , m_systemResizePending(false)
     , m_systemResizeSentMs(0)
     , m_pressGlobal(0, 0)
+    , m_normalSizeHint(0, 0)
     , m_cornerClips{nullptr, nullptr, nullptr, nullptr}
     , m_grabRecoveryTimer(nullptr)
     , m_awaitingRelease(false)
@@ -572,6 +573,10 @@ void AuWindow::showEvent(QShowEvent *event)
 void AuWindow::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
+    // 记录非最大化浮动尺寸：供最大化还原（系统通道 / 按钮均经 WM 记忆几何）
+    // 后纠正 KWin 的过期记忆尺寸
+    if (!isMaximized() && !isFullScreen() && !m_snapped)
+        m_normalSizeHint = size();
     platformResized();
     relayout();
 }
@@ -583,6 +588,11 @@ void AuWindow::changeEvent(QEvent *event)
     case QEvent::WindowStateChange: {
         const bool max = isMaximized();
         m_titleBar->updateMaximizeState(max);
+        if (!max && m_normalSizeHint.isValid() && size() != m_normalSizeHint) {
+            // 最大化还原的几何由 WM 的记忆决定，记忆可能过期（KWin 按
+            // WM_CLASS 记忆历史尺寸），纠正回进入最大化前的浮动尺寸
+            resize(m_normalSizeHint);
+        }
         emit maximizeStateChanged(max);
         relayout(); // 最大化时收起 / 恢复阴影留白（Windows 另由平台钩子清除残影）
         platformStateChanged();
@@ -855,6 +865,15 @@ private:
 // 管时回退为手动拖动。
 void AuWindow::performTitleBarDrag(const QPoint &pressGlobal)
 {
+    // 最大化状态下拖标题栏 = 还原：无条件优先走 WM 原生通道（即便手动通道
+    // 默认的 5.12）。KWin 的交互移动在最大化窗口上 = 取消最大化 + 锚定光标
+    // 一次到位；手动路径的"showNormal + setGeometry"做不到单帧落位——普通
+    // ConfigureRequest 对最大化窗口被 WM 忽略，而"showNormal 先落 WM 记忆
+    // 几何、再重定位"会产生 A→B 位置闪动。接管后的事件冻结由 grab-recovery
+    // 轮询兜底；还原尺寸偏差（KWin 记忆过期）由 changeEvent 的 max→normal
+    // 分支按 m_normalSizeHint 纠正。WM 不接管时回退手动还原。
+    if (isMaximized() && platformStartMaximizeRestoreDrag())
+        return;
     if (platformStartSystemMove())
         return;
     startManualMove(pressGlobal);
@@ -868,6 +887,10 @@ void AuWindow::startManualMove(const QPoint &pressGlobal)
     m_manualStartSize = size();
     // 拖出贴靠状态：先还原吸附前尺寸再跟随（Windows 同款行为）。Windows
     // 手动路径不可达（拖动一律原生转发），本分支仅服务 X11 / 其它平台。
+    // 时序注意：showNormal() 后 Qt 侧窗口状态同步清零，但 WM 侧还原异步，
+    // isMaximized() 不能用作"还原已落地"的守卫——还原尺寸必须由我们
+    // 显式 setGeometry 兜住，否则 KWin 会套用它按 WM_CLASS 记忆的过期
+    // 还原几何（表现为还原后尺寸不对）。
     if (m_snapped) {
         m_snapped = false;
         if (isMaximized()) {
@@ -876,7 +899,7 @@ void AuWindow::startManualMove(const QPoint &pressGlobal)
             showNormal();
         }
         const QRect pre = m_preSnapGeometry;
-        if (pre.isValid() && !isMaximized()) {
+        if (pre.isValid()) {
             // 保持抓取点在标题栏内的相对水平位置，垂直偏移不变
             const qreal ratio = m_manualStartSize.width() > 0
                     ? qreal(pressGlobal.x() - m_manualStartPos.x()) / m_manualStartSize.width()
@@ -886,6 +909,27 @@ void AuWindow::startManualMove(const QPoint &pressGlobal)
             setGeometry(QRect(newPos, pre.size()));
             m_manualStartPos = newPos;
             m_manualStartSize = pre.size();
+        }
+    } else if (isMaximized()) {
+        // 按钮 / 双击进入的最大化（非贴靠态）：手动路径下拖标题栏还原。
+        // 此前无该分支——拖动被当作普通移动发给 WM，而 WM 会忽略最大化
+        // 窗口的移动请求，表现为"最大化后拖标题栏无法还原"。系统通道
+        // （5.15 默认）由 WM 原生还原，不经此处。
+        //
+        // 还原位置取进入最大化前的原位（= WM 取消最大化时将应用的还原
+        // 几何）：我们的 setGeometry 与 WM 的还原落点重合，避免"WM 先落
+        // A、我们再跳到光标处 B"的单帧位置闪动；窗口从原位起按 1:1 位移
+        // 跟随本次拖动。
+        // normalGeometry() 必须在 showNormal() 之前取：最大化态下它返回
+        // 进入最大化前保存的还原几何；showNormal 之后 Qt 侧状态同步清零，
+        // 再取就落到通用分支（返回当前几何 = 最大化尺寸），还原尺寸即错。
+        const QRect normalGeo = normalGeometry();
+        showNormal();
+        if (normalGeo.isValid()) {
+            const QPoint newPos = normalGeo.topLeft();
+            setGeometry(QRect(newPos, normalGeo.size()));
+            m_manualStartPos = newPos;
+            m_manualStartSize = normalGeo.size();
         }
     }
     grabMouse();

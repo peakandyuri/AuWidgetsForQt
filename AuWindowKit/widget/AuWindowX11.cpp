@@ -264,6 +264,21 @@ bool AuWindow::platformStartSystemResize(Qt::Edges edges)
 #endif
 }
 
+// 最大化窗体的拖动还原走 WM 原生交互移动：KWin 在最大化窗口上的交互移动
+// = 取消最大化 + 锚定光标一次到位，无手动路径的中间帧闪动与锚定脱离。
+// 手动通道默认关闭的 5.12 也走此捷径——接管后的事件冻结（motion/enter
+// 失效）由 grab-recovery 轮询兜底；还原尺寸偏差由 changeEvent 的
+// max→normal 分支按 m_normalSizeHint 纠正。
+bool AuWindow::platformStartMaximizeRestoreDrag()
+{
+    if (!AuX11::isPlatformX11())
+        return false;
+    if (!auSendX11MoveResize(winId(), QCursor::pos(), 8))
+        return false;
+    startGrabRecoveryPoll();
+    return true;
+}
+
 // 已发系统缩放请求却持续收到本进程事件（超出接管宽限期）：WM 未接管，
 // 回退手动缩放。宽限期内忽略在途事件，避免与 WM 的指针抓取相撞
 // （同 AuTitleBar 拖动回退）。

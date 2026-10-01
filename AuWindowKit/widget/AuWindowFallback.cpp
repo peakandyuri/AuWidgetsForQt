@@ -89,6 +89,11 @@ bool AuWindow::platformClipsWindowShape() const
     return false;
 }
 
+bool AuWindow::platformStartMaximizeRestoreDrag()
+{
+    return false;
+}
+
 // ---- Windows 专属接口的空实现 ----
 
 void AuWindow::applyWindowStyles() {}
