@@ -40,6 +40,12 @@ SOURCES += \
     core/AuColumnDef.cpp \
     core/AuGridModel.cpp \
     widget/AuGridWidget.cpp \
+    widget/AuGridWidgetPaint.cpp \
+    widget/AuGridWidgetInteraction.cpp \
+    widget/AuGridWidgetEditing.cpp \
+    widget/AuGridWidgetColumns.cpp \
+    widget/AuGridWidgetRows.cpp \
+    widget/AuGridWidgetAnimation.cpp \
     widget/AuGridSyncGroup.cpp \
     style/AuGridStyle.cpp \
     style/AuDarkGridStyle.cpp \
@@ -59,6 +65,7 @@ HEADERS += \
     include/AuGridModel.h \
     include/AuTreeRow.h \
     include/AuGridWidget.h \
+    widget/AuGridWidget_p.h \
     include/AuGridSyncGroup.h \
     include/AuGridStyle.h \
     include/AuDarkGridStyle.h \
