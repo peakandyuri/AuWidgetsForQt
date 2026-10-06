@@ -20,6 +20,11 @@
 #include <QtMath>
 #include <chrono>
 
+// MSVC 的 M_PI 依赖 _USE_MATH_DEFINES 且受头文件包含顺序影响，直接兜底定义
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 namespace {
 
 /// 演示页布局：顶部控制条（可空）+ 曲线本体 + 可选底部日志。

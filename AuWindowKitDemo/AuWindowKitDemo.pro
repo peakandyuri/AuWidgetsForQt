@@ -51,3 +51,6 @@ defineTest(copyAuDll) {
 }
 
 copyAuDll($$PWD/../AuWindowKit/bin/AuWindowKit.dll)
+
+# MSVC: 源码为 UTF-8 无 BOM，显式指定避免按本地代码页解析中文字符串
+msvc: QMAKE_CXXFLAGS += /utf-8

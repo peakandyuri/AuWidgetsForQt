@@ -27,7 +27,9 @@ win32: LIBS += -L$$PWD/../AuCommon/bin/ -lAuCommon
 else:unix: LIBS += -L$$PWD/../AuCommon/bin/ -lAuCommon
 
 # 让目标依赖 AuCommon 导入库：公共库重编后自动触发重链接
-win32: PRE_TARGETDEPS += $$PWD/../AuCommon/bin/libAuCommon.a
+# MinGW 导入库为 libAuCommon.a，MSVC 为 AuCommon.lib
+win32-g++: PRE_TARGETDEPS += $$PWD/../AuCommon/bin/libAuCommon.a
+else:win32: PRE_TARGETDEPS += $$PWD/../AuCommon/bin/AuCommon.lib
 
 # The following define makes your compiler emit warnings if you use
 # any Qt feature that has been marked deprecated (the exact warnings
@@ -88,3 +90,6 @@ unix {
     target.path = /usr/lib
 }
 !isEmpty(target.path): INSTALLS += target
+
+# MSVC: 源码为 UTF-8 无 BOM，显式指定避免按本地代码页解析中文字符串
+msvc: QMAKE_CXXFLAGS += /utf-8

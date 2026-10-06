@@ -50,12 +50,19 @@ win32: LIBS += -L$$PWD/../AuPlot/bin/ -lAuPlot
 else:unix: LIBS += -L$$PWD/../AuPlot/bin/ -lAuPlot
 
 # 让目标依赖导入库：库重编后自动触发重链接 + POST_LINK 拷贝
-win32: PRE_TARGETDEPS += \
+# MinGW 导入库为 libXxx.a，MSVC 为 Xxx.lib
+win32-g++: PRE_TARGETDEPS += \
     $$PWD/../AuCommon/bin/libAuCommon.a \
     $$PWD/../AuGrid/bin/libAuGrid.a \
     $$PWD/../AuSelect/bin/libAuSelect.a \
     $$PWD/../AuDatePicker/bin/libAuDatePicker.a \
     $$PWD/../AuPlot/bin/libAuPlot.a
+else:win32: PRE_TARGETDEPS += \
+    $$PWD/../AuCommon/bin/AuCommon.lib \
+    $$PWD/../AuGrid/bin/AuGrid.lib \
+    $$PWD/../AuSelect/bin/AuSelect.lib \
+    $$PWD/../AuDatePicker/bin/AuDatePicker.lib \
+    $$PWD/../AuPlot/bin/AuPlot.lib
 
 # 构建完成后把最新 DLL 拷贝到可执行文件目录，避免运行时加载到旧版 DLL
 defineTest(copyAuDll) {
@@ -81,3 +88,6 @@ copyAuDll($$PWD/../AuPlot/bin/AuPlot.dll)
 qnx: target.path = /tmp/$${TARGET}/bin
 else: unix:!android: target.path = /opt/$${TARGET}/bin
 !isEmpty(target.path): INSTALLS += target
+
+# MSVC: 源码为 UTF-8 无 BOM，显式指定避免按本地代码页解析中文字符串
+msvc: QMAKE_CXXFLAGS += /utf-8
