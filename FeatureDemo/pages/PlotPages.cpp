@@ -641,7 +641,7 @@ QVector<FeaturePage> makePlotPages()
                 switch (index) {
                 case 1: plot->setZoomDirections(Qt::Vertical); break;
                 case 2: plot->setZoomDirections(Qt::Horizontal | Qt::Vertical); break;
-                case 3: plot->setZoomDirections(0); break;
+                case 3: plot->setZoomDirections(Qt::Orientations()); break; // Qt6 QFlags 不再接受裸 0
                 default: plot->setZoomDirections(Qt::Horizontal); break;
                 }
             });

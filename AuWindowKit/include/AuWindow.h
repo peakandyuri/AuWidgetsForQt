@@ -13,6 +13,14 @@ class AuWindowStyle;
 class AuSnapPreview;
 class QVBoxLayout;
 
+// nativeEvent 的 result 参数类型在 Qt6 由 long 改为 qintptr，
+// 各平台实现统一用本别名声明，保证 Qt5 / Qt6 双版本编译
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+using AuNativeEventResult = qintptr;
+#else
+using AuNativeEventResult = long;
+#endif
+
 /**
  * @brief 无边框窗体：以系统 API 为主、Qt 渲染为辅，替代 QMainWindow / QDialog
  *        的统一风格窗体容器（继承自 QWidget）。
@@ -211,7 +219,7 @@ protected:
     bool event(QEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
-    bool nativeEvent(const QByteArray &eventType, void *message, long *result) override;
+    bool nativeEvent(const QByteArray &eventType, void *message, AuNativeEventResult *result) override;
 
 private:
     friend class AuTitleBar;
@@ -293,9 +301,9 @@ private:
     void applyWindowStyles();
     void applyWindowRoundedCorners();
     void applyTaskbarVisibility();
-    bool handleNcCalcSize(void *message, long *result);
-    bool handleNcHitTest(void *message, long *result);
-    bool handleMinMaxInfo(void *message, long *result);
+    bool handleNcCalcSize(void *message, AuNativeEventResult *result);
+    bool handleNcHitTest(void *message, AuNativeEventResult *result);
+    bool handleMinMaxInfo(void *message, AuNativeEventResult *result);
 
     AuWindowStyle *m_style;             // nullptr = 跟随全局样式
     AuTitleBar *m_titleBar;

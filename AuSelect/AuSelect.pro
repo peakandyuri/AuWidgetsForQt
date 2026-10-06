@@ -4,6 +4,10 @@ TEMPLATE = lib
 DEFINES += AUSELECT_LIBRARY
 
 CONFIG += c++11
+greaterThan(QT_MAJOR_VERSION, 5) {
+    CONFIG -= c++11
+    CONFIG += c++17
+}
 
 DESTDIR = $$PWD/bin
 

@@ -509,7 +509,13 @@ void AuPlot::leaveEvent(QEvent *event)
 
 void AuPlot::wheelEvent(QWheelEvent *event)
 {
-    if (!m_zoomEnabled || !m_plotRect.contains(event->pos())) {
+    // Qt6 移除了 QWheelEvent::pos()/posF()，统一取 position()（Qt5 侧为 posF()）
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    const QPointF wheelPos = event->position();
+#else
+    const QPointF wheelPos = event->posF();
+#endif
+    if (!m_zoomEnabled || !m_plotRect.contains(wheelPos.toPoint())) {
         event->ignore();
         return;
     }
@@ -524,7 +530,7 @@ void AuPlot::wheelEvent(QWheelEvent *event)
 
     // 向上滚放大（范围缩小），以光标位置为不动点
     const qreal factor = std::pow(1.0 / m_zoomFactor, steps);
-    const QPoint pos = event->pos();
+    const QPoint pos = wheelPos.toPoint();
 
     if (m_zoomDirections & Qt::Horizontal) {
         for (AuPlotAxis *ax : { m_xAxis, m_xAxis2 }) {

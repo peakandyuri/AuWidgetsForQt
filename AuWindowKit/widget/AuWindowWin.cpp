@@ -68,7 +68,7 @@ public:
     }
 
 protected:
-    bool nativeEvent(const QByteArray &eventType, void *message, long *result) override
+    bool nativeEvent(const QByteArray &eventType, void *message, AuNativeEventResult *result) override
     {
         if (eventType == QByteArrayLiteral("windows_generic_MSG")) {
             MSG *msg = static_cast<MSG *>(message);
@@ -334,7 +334,7 @@ void AuWindow::applyTaskbarVisibility()
                      | SWP_NOACTIVATE);
 }
 
-bool AuWindow::handleNcCalcSize(void *message, long *result)
+bool AuWindow::handleNcCalcSize(void *message, AuNativeEventResult *result)
 {
     MSG *msg = static_cast<MSG *>(message);
     *result = 0;
@@ -369,7 +369,7 @@ bool AuWindow::handleNcCalcSize(void *message, long *result)
     return true; // 返回 0：移除全部可见非客户区（保留 DWM 阴影 / Snap / 动画）
 }
 
-bool AuWindow::handleNcHitTest(void *message, long *result)
+bool AuWindow::handleNcHitTest(void *message, AuNativeEventResult *result)
 {
     MSG *msg = static_cast<MSG *>(message);
     const HWND hwnd = msg->hwnd;
@@ -426,7 +426,7 @@ bool AuWindow::handleNcHitTest(void *message, long *result)
     return true;
 }
 
-bool AuWindow::handleMinMaxInfo(void *message, long *result)
+bool AuWindow::handleMinMaxInfo(void *message, AuNativeEventResult *result)
 {
     MSG *msg = static_cast<MSG *>(message);
     MINMAXINFO *mmi = reinterpret_cast<MINMAXINFO *>(msg->lParam);
@@ -460,7 +460,7 @@ bool AuWindow::handleMinMaxInfo(void *message, long *result)
     return true;
 }
 
-bool AuWindow::nativeEvent(const QByteArray &eventType, void *message, long *result)
+bool AuWindow::nativeEvent(const QByteArray &eventType, void *message, AuNativeEventResult *result)
 {
     if (eventType != QByteArrayLiteral("windows_generic_MSG"))
         return QWidget::nativeEvent(eventType, message, result);

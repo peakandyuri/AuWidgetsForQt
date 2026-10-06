@@ -124,7 +124,7 @@ void AuWindow::applyPositionViaWM(const QPoint &pos)
 void AuWindow::startGrabRecoveryPoll() {}
 void AuWindow::pollGrabRecovery() {}
 
-bool AuWindow::nativeEvent(const QByteArray &eventType, void *message, long *result)
+bool AuWindow::nativeEvent(const QByteArray &eventType, void *message, AuNativeEventResult *result)
 {
     return QWidget::nativeEvent(eventType, message, result);
 }

@@ -3,6 +3,10 @@ QT       += core gui
 greaterThan(QT_MAJOR_VERSION, 4): QT += widgets
 
 CONFIG += c++11
+greaterThan(QT_MAJOR_VERSION, 5) {
+    CONFIG -= c++11
+    CONFIG += c++17
+}
 
 # The following define makes your compiler emit warnings if you use
 # any Qt feature that has been marked deprecated (the exact warnings
@@ -104,6 +108,8 @@ defineTest(copyAuDll) {
             QMAKE_POST_LINK += $$QMAKE_COPY $$shell_path($$dll) $$shell_path($$OUT_PWD/debug) $$escape_expand(\\n\\t)
         }
     }
+    # defineTest 内修改变量必须 export() 才会真正生效
+    export(QMAKE_POST_LINK)
 }
 
 copyAuDll($$PWD/../AuCommon/bin/AuCommon.dll)

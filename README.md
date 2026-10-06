@@ -71,7 +71,7 @@
 
 ## 快速开始
 
-环境要求：Qt 5.x（Widgets 模块）、qmake、支持 C++11 的编译器（Windows 下建议使用 MinGW 工具链）。
+环境要求：Qt 5.x 或 Qt 6.x（Widgets 模块）、qmake；Qt 5 需支持 C++11 的编译器，Qt 6 需支持 C++17 的编译器（Qt 6 下 qmake 会自动切换为 C++17）。Windows 下建议使用 MinGW 工具链。
 
 1. 用 Qt Creator 打开根目录的 `AuWidgetsForQt.pro`，工程会自动加载全部子项目；
 2. 构建并运行 `FeatureDemo`，可按“控件 → 功能 Tab → 演示 + 代码”逐个功能上手；运行 `Example` 可查看各控件特性的综合演示窗口；

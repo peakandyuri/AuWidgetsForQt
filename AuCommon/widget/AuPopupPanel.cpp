@@ -429,7 +429,11 @@ bool AuPopupPanel::eventFilter(QObject *watched, QEvent *event)
         break;
     }
     case QEvent::Wheel: {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+        const QPoint globalPos = static_cast<QWheelEvent *>(event)->globalPosition().toPoint();
+#else
         const QPoint globalPos = static_cast<QWheelEvent *>(event)->globalPos();
+#endif
         if (!rect().contains(mapFromGlobal(globalPos)) && !ownerRect().contains(globalPos))
             closePopup();
         break;
@@ -466,7 +470,11 @@ bool AuPopupPanel::eventFilter(QObject *watched, QEvent *event)
     return QWidget::eventFilter(watched, event);
 }
 
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+bool AuPopupPanel::nativeEvent(const QByteArray &eventType, void *message, qintptr *result)
+#else
 bool AuPopupPanel::nativeEvent(const QByteArray &eventType, void *message, long *result)
+#endif
 {
 #ifdef Q_OS_WIN
     if (eventType == "windows_generic_MSG") {

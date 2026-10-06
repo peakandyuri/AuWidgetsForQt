@@ -574,7 +574,12 @@ void AuTimePanel::wheelEvent(QWheelEvent *event)
         return;
     }
     // 光标 x 就近映射到列（列间隙 / 列头上滚动同样生效）
+    // Qt6 移除了 QWheelEvent::pos()，统一取 position()（Qt5 侧为 posF()）
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    int column = columnAtX(static_cast<int>(event->position().x()));
+#else
     int column = columnAtX(event->pos().x());
+#endif
     if (column < 0)
         column = 0;
     const int delta = event->angleDelta().y();

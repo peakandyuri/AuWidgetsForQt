@@ -807,7 +807,11 @@ void AuSelect::resizeEvent(QResizeEvent *event)
     relayoutEditor();
 }
 
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+void AuSelect::enterEvent(QEnterEvent * /*event*/)
+#else
 void AuSelect::enterEvent(QEvent * /*event*/)
+#endif
 {
     // 进入控件本体（行编辑框悬停由 eventFilter 的 HoverEnter/Leave 单独跟踪：
     // Qt 中光标移入子控件时父控件会收到 Leave，两侧状态需合并判断）
