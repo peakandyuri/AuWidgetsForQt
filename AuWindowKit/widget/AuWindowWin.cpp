@@ -227,6 +227,13 @@ bool AuWindow::platformIsComposited() const
     return true;
 }
 
+// Windows 上拖动一律原生转发（WM_NCHITTEST），最大化还原由系统完成，
+// 不经此钩子
+bool AuWindow::platformStartMaximizeRestoreDrag()
+{
+    return false;
+}
+
 // ---- Windows：原生无边框实现 ----
 
 void AuWindow::applyWindowStyles()

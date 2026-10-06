@@ -257,6 +257,7 @@ private:
     qint64 m_systemResizeSentMs;   ///< 系统缩放请求发出时刻（宽限期判定）
     Qt::Edges m_pendingEdges;
     QPoint m_pressGlobal;          ///< 左键按下时刻的全局光标位置
+    QSize m_normalSizeHint;        ///< 非最大化浮动尺寸，最大化还原后纠正 WM 过期记忆几何
     /// 拖动跟随定位：X11 拖出屏幕左缘时经 _NET_MOVERESIZE_WINDOW（仅 x 字段）
     /// 绕过 WM 的边界钳制（可拖出屏幕左右，与原生一致）；其余平台为 move()。
     void applyPositionViaWM(const QPoint &pos);
@@ -290,6 +291,9 @@ private:
     bool platformStartSystemMove();
     /// 边框缩放交给系统 / 窗口管理器原生完成；返回 false 回退手动缩放
     bool platformStartSystemResize(Qt::Edges edges);
+    /// 最大化窗体拖标题栏还原：交 WM 原生交互移动（取消最大化 + 锚定光标
+    /// 一次到位）；返回 false 回退手动还原
+    bool platformStartMaximizeRestoreDrag();
     /// 系统缩放请求未被 WM 接管的宽限期回退判定（X11 专属，其余平台空实现）
     void platformMouseMoveEvent(QMouseEvent *event);
     /// 窗口是否运行在 alpha 合成环境（决定圆角浮层 / 吸附预览浮层可用性）
