@@ -71,11 +71,18 @@
 
 ## 快速开始
 
-环境要求：Qt 5.x 或 Qt 6.x（Widgets 模块）、qmake；Qt 5 需支持 C++11 的编译器，Qt 6 需支持 C++17 的编译器（Qt 6 下 qmake 会自动切换为 C++17）。Windows 下支持 MinGW 与 MSVC（VS2022）工具链：MSVC 构建时工程会自动附加 `/utf-8`（源码为 UTF-8 无 BOM），且需注意 MinGW / MSVC 的 Qt 库二进制不通用，须安装对应编译器版本的 Qt。
+环境要求：Qt 5.x 或 Qt 6.x（Widgets 模块）；Qt 5 需支持 C++11 的编译器，Qt 6 需支持 C++17 的编译器（两种构建系统均会自动切换）。Windows 下支持 MinGW 与 MSVC（VS2022）工具链：MSVC 构建时工程会自动附加 `/utf-8`（源码为 UTF-8 无 BOM），且需注意 MinGW / MSVC 的 Qt 库二进制不通用，须安装对应编译器版本的 Qt。
 
-1. 用 Qt Creator 打开根目录的 `AuWidgetsForQt.pro`，工程会自动加载全部子项目；
-2. 构建并运行 `FeatureDemo`，可按“控件 → 功能 Tab → 演示 + 代码”逐个功能上手；运行 `Example` 可查看各控件特性的综合演示窗口；
-3. 在自己的工程中引用时，将各模块的 `include` 目录加入头文件搜索路径，并链接对应 `bin` 目录下的库，具体写法可参考 `Example/Example.pro`。
+工程同时提供 qmake 与 CMake 两套构建脚本，可任选其一：
+
+1. **qmake**：用 Qt Creator 打开根目录的 `AuWidgetsForQt.pro`，工程会自动加载全部子项目；
+2. **CMake**（需 CMake ≥ 3.16）：在 Qt Creator 中直接打开根目录 `CMakeLists.txt`，或命令行构建：
+   ```bash
+   cmake -B build-cmake -DCMAKE_PREFIX_PATH=<Qt安装目录/版本/编译器> -DCMAKE_BUILD_TYPE=Release
+   cmake --build build-cmake -j
+   ```
+3. 构建并运行 `FeatureDemo`，可按“控件 → 功能 Tab → 演示 + 代码”逐个功能上手；运行 `Example` 可查看各控件特性的综合演示窗口；
+4. 在自己的工程中引用时，将各模块的 `include` 目录加入头文件搜索路径，并链接对应 `bin` 目录下的库，具体写法可参考 `Example/Example.pro` 或 `Example/CMakeLists.txt`。
 
 基本用法示例：
 

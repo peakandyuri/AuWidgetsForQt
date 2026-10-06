@@ -1,0 +1,72 @@
+add_executable(Example
+    main.cpp
+    mainwindow.cpp
+    mainwindow.ui
+    demos/DemoWindowBase.cpp
+    demos/BasicDemoWindow.cpp
+    demos/SelectionCheckDemoWindow.cpp
+    demos/HeaderCheckDemoWindow.cpp
+    demos/SortFilterDemoWindow.cpp
+    demos/ColumnDemoWindow.cpp
+    demos/RowDragDemoWindow.cpp
+    demos/SpanDemoWindow.cpp
+    demos/ScrollDemoWindow.cpp
+    demos/TreeDemoWindow.cpp
+    demos/SyncDemoWindow.cpp
+    demos/StyleDemoWindow.cpp
+    demos/LoadingDemoWindow.cpp
+    demos/RowHeightDemoWindow.cpp
+    demos/DataAnimationDemoWindow.cpp
+    demos/AuSelectDemoWindow.cpp
+    demos/AuDatePickerDemoWindow.cpp
+    CustomAuGrid/ButtonRenderer.cpp
+    CustomAuGrid/HeaderButtonRenderer.cpp
+    CustomAuGrid/HeaderCheckBoxRenderer.cpp
+    CustomAuGrid/DemoValidator.cpp
+    CustomAuGrid/DemoStyle.cpp
+    mainwindow.h
+    demos/DemoWindowBase.h
+    demos/BasicDemoWindow.h
+    demos/SelectionCheckDemoWindow.h
+    demos/HeaderCheckDemoWindow.h
+    demos/SortFilterDemoWindow.h
+    demos/ColumnDemoWindow.h
+    demos/RowDragDemoWindow.h
+    demos/SpanDemoWindow.h
+    demos/ScrollDemoWindow.h
+    demos/TreeDemoWindow.h
+    demos/SyncDemoWindow.h
+    demos/StyleDemoWindow.h
+    demos/LoadingDemoWindow.h
+    demos/RowHeightDemoWindow.h
+    demos/DataAnimationDemoWindow.h
+    demos/AuSelectDemoWindow.h
+    demos/AuDatePickerDemoWindow.h
+    CustomAuGrid/ButtonRenderer.h
+    CustomAuGrid/HeaderButtonRenderer.h
+    CustomAuGrid/HeaderCheckBoxRenderer.h
+    CustomAuGrid/DemoValidator.h
+    CustomAuGrid/DemoStyle.h
+)
+
+target_include_directories(Example PRIVATE
+    demos
+    CustomAuGrid
+)
+
+target_link_libraries(Example PRIVATE
+    AuGrid
+    AuSelect
+    AuDatePicker
+    AuCommon
+    Qt${QT_VERSION_MAJOR}::Core
+    Qt${QT_VERSION_MAJOR}::Gui
+    Qt${QT_VERSION_MAJOR}::Widgets
+)
+
+au_copy_dlls(Example
+    "${CMAKE_SOURCE_DIR}/AuCommon/bin/AuCommon.dll"
+    "${CMAKE_SOURCE_DIR}/AuGrid/bin/AuGrid.dll"
+    "${CMAKE_SOURCE_DIR}/AuSelect/bin/AuSelect.dll"
+    "${CMAKE_SOURCE_DIR}/AuDatePicker/bin/AuDatePicker.dll"
+)
