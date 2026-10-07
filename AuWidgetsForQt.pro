@@ -2,10 +2,11 @@ TEMPLATE = subdirs
 
 SUBDIRS += \
     AuCommon \
-    AuGrid \
-    AuSelect \
     AuDatePicker \
+    AuGrid \
     AuPlot \
+    AuSelect \
+    AuSnipping \
     AuWindowKit \
     Example \
     FeatureDemo \
