@@ -282,7 +282,8 @@ void SnipOverlay::finish()
     } else {
         image = Capturer::cropScreenRect(m_grab, m_sel);
         // 光标画在完成框选（松开鼠标）的位置——它必然在选区边界上；
-        // 触发瞬间的光标位置常常在选区之外，画进去会“看不见”
+        // 图像原点是“屏幕原点 + 选区左上角”，与裁剪范围一致
+        origin = QPointF(m_grab.screenGeometry.topLeft()) + m_sel.topLeft();
         cursorGlobal = QPointF(m_grab.screenGeometry.topLeft()) + m_selReleasePos;
     }
 

@@ -347,6 +347,8 @@ void Launcher::finishDelayedCapture(const SnipOverlay::PendingCrop &pending)
                                                pending.windowDevice.top() / grab.dpr);
     } else {
         image = Capturer::cropScreenRect(grab, pending.localRect);
+        // 图像原点是“屏幕原点 + 选区左上角”，光标合成按此定位
+        origin = grab.screenGeometry.topLeft() + pending.localRect.topLeft();
     }
     qWarning() << "[AuSnipping] 延迟截图: 光标已抓取" << !grab.cursor.isNull()
                << "光标位置" << grab.cursorPos << "光标尺寸" << grab.cursor.size()
