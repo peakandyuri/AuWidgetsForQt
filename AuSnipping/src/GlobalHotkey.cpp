@@ -329,8 +329,19 @@ bool GlobalHotkey::platformRegister()
     st->keycode = keycode;
     st->mods = mods;
     st->notifier = new QSocketNotifier(ConnectionNumber(st->display), QSocketNotifier::Read, this);
+#if QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)
+    // Qt 5.15 起新增 activated(QSocketDescriptor, QSocketNotifier::Type) 并弃用 activated(int)。
+    // 部分发行版构建 Qt 时禁用了弃用接口（QT_DISABLE_DEPRECATED_BEFORE），
+    // 此时头文件里 activated(int) 不存在，Qt6 起则彻底移除；
+    // 两者并存时也必须显式取新签名消歧，故 5.15+ 统一用这一分支
+    void (QSocketNotifier::*activatedNew)(QSocketDescriptor, QSocketNotifier::Type,
+                                          QSocketNotifier::QPrivateSignal)
+            = &QSocketNotifier::activated;
+    connect(st->notifier, activatedNew, this, [this, st] {
+#else
     void (QSocketNotifier::*activatedInt)(int) = &QSocketNotifier::activated;
     connect(st->notifier, activatedInt, this, [this, st](int) {
+#endif
         while (XPending(st->display) > 0) {
             XEvent event;
             XNextEvent(st->display, &event);
