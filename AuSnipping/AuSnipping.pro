@@ -52,6 +52,12 @@ HEADERS += \
 # MSVC: 源码为 UTF-8 无 BOM，显式指定避免按本地代码页解析中文字符串
 msvc: QMAKE_CXXFLAGS += /utf-8
 
+# Windows: exe 文件内嵌图标（qmake 自动生成 .rc）
+win32: RC_ICONS = logo.ico
+
+# 运行时窗口 / 任务栏图标（见 Main.cpp 的 setWindowIcon）
+RESOURCES += AuSnipping.qrc
+
 # Linux(X11)：接入 Xlib 实现“窗口截图”与“光标捕获”。
 # XFixes 运行期经 dlopen 加载，构建时无需 libxfixes-dev。
 unix:!macx {

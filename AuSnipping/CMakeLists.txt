@@ -23,6 +23,7 @@ else()
 endif()
 
 set(CMAKE_AUTOMOC ON)
+set(CMAKE_AUTORCC ON)
 
 # MSVC：源码为 UTF-8 无 BOM，显式指定避免按本地代码页解析中文字符串
 if(MSVC)
@@ -52,7 +53,17 @@ set(AUSNIP_HEADERS
     src/Launcher.h
 )
 
-add_executable(AuSnipping WIN32 ${AUSNIP_SOURCES} ${AUSNIP_HEADERS})
+# 运行时窗口 / 任务栏图标资源（Main.cpp 里 setWindowIcon 引用）
+set(AUSNIP_RESOURCES
+    AuSnipping.qrc
+)
+
+add_executable(AuSnipping WIN32 ${AUSNIP_SOURCES} ${AUSNIP_HEADERS} ${AUSNIP_RESOURCES})
+
+# Windows: exe 文件内嵌图标
+if(WIN32)
+    target_sources(AuSnipping PRIVATE app.rc)
+endif()
 
 target_link_libraries(AuSnipping PRIVATE
     Qt${QT_VERSION_MAJOR}::Core

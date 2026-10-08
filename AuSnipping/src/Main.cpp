@@ -3,6 +3,7 @@
 #include <QCommandLineParser>
 #include <QDir>
 #include <QGuiApplication>
+#include <QIcon>
 #include <QImage>
 #include <QPainter>
 
@@ -105,6 +106,8 @@ int main(int argc, char *argv[])
     QApplication::setOrganizationName(QStringLiteral("AuSnipping"));
     QApplication::setApplicationName(QStringLiteral("AuSnipping"));
     QApplication::setApplicationDisplayName(QStringLiteral("AuSnipping"));
+    // 窗口 / 任务栏图标（exe 文件本身的图标由 .rc / RC_ICONS 内嵌）
+    QApplication::setWindowIcon(QIcon(QStringLiteral(":/icons/logo.png")));
 
     // 全局字体统一为微软雅黑；Linux（银河麒麟）通常没有该字体，
     // 按序回退到系统中常见的中文字体

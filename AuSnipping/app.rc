@@ -1,0 +1,2 @@
+// Windows 可执行文件图标（CMake 构建时经 windres/rc 编译链接）
+IDI_ICON1 ICON "logo.ico"
