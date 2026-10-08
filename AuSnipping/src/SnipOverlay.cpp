@@ -21,11 +21,13 @@ QPointF eventPos(const QMouseEvent *event)
 
 } // namespace
 
-SnipOverlay::SnipOverlay(const ScreenGrab &grab, Mode mode, bool captureCursor, QWidget *parent)
+SnipOverlay::SnipOverlay(const ScreenGrab &grab, Mode mode, bool captureCursor,
+                         int delaySeconds, QWidget *parent)
     : QWidget(parent)
     , m_grab(grab)
     , m_mode(mode)
     , m_captureCursor(captureCursor)
+    , m_delaySeconds(delaySeconds)
 {
     Qt::WindowFlags flags = Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::Tool;
     // X11 下绕过窗口管理器：UKUI/KWin 会把任务栏（dock 层）叠在普通置顶窗口之上，
@@ -248,13 +250,29 @@ void SnipOverlay::hideEvent(QHideEvent * /*event*/)
 
 void SnipOverlay::finish()
 {
-    QPixmap image;
-    if (m_mode == WindowMode && !m_nativeDevice.isEmpty())
-        image = Capturer::cropDesktopDeviceRect(m_grab, m_nativeDevice);
-    else
-        image = Capturer::cropScreenRect(m_grab, m_sel);
+    // 延迟截图：选区先锁定，遮罩层关闭回到实时画面，由启动器倒计时后重抓裁剪
+    if (m_delaySeconds > 0) {
+        m_pending.screen = m_grab.screen;
+        m_pending.windowMode = m_mode == WindowMode && !m_nativeDevice.isEmpty();
+        m_pending.windowDevice = m_nativeDevice;
+        m_pending.localRect = m_sel;
+        emit delayedConfirm();
+        close();
+        return;
+    }
 
-    Capturer::composeCursor(image, m_grab, m_captureCursor, m_grab.screenGeometry.topLeft());
+    QPixmap image;
+    QPointF origin = m_grab.screenGeometry.topLeft();
+    if (m_mode == WindowMode && !m_nativeDevice.isEmpty()) {
+        image = Capturer::cropDesktopDeviceRect(m_grab, m_nativeDevice);
+        // 光标按“图像自身左上角的全局坐标”定位，窗口截图的原点要跟随窗口
+        origin = m_grab.virtualTopLeft + QPointF(m_nativeDevice.left() / m_grab.dpr,
+                                                 m_nativeDevice.top() / m_grab.dpr);
+    } else {
+        image = Capturer::cropScreenRect(m_grab, m_sel);
+    }
+
+    Capturer::composeCursor(image, m_grab, m_captureCursor, origin);
     emit captured(image);
     // 确认后本次框选结束，直接销毁遮罩层；编辑窗关闭后由启动器回主界面，
     // 再次“开始截图”会重新抓取当前屏幕
@@ -524,9 +542,18 @@ void SnipOverlay::drawToolbar(QPainter &p) const
 
 void SnipOverlay::drawHint(QPainter &p) const
 {
-    const QString text = m_mode == RegionMode
-        ? QStringLiteral("按住鼠标拖动框选截图区域\nEnter / 双击 确认    Esc 取消")
-        : QStringLiteral("移动鼠标选择窗口，点击确认    Esc 取消");
+    QString text;
+    if (m_mode == RegionMode) {
+        text = m_delaySeconds > 0
+            ? QStringLiteral("按住鼠标拖动框选截图区域\nEnter / 双击 确认，%1 秒后自动截图    Esc 取消")
+                .arg(m_delaySeconds)
+            : QStringLiteral("按住鼠标拖动框选截图区域\nEnter / 双击 确认    Esc 取消");
+    } else {
+        text = m_delaySeconds > 0
+            ? QStringLiteral("移动鼠标选择窗口，点击确认，%1 秒后自动截图    Esc 取消")
+                .arg(m_delaySeconds)
+            : QStringLiteral("移动鼠标选择窗口，点击确认    Esc 取消");
+    }
 
     QFont f = p.font();
     f.setPointSize(12);

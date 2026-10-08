@@ -222,11 +222,13 @@ QPixmap grabCursorWin(QPointF *hotspot)
 
 // ---------- X11 ----------
 
-// 与 Xfixes.h 中 XFixesCursorImage 布局一致，避免构建期依赖 xfixes 头文件
+// 与 Xfixes.h 中 XFixesCursorImage 布局完全一致，避免构建期依赖 xfixes 头文件。
+// 注意字段宽度必须照抄真实头文件（x/y 为 short，宽高与热点为 unsigned short），
+// 若误写成 int，64 位下会整体错位，宽高读到热点/填充字节，光标获取必然失败。
 typedef struct {
-    int x, y;
-    unsigned int width, height;
-    unsigned int xhot, yhot;
+    short x, y;                 // 光标位置（根坐标，未使用）
+    unsigned short width, height;
+    unsigned short xhot, yhot;
     unsigned long cursor_serial;
     unsigned long *pixels;      // ARGB（小端下低 32 位有效）
 } AuXFixesCursorImage;
@@ -450,14 +452,15 @@ QRectF qtWindowAt(const QPointF &point, const QSet<WId> &exclude)
 
 } // namespace
 
-ScreenGrab Capturer::grab()
+ScreenGrab Capturer::grab(QScreen *target)
 {
     ScreenGrab g;
-    QScreen *screen = QGuiApplication::screenAt(QCursor::pos());
+    QScreen *screen = target ? target : QGuiApplication::screenAt(QCursor::pos());
     if (!screen)
         screen = QGuiApplication::primaryScreen();
     if (!screen)
         return g;
+    g.screen = screen;
 
     QPixmap desktop = screen->grabWindow(0);
     if (desktop.isNull())

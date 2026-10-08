@@ -225,13 +225,19 @@ void Launcher::beginCapture(Mode mode)
 
     const int settleMs = 150;
     const int delay = AppSettings::delaySeconds();
-    if (delay > 0)
+    if (delay > 0 && mode == Fullscreen)
+        // 全屏模式：先倒计时再抓屏；区域/窗口模式先选区，确认后倒计时再抓
         QTimer::singleShot(settleMs, this, [this, mode, delay] { showCountdown(mode, delay); });
     else
         QTimer::singleShot(settleMs, this, [this, mode] { doGrab(mode); });
 }
 
 void Launcher::showCountdown(Mode mode, int seconds)
+{
+    runCountdown(seconds, [this, mode] { doGrab(mode); });
+}
+
+void Launcher::runCountdown(int seconds, const std::function<void()> &onDone)
 {
     QScreen *screen = QGuiApplication::screenAt(QCursor::pos());
     if (!screen)
@@ -258,13 +264,13 @@ void Launcher::showCountdown(Mode mode, int seconds)
     auto *timer = new QTimer(cd);
     timer->setInterval(1000);
     int remain = seconds;
-    connect(timer, &QTimer::timeout, cd, [cd, timer, this, mode, remain]() mutable {
+    connect(timer, &QTimer::timeout, cd, [cd, timer, onDone, this, remain]() mutable {
         --remain;
         if (remain <= 0) {
             timer->stop();
             cd->setWindowOpacity(0.0);  // 同样先全透明再关闭，避免残影
             cd->close();
-            QTimer::singleShot(120, this, [this, mode] { doGrab(mode); });
+            QTimer::singleShot(120, this, onDone);
         } else {
             cd->setText(QStringLiteral("%1 秒后将截图…").arg(remain));
         }
@@ -296,7 +302,8 @@ void Launcher::doGrab(Mode mode)
     auto *overlay = new SnipOverlay(grab,
                                     mode == Window ? SnipOverlay::WindowMode
                                                    : SnipOverlay::RegionMode,
-                                    AppSettings::captureCursor());
+                                    AppSettings::captureCursor(),
+                                    AppSettings::delaySeconds());
     connect(overlay, &SnipOverlay::captured, this, &Launcher::handleCaptured);
     connect(overlay, &SnipOverlay::cancelled, this, [this] {
         m_capturing = false;
@@ -305,7 +312,43 @@ void Launcher::doGrab(Mode mode)
         else
             showLauncher();
     });
+    connect(overlay, &SnipOverlay::delayedConfirm, this, [this, overlay] {
+        // 选区确认后先倒计时，到点重抓实时画面再按锁定选区裁剪
+        delayedCapture(overlay->pendingCrop());
+    });
     overlay->show();
+}
+
+void Launcher::delayedCapture(const SnipOverlay::PendingCrop &pending)
+{
+    runCountdown(AppSettings::delaySeconds(),
+                 [this, pending] { finishDelayedCapture(pending); });
+}
+
+void Launcher::finishDelayedCapture(const SnipOverlay::PendingCrop &pending)
+{
+    // 倒计时结束重抓实时画面，按先前锁定的选区裁剪（光标取此刻位置）
+    const ScreenGrab grab = Capturer::grab(pending.screen);
+    if (!grab.valid || grab.screenImage.isNull()) {
+        QMessageBox::warning(this, QStringLiteral("AuSnipping"), tr("抓取屏幕失败。"));
+        if (m_quitAfter)
+            qApp->quit();
+        else
+            showLauncher();
+        return;
+    }
+
+    QPixmap image;
+    QPointF origin = grab.screenGeometry.topLeft();
+    if (pending.windowMode && !pending.windowDevice.isEmpty()) {
+        image = Capturer::cropDesktopDeviceRect(grab, pending.windowDevice);
+        origin = grab.virtualTopLeft + QPointF(pending.windowDevice.left() / grab.dpr,
+                                               pending.windowDevice.top() / grab.dpr);
+    } else {
+        image = Capturer::cropScreenRect(grab, pending.localRect);
+    }
+    Capturer::composeCursor(image, grab, AppSettings::captureCursor(), origin);
+    postCapture(image);
 }
 
 void Launcher::handleCaptured(const QPixmap &image)

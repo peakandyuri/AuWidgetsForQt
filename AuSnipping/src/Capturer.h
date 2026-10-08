@@ -7,12 +7,17 @@
 #include <QSet>
 #include <QtGui/qwindowdefs.h>   // WId
 
+QT_BEGIN_NAMESPACE
+class QScreen;
+QT_END_NAMESPACE
+
 // 一次截图触发的屏幕快照：整屏位图 + 目标屏裁剪 + 触发瞬间的鼠标光标
 struct ScreenGrab
 {
     bool valid = false;
     qreal dpr = 1.0;            // 桌面位图的 devicePixelRatio
     QRect screenGeometry;       // 目标屏幕的全局逻辑几何
+    QScreen *screen = nullptr;  // 目标屏幕（延迟截图重抓时锁定同一屏）
     QPointF virtualTopLeft;     // 虚拟桌面左上角（全局逻辑坐标）
     QPixmap desktop;            // 整个虚拟桌面（devicePixelRatio 已设置）
     QImage screenImage;         // 目标屏幕区域（设备像素分辨率）
@@ -34,8 +39,9 @@ struct NativeWindowHit
 class Capturer
 {
 public:
-    // 触发一次抓屏：以光标所在屏幕为目标屏幕，同时抓取触发瞬间的光标图像
-    static ScreenGrab grab();
+    // 触发一次抓屏：默认以光标所在屏幕为目标屏幕（可显式指定以重抓同一屏），
+    // 同时抓取触发瞬间的光标图像
+    static ScreenGrab grab(QScreen *targetScreen = nullptr);
 
     // 从目标屏幕内按逻辑矩形裁剪（localLogical 相对目标屏幕左上角）
     static QPixmap cropScreenRect(const ScreenGrab &g, const QRectF &localLogical);

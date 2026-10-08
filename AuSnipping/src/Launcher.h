@@ -2,6 +2,9 @@
 
 #include <QPixmap>
 #include <QWidget>
+#include <functional>
+
+#include "SnipOverlay.h"
 
 class QCheckBox;
 class QKeySequenceEdit;
@@ -41,7 +44,10 @@ private:
     void triggerCapture();
     void beginCapture(Mode mode);
     void showCountdown(Mode mode, int seconds);
+    void runCountdown(int seconds, const std::function<void()> &onDone);
     void doGrab(Mode mode);
+    void delayedCapture(const SnipOverlay::PendingCrop &pending);
+    void finishDelayedCapture(const SnipOverlay::PendingCrop &pending);
     void handleCaptured(const QPixmap &image);
     void postCapture(const QPixmap &image);
     void showLauncher();

@@ -16,6 +16,10 @@
 //
 // 窗口模式（WindowMode）：
 //   - 移动鼠标自动捕获光标下的原生顶层窗口并高亮，点击确认，不可调整大小
+//
+// 延迟截图（delaySeconds > 0，仅区域/窗口模式）：
+//   - 确认选区后立即关闭遮罩回到实时画面，由启动器倒计时，
+//     到点重抓实时画面并按锁定的选区裁剪（PendingCrop 描述选区）
 class SnipOverlay : public QWidget
 {
     Q_OBJECT
@@ -23,12 +27,24 @@ class SnipOverlay : public QWidget
 public:
     enum Mode { RegionMode, WindowMode };
 
+    // 延迟截图时传给启动器的选区信息：倒计时结束后按它对实时画面重抓裁剪
+    struct PendingCrop {
+        QScreen *screen = nullptr;  // 目标屏幕
+        bool windowMode = false;    // true 按 windowDevice 裁剪，否则按 localRect
+        QRect windowDevice;         // 桌面位图内的设备像素矩形（窗口截图）
+        QRectF localRect;           // 相对目标屏幕左上角的逻辑矩形（区域截图）
+    };
+
     SnipOverlay(const ScreenGrab &grab, Mode mode, bool captureCursor,
-                QWidget *parent = nullptr);
+                int delaySeconds = 0, QWidget *parent = nullptr);
+
+    PendingCrop pendingCrop() const { return m_pending; }
 
 signals:
     void captured(const QPixmap &image);
     void cancelled();
+    // 延迟模式下确认选区：发出后遮罩层自行关闭，选区经 pendingCrop() 取走
+    void delayedConfirm();
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -68,7 +84,10 @@ private:
     const ScreenGrab m_grab;
     const Mode m_mode;
     const bool m_captureCursor;
+    const int m_delaySeconds;
     qreal m_dpr = 1.0;
+
+    PendingCrop m_pending;      // 延迟模式下确认选区时填写
 
     State m_state = NoSelection;
     QRectF m_sel;               // 选区（widget 本地逻辑坐标，widget 与目标屏幕重合）
