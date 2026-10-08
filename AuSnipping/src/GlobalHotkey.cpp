@@ -330,14 +330,10 @@ bool GlobalHotkey::platformRegister()
     st->mods = mods;
     st->notifier = new QSocketNotifier(ConnectionNumber(st->display), QSocketNotifier::Read, this);
 #if QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)
-    // Qt 5.15 起新增 activated(QSocketDescriptor, QSocketNotifier::Type) 并弃用 activated(int)。
-    // 部分发行版构建 Qt 时禁用了弃用接口（QT_DISABLE_DEPRECATED_BEFORE），
-    // 此时头文件里 activated(int) 不存在，Qt6 起则彻底移除；
-    // 两者并存时也必须显式取新签名消歧，故 5.15+ 统一用这一分支
-    void (QSocketNotifier::*activatedNew)(QSocketDescriptor, QSocketNotifier::Type,
-                                          QSocketNotifier::QPrivateSignal)
-            = &QSocketNotifier::activated;
-    connect(st->notifier, activatedNew, this, [this, st] {
+    // Qt 5.15 起 activated(int) 对外部代码隐藏（Qt6 彻底移除），只剩
+    // activated(QSocketDescriptor, QSocketNotifier::Type)，直接取地址即可（无重载歧义）；
+    // 注意不能显式写出带 QPrivateSignal 的函数指针类型——它是 QObject 的私有成员
+    connect(st->notifier, &QSocketNotifier::activated, this, [this, st] {
 #else
     void (QSocketNotifier::*activatedInt)(int) = &QSocketNotifier::activated;
     connect(st->notifier, activatedInt, this, [this, st](int) {
