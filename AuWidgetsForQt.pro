@@ -5,6 +5,7 @@ SUBDIRS += \
     AuDatePicker \
     AuGrid \
     AuPlot \
+    AuPortableDocEditor \
     AuSelect \
     AuSnipping \
     AuWindowKit \

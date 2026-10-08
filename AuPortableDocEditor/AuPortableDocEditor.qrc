@@ -1,0 +1,6 @@
+<!-- 应用图标资源：运行时窗口 / 任务栏图标 -->
+<RCC>
+    <qresource prefix="/icons">
+        <file>logo.png</file>
+    </qresource>
+</RCC>
