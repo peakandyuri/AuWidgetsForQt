@@ -1,6 +1,7 @@
 #include "SnipOverlay.h"
 
 #include <QApplication>
+#include <QGuiApplication>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
@@ -26,7 +27,14 @@ SnipOverlay::SnipOverlay(const ScreenGrab &grab, Mode mode, bool captureCursor, 
     , m_mode(mode)
     , m_captureCursor(captureCursor)
 {
-    setWindowFlags(Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::Tool);
+    Qt::WindowFlags flags = Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::Tool;
+    // X11 下绕过窗口管理器：UKUI/KWin 会把任务栏（dock 层）叠在普通置顶窗口之上，
+    // 任务栏区域由此成为遮罩层的事件盲区，框选永远进不去；
+    // override-redirect 窗口不受 WM 管辖，恒在 dock 层之上，任务栏上同样能收事件。
+    // Windows 上 Qt::Tool + 置顶已足够，不加此标志。
+    if (QGuiApplication::platformName() == QLatin1String("xcb"))
+        flags |= Qt::X11BypassWindowManagerHint;
+    setWindowFlags(flags);
     setAttribute(Qt::WA_DeleteOnClose);
     // 关键：会话期间主窗口处于隐藏状态，遮罩/编辑窗是仅有的可见顶层窗口，
     // 若保留 Qt 默认的 WA_QuitOnClose，关闭遮罩会把整个程序退出

@@ -3,10 +3,12 @@
 #include <QCursor>
 #include <QGuiApplication>
 #include <QLibrary>
+#include <QMargins>
 #include <QPainter>
 #include <QScreen>
 #include <QWindow>
 #include <QtMath>
+#include <functional>
 
 #ifdef Q_OS_WIN
 #define WIN32_LEAN_AND_MEAN
@@ -261,9 +263,37 @@ Display *x11Display()
     return display;
 }
 
-// 遍历窗口树找出包含指定点（全局逻辑坐标）的最顶层可视窗口。
-// 优先使用 EWMH 堆叠客户端列表（自顶向下），可避开窗口管理器为阴影预留的边框；
-// 找不到（例如点在标题栏上）再回退到根窗口子级（带装饰的窗口框）。
+// EWMH _NET_FRAME_EXTENTS：WM 叠在客户端窗口四周的装饰厚度（左、右、上、下）。
+// 客户端窗口矩形加上它才是用户看到的、带标题栏的完整窗口框。
+QMargins x11FrameExtents(Display *display, Window window)
+{
+    QMargins extents;
+    const Atom atom = XInternAtom(display, "_NET_FRAME_EXTENTS", True);
+    if (atom == None)
+        return extents;
+
+    Atom type = None;
+    int format = 0;
+    unsigned long count = 0, after = 0;
+    unsigned char *data = nullptr;
+    if (XGetWindowProperty(display, window, atom, 0, 4, False, XA_CARDINAL,
+                           &type, &format, &count, &after, &data) == Success
+            && type == XA_CARDINAL && format == 32 && count >= 4 && data) {
+        // format 为 32 的属性按 long 排布（64 位平台上每项 8 字节）
+        const long *values = reinterpret_cast<const long *>(data);
+        extents = QMargins(int(values[0]), int(values[2]),
+                           int(values[1]), int(values[3]));
+    }
+    if (data)
+        XFree(data);
+    return extents;
+}
+
+// 找出包含指定点（全局逻辑坐标）的最顶层可视窗口。
+// 优先使用 EWMH 堆叠客户端列表（自顶向下），命中后按 _NET_FRAME_EXTENTS
+// 把 WM 装饰（标题栏/边框）补回，窗口截图因此能带上标题栏；
+// 点恰在标题栏上等客户端列表覆盖不到的情况，回退到 X 窗口树，
+// 取包含点的最外层可视窗口（窗口管理器包裹出的框架窗口本身已含装饰）。
 QRectF x11WindowAt(qreal dpr, const QPointF &point, const QSet<WId> &exclude)
 {
     Display *display = x11Display();
@@ -271,24 +301,27 @@ QRectF x11WindowAt(qreal dpr, const QPointF &point, const QSet<WId> &exclude)
         return QRectF();
     Window root = DefaultRootWindow(display);
 
-    auto tryWindow = [&](Window w) -> QRectF {
+    // 可视窗口换算到根坐标后的逻辑矩形；ok 为 false 表示不可视 / InputOnly
+    auto visibleRect = [&](Window w, bool *ok) -> QRectF {
+        if (ok)
+            *ok = false;
         XWindowAttributes a;
         if (!XGetWindowAttributes(display, w, &a))
             return QRectF();
         if (a.map_state != IsViewable || a.c_class == InputOnly)
             return QRectF();
-        if (exclude.contains(static_cast<WId>(w)))
-            return QRectF();
         int rx = 0, ry = 0;
         Window child = None;
         XTranslateCoordinates(display, w, root, 0, 0, &rx, &ry, &child);
-        const QRectF logical(qreal(rx) / dpr, qreal(ry) / dpr,
-                             qreal(a.width) / dpr, qreal(a.height) / dpr);
-        if (logical.width() < 4.0 || logical.height() < 4.0)
-            return QRectF();
-        if (!logical.contains(point))
-            return QRectF();
-        return logical;
+        if (ok)
+            *ok = true;
+        return QRectF(qreal(rx) / dpr, qreal(ry) / dpr,
+                      qreal(a.width) / dpr, qreal(a.height) / dpr);
+    };
+
+    auto containsPoint = [&point](const QRectF &logical) -> bool {
+        return logical.width() >= 4.0 && logical.height() >= 4.0
+               && logical.contains(point);
     };
 
     Atom stacking = XInternAtom(display, "_NET_CLIENT_LIST_STACKING", True);
@@ -301,31 +334,51 @@ QRectF x11WindowAt(qreal dpr, const QPointF &point, const QSet<WId> &exclude)
                                &type, &format, &count, &after, &data) == Success
                 && type == XA_WINDOW && format == 32 && data && count > 0) {
             const Window *wins = reinterpret_cast<const Window *>(data);
-            for (unsigned long i = count; i > 0; --i) {
-                const QRectF r = tryWindow(wins[i - 1]);
-                if (!r.isNull()) {
-                    XFree(data);
-                    return r;
-                }
+            QRectF result;
+            for (unsigned long i = count; i > 0 && result.isNull(); --i) {
+                const Window w = wins[i - 1];
+                if (exclude.contains(static_cast<WId>(w)))
+                    continue;
+                bool ok = false;
+                const QRectF client = visibleRect(w, &ok);
+                if (!ok || !containsPoint(client))
+                    continue;
+                const QMargins ext = x11FrameExtents(display, w);
+                result = client.adjusted(-ext.left() / dpr, -ext.top() / dpr,
+                                         ext.right() / dpr, ext.bottom() / dpr);
             }
             XFree(data);
+            if (!result.isNull())
+                return result;
         }
     }
 
-    Window rootReturn = None, parentReturn = None;
-    Window *children = nullptr;
-    unsigned int count = 0;
-    if (XQueryTree(display, root, &rootReturn, &parentReturn, &children, &count) && children) {
-        for (int i = int(count) - 1; i >= 0; --i) {
-            const QRectF r = tryWindow(children[i]);
-            if (!r.isNull()) {
-                XFree(children);
-                return r;
-            }
+    // 自顶向下遍历 X 窗口树，取包含点的最外层可视窗口（框架已含装饰）；
+    // 命中自己（exclude）的窗口时继续深入，相当于“透过”它看下面的窗口
+    std::function<QRectF(Window)> searchTree = [&](Window w) -> QRectF {
+        Window rootReturn = None, parentReturn = None;
+        Window *children = nullptr;
+        unsigned int count = 0;
+        if (!XQueryTree(display, w, &rootReturn, &parentReturn, &children, &count)
+                || !children)
+            return QRectF();
+
+        QRectF found;
+        for (int i = int(count) - 1; i >= 0 && found.isNull(); --i) {
+            const Window c = children[i];
+            bool ok = false;
+            const QRectF logical = visibleRect(c, &ok);
+            if (!ok || !containsPoint(logical))
+                continue;   // 子窗口被父窗口裁剪，父窗口不含点则子树同样不含
+            if (exclude.contains(static_cast<WId>(c)))
+                found = searchTree(c);
+            else
+                found = logical;
         }
         XFree(children);
-    }
-    return QRectF();
+        return found;
+    };
+    return searchTree(root);
 }
 
 QPixmap grabCursorX11(QPointF *hotspot)
