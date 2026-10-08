@@ -1,6 +1,7 @@
 #include "Capturer.h"
 
 #include <QCursor>
+#include <QDebug>
 #include <QGuiApplication>
 #include <QLibrary>
 #include <QMargins>
@@ -235,20 +236,34 @@ typedef struct {
 
 typedef AuXFixesCursorImage *(*XFixesGetCursorImagePtr)(Display *);
 
+// QLibrary 必须常驻：局部对象析构会 dlclose 卸库，函数指针随之悬空
+QLibrary &xFixesLibrary()
+{
+    static QLibrary library;
+    static bool tried = false;
+    if (!tried) {
+        tried = true;
+        for (const char *so : { "libXfixes.so.3", "libXfixes.so" }) {
+            library.setFileName(QLatin1String(so));
+            if (library.load())
+                break;
+        }
+        if (!library.isLoaded())
+            qWarning("AuSnipping: 无法加载 libXfixes（请安装 libxfixes3），本次截图不含光标");
+    }
+    return library;
+}
+
 XFixesGetCursorImagePtr xFixesGetCursorImage()
 {
     static XFixesGetCursorImagePtr ptr = nullptr;
     static bool tried = false;
     if (!tried) {
         tried = true;
-        for (const char *so : { "libXfixes.so.3", "libXfixes.so" }) {
-            QLibrary lib(QString::fromLatin1(so));
-            if (lib.load()) {
-                ptr = reinterpret_cast<XFixesGetCursorImagePtr>(lib.resolve("XFixesGetCursorImage"));
-                if (ptr)
-                    break;
-            }
-        }
+        QLibrary &library = xFixesLibrary();
+        if (library.isLoaded())
+            ptr = reinterpret_cast<XFixesGetCursorImagePtr>(
+                library.resolve("XFixesGetCursorImage"));
     }
     return ptr;
 }
@@ -387,16 +402,28 @@ QPixmap grabCursorX11(QPointF *hotspot)
 {
     QPixmap result;
     *hotspot = QPointF();
-    if (QGuiApplication::platformName() != QLatin1String("xcb"))
+    if (QGuiApplication::platformName() != QLatin1String("xcb")) {
+        qWarning("AuSnipping: 非 X11(xcb) 平台，无法捕获光标");
         return result;
+    }
     Display *display = x11Display();
     XFixesGetCursorImagePtr getCursor = xFixesGetCursorImage();
-    if (!display || !getCursor)
+    if (!display) {
+        qWarning("AuSnipping: XOpenDisplay 失败，无法捕获光标");
         return result;
+    }
+    if (!getCursor) {
+        qWarning("AuSnipping: 无法取得 XFixesGetCursorImage，无法捕获光标");
+        return result;
+    }
 
     AuXFixesCursorImage *ci = getCursor(display);
-    if (!ci || ci->width == 0 || ci->height == 0)
+    if (!ci || ci->width == 0 || ci->height == 0) {
+        qWarning("AuSnipping: XFixesGetCursorImage 返回空（X 服务可能未启用 XFixes 2.0）");
+        if (ci)
+            XFree(ci);
         return result;
+    }
 
     QImage img(int(ci->width), int(ci->height), QImage::Format_ARGB32);
     const int count = img.width() * img.height();
@@ -406,10 +433,12 @@ QPixmap grabCursorX11(QPointF *hotspot)
                      qRgba(int((p >> 16) & 0xff), int((p >> 8) & 0xff),
                            int(p & 0xff), int((p >> 24) & 0xff)));
     }
+
+    // 热点要在 XFree 之前读取（XFree 之后 ci 即失效）
+    *hotspot = QPointF(qreal(ci->xhot), qreal(ci->yhot));
     XFree(ci);
 
     result = QPixmap::fromImage(img);
-    *hotspot = QPointF(qreal(ci->xhot), qreal(ci->yhot));
     return result;
 }
 
@@ -422,6 +451,7 @@ QPixmap grabCursor(QPointF *hotspot)
 #elif defined(HAVE_X11)
     return grabCursorX11(hotspot);
 #else
+    qWarning("AuSnipping: 当前平台不支持捕获光标");
     *hotspot = QPointF();
     return QPixmap();
 #endif
@@ -452,7 +482,7 @@ QRectF qtWindowAt(const QPointF &point, const QSet<WId> &exclude)
 
 } // namespace
 
-ScreenGrab Capturer::grab(QScreen *target)
+ScreenGrab Capturer::grab(QScreen *target, bool withCursor)
 {
     ScreenGrab g;
     QScreen *screen = target ? target : QGuiApplication::screenAt(QCursor::pos());
@@ -483,12 +513,14 @@ ScreenGrab Capturer::grab(QScreen *target)
     if (g.screenImage.isNull())
         return g;
 
-    g.cursorPos = QCursor::pos();
-    QPointF hotspot;
-    g.cursor = grabCursor(&hotspot);
-    if (!g.cursor.isNull()) {
-        g.cursor.setDevicePixelRatio(g.dpr);
-        g.cursorHotspot = hotspot;
+    if (withCursor) {
+        g.cursorPos = QCursor::pos();
+        QPointF hotspot;
+        g.cursor = grabCursor(&hotspot);
+        if (!g.cursor.isNull()) {
+            g.cursor.setDevicePixelRatio(g.dpr);
+            g.cursorHotspot = hotspot;
+        }
     }
     g.valid = true;
     return g;

@@ -280,7 +280,7 @@ void Launcher::runCountdown(int seconds, const std::function<void()> &onDone)
 
 void Launcher::doGrab(Mode mode)
 {
-    const ScreenGrab grab = Capturer::grab();
+    const ScreenGrab grab = Capturer::grab(nullptr, AppSettings::captureCursor());
     if (!grab.valid || grab.screenImage.isNull()) {
         m_capturing = false;
         QMessageBox::warning(this, QStringLiteral("AuSnipping"), tr("抓取屏幕失败。"));
@@ -328,7 +328,7 @@ void Launcher::delayedCapture(const SnipOverlay::PendingCrop &pending)
 void Launcher::finishDelayedCapture(const SnipOverlay::PendingCrop &pending)
 {
     // 倒计时结束重抓实时画面，按先前锁定的选区裁剪（光标取此刻位置）
-    const ScreenGrab grab = Capturer::grab(pending.screen);
+    const ScreenGrab grab = Capturer::grab(pending.screen, AppSettings::captureCursor());
     if (!grab.valid || grab.screenImage.isNull()) {
         QMessageBox::warning(this, QStringLiteral("AuSnipping"), tr("抓取屏幕失败。"));
         if (m_quitAfter)

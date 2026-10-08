@@ -39,9 +39,9 @@ struct NativeWindowHit
 class Capturer
 {
 public:
-    // 触发一次抓屏：默认以光标所在屏幕为目标屏幕（可显式指定以重抓同一屏），
-    // 同时抓取触发瞬间的光标图像
-    static ScreenGrab grab(QScreen *targetScreen = nullptr);
+    // 触发一次抓屏：默认以光标所在屏幕为目标屏幕（可显式指定以重抓同一屏）；
+    // withCursor 为 false 时不抓取光标图像
+    static ScreenGrab grab(QScreen *targetScreen = nullptr, bool withCursor = true);
 
     // 从目标屏幕内按逻辑矩形裁剪（localLogical 相对目标屏幕左上角）
     static QPixmap cropScreenRect(const ScreenGrab &g, const QRectF &localLogical);
