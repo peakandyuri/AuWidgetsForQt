@@ -1,6 +1,7 @@
 #include "EditWindow.h"
 
 #include <QClipboard>
+#include <QDesktopServices>
 #include <QCloseEvent>
 #include <QColorDialog>
 #include <QFileDialog>
@@ -18,6 +19,7 @@
 #include <QSpinBox>
 #include <QTimer>
 #include <QToolButton>
+#include <QUrl>
 #include <QVBoxLayout>
 
 #include "Notifier.h"
@@ -70,17 +72,6 @@ EditWindow::EditWindow(const QPixmap &image, QWidget *parent)
     auto *saveBtn = new QPushButton(tr("保存"), this);
     connect(saveBtn, &QPushButton::clicked, this, &EditWindow::saveAs);
 
-    // 从编辑界面直接继续截图：当前画面（含标注）已实时同步到剪贴板，
-    // 不弹保存询问，直接由启动器接管回到截图界面
-    auto *continueBtn = new QPushButton(tr("继续截图"), this);
-    continueBtn->setStyleSheet(QStringLiteral(
-        "QPushButton { background: #1e88e5; color: white; font-weight: bold;"
-        " padding: 4px 14px; border: none; border-radius: 3px; }"
-        "QPushButton:hover { background: #1976d2; }"
-        "QPushButton:pressed { background: #1565c0; }"));
-    continueBtn->setToolTip(tr("回到上一个截图界面继续截图\n当前画面（含标注）已同步在剪贴板中"));
-    connect(continueBtn, &QPushButton::clicked, this, &EditWindow::continueCapture);
-
     m_copyBtn = new QPushButton(tr("复制"), this);
     m_copyBtn->setToolTip(tr("把当前画面复制到剪贴板"));
     connect(m_copyBtn, &QPushButton::clicked, this, &EditWindow::copyToClipboard);
@@ -96,7 +87,6 @@ EditWindow::EditWindow(const QPixmap &image, QWidget *parent)
     for (QToolButton *btn : m_toolButtons)
         row1->addWidget(btn);
     row1->addStretch();
-    row1->addWidget(continueBtn);
     row1->addWidget(saveBtn);
     row1->addWidget(m_copyBtn);
     row1->addWidget(closeBtn);
@@ -251,7 +241,9 @@ void EditWindow::saveAs()
     m_savedPath = out;
     AppSettings::setLastSaveDir(QFileInfo(out).absolutePath());
     updateTitle();
-    Notifier::notify(tr("截图已保存"), out);
+    // 点击通知可用系统默认看图工具打开保存的文件
+    Notifier::notify(tr("截图已保存"), out,
+                     [out] { QDesktopServices::openUrl(QUrl::fromLocalFile(out)); });
 }
 
 void EditWindow::copyToClipboard()

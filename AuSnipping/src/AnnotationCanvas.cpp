@@ -279,6 +279,7 @@ QPixmap AnnotationCanvas::renderedImage() const
 {
     QImage out = m_base.toImage();
     QPainter p(&out);
+    p.setFont(font());      // 与画布预览一致（全局微软雅黑），避免 QImage 默认字体
     p.setRenderHint(QPainter::Antialiasing);
     p.setRenderHint(QPainter::TextAntialiasing);
     p.scale(m_dpr, m_dpr);

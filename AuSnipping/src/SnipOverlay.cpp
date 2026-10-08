@@ -248,9 +248,10 @@ void SnipOverlay::finish()
 
     Capturer::composeCursor(image, m_grab, m_captureCursor, m_grab.screenGeometry.topLeft());
     emit captured(image);
-    // 只隐藏不销毁：保留冻结画面与选区，供编辑窗口关闭后返回继续“连续截图”；
-    // 仅当用户取消（Esc / 右键 / “取消”）时才走 cancel() → close() 销毁
-    hide();
+    // 确认后本次框选结束，直接销毁遮罩层；编辑窗关闭后由启动器回主界面，
+    // 再次“开始截图”会重新抓取当前屏幕
+    // （WA_QuitOnClose 已关闭，这里 close 不会把程序退出）
+    close();
 }
 
 void SnipOverlay::cancel()

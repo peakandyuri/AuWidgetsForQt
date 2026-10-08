@@ -106,6 +106,17 @@ int main(int argc, char *argv[])
     QApplication::setApplicationName(QStringLiteral("AuSnipping"));
     QApplication::setApplicationDisplayName(QStringLiteral("AuSnipping"));
 
+    // 全局字体统一为微软雅黑；Linux（银河麒麟）通常没有该字体，
+    // 按序回退到系统中常见的中文字体
+    QFont::insertSubstitutions(QStringLiteral("Microsoft YaHei"), {
+        QStringLiteral("Noto Sans CJK SC"),
+        QStringLiteral("Source Han Sans CN"),
+        QStringLiteral("WenQuanYi Micro Hei"),
+        QStringLiteral("WenQuanYi Zen Hei"),
+    });
+    QFont appFont(QStringLiteral("Microsoft YaHei"), 9);
+    app.setFont(appFont);
+
     QCommandLineParser parser;
     parser.setApplicationDescription(QStringLiteral(
         "AuSnipping 截图工具：全屏 / 区域 / 窗口截图，支持标注编辑。\n"

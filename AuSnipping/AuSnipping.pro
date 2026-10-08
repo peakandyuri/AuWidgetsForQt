@@ -41,6 +41,7 @@ SOURCES += \
 HEADERS += \
     src/Settings.h \
     src/Notifier.h \
+    src/NotificationHub.h \
     src/GlobalHotkey.h \
     src/Capturer.h \
     src/SnipOverlay.h \

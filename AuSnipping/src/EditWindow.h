@@ -18,10 +18,6 @@ class EditWindow : public QWidget
 public:
     explicit EditWindow(const QPixmap &image, QWidget *parent = nullptr);
 
-signals:
-    // 请求继续截图：由启动器接管（区域/窗口模式回到遮罩层，全屏模式直接开始下一张）
-    void continueCapture();
-
 protected:
     void closeEvent(QCloseEvent *event) override;
 

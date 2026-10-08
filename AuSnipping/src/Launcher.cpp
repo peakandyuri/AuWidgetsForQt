@@ -3,6 +3,7 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QClipboard>
+#include <QDesktopServices>
 #include <QDir>
 #include <QEvent>
 #include <QFileInfo>
@@ -17,6 +18,8 @@
 #include <QShortcut>
 #include <QSpinBox>
 #include <QTimer>
+#include <QUrl>
+#include <functional>
 #include <QVBoxLayout>
 
 #include "Capturer.h"
@@ -203,15 +206,8 @@ void Launcher::applyHotkeySettings()
 
 void Launcher::triggerCapture()
 {
-    if (m_capturing) {
-        // 连续截图会话进行中（编辑窗口打开）：把编辑窗口带到前台，
-        // 提示先关闭它（关闭后会自动回到上一个截图界面）
-        if (m_editor) {
-            m_editor->raise();
-            m_editor->activateWindow();
-        }
+    if (m_capturing)
         return;
-    }
     saveUiSettings();
     beginCapture(currentMode());
 }
@@ -309,13 +305,12 @@ void Launcher::doGrab(Mode mode)
         else
             showLauncher();
     });
-    m_overlay = overlay;
     overlay->show();
 }
 
 void Launcher::handleCaptured(const QPixmap &image)
 {
-    // 遮罩层只是隐藏（选区与冻结画面保留），会话是否结束由 postCapture 决定
+    // 遮罩层确认后自行销毁，后续流程由 postCapture 决定
     postCapture(image);
 }
 
@@ -337,65 +332,42 @@ void Launcher::postCapture(const QPixmap &image)
     // 截图后先放进内存剪贴板
     QGuiApplication::clipboard()->setPixmap(image);
 
-    // 区域 / 窗口截图存在遮罩会话：编辑窗关闭或保存完成后回到遮罩继续截图，
-    // 直到用户按 Esc 结束；全屏截图没有遮罩会话，结束后回主界面
-    const bool overlaySession = !m_overlay.isNull();
-
     if (AppSettings::autoSaveEnabled()) {
         const QString path = autoSavePath();
         const bool ok = image.save(path);
+        // 点击通知可用系统默认看图工具打开保存的文件
         Notifier::notify(ok ? tr("截图已保存") : tr("截图保存失败"),
-                        tr("图片已存储在 %1").arg(path));
-        if (overlaySession)
-            returnToOverlay();
-        else if (m_quitAfter)
+                        tr("图片已存储在 %1").arg(path),
+                        ok ? std::function<void()>([path] {
+                               QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+                           })
+                           : std::function<void()>());
+        m_capturing = false;
+        if (m_quitAfter)
             qApp->quit();
-        else {
-            m_capturing = false;
+        else
             showLauncher();
-        }
         return;
     }
 
     auto *editor = new EditWindow(image);
     connect(editor, &QObject::destroyed, this, [this] {
+        // 编辑结束（关闭）回到主界面，可再次开始截图；
+        // 编辑期间又触发了新截图时会叠开多个编辑窗，等最后一个关完再回
         --m_editorsOpen;
-        const bool continueRequested = m_editorContinue;
-        m_editorContinue = false;   // 单次消费，避免影响后续编辑窗的关闭路径
-        if (!m_overlay.isNull()) {
-            returnToOverlay();      // 连续截图：编辑窗关闭后回到上一个截图界面
-        } else if (continueRequested) {
-            // 全屏模式没有遮罩会话：直接开始下一张全屏截图
-            m_capturing = false;
-            beginCapture(Fullscreen);
-        } else if (m_editorsOpen <= 0) {
-            m_capturing = false;
-            if (m_quitAfter)
-                qApp->quit();
-            else
-                showLauncher();
-        }
-    });
-    connect(editor, &EditWindow::continueCapture, this, [this, editor] {
-        // 从编辑界面直接继续截图：不询问保存（画面已实时同步在剪贴板中）
-        m_editorContinue = true;
-        editor->deleteLater();
+        if (m_editorsOpen > 0)
+            return;
+        m_capturing = false;
+        if (m_quitAfter)
+            qApp->quit();
+        else
+            showLauncher();
     });
     ++m_editorsOpen;
-    m_editor = editor;
     editor->show();
 
-    if (!overlaySession)
-        m_capturing = false;        // 全屏截图：允许立即再次触发
-}
-
-void Launcher::returnToOverlay()
-{
-    if (m_overlay.isNull())
-        return;
-    m_capturing = true;             // 会话继续，快捷键不开启新截图
-    m_overlay->show();              // showEvent 会重新置顶并 grabKeyboard
-    m_overlay->activateWindow();
+    // 编辑期间也允许用快捷键开始下一次截图（会叠开新的编辑窗）
+    m_capturing = false;
 }
 
 void Launcher::showLauncher()

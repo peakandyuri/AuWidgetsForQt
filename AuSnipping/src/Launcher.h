@@ -1,7 +1,6 @@
 #pragma once
 
 #include <QPixmap>
-#include <QPointer>
 #include <QWidget>
 
 class QCheckBox;
@@ -12,14 +11,13 @@ class QRadioButton;
 class QShortcut;
 class QSpinBox;
 class GlobalHotkey;
-class EditWindow;
-class SnipOverlay;
 
-// 启动器窗口：选择截图模式与选项（延迟 / 光标捕获 / 立即保存 / 快捷键），
-// 点击“开始截图”或按下快捷键触发。
+// 启动器窗口（主界面）：选择截图模式与选项（延迟 / 光标捕获 / 立即保存 /
+// 快捷键），点击“开始截图”或按下快捷键触发。
 //
 // 开始截图时先把窗口设为全透明再隐藏，等待其完全消失（避开合成器的
 // 隐藏淡出动画）后才抓屏，避免把半透明残影截进画面。
+// 编辑窗关闭（或点“继续截图”）后回到本界面，可再次开始截图。
 class Launcher : public QWidget
 {
     Q_OBJECT
@@ -46,16 +44,12 @@ private:
     void doGrab(Mode mode);
     void handleCaptured(const QPixmap &image);
     void postCapture(const QPixmap &image);
-    void returnToOverlay();
     void showLauncher();
     QString autoSavePath() const;
 
     bool m_quitAfter = false;
     bool m_capturing = false;
-    bool m_editorContinue = false;  // 编辑窗“继续截图”意图，随其销毁单次消费
-    int m_editorsOpen = 0;          // 打开中的编辑窗口数（连续截图可叠开多个）
-    QPointer<SnipOverlay> m_overlay;
-    QPointer<EditWindow> m_editor;
+    int m_editorsOpen = 0;          // 打开中的编辑窗口数（编辑期间可再触发截图叠开多个）
 
     QRadioButton *m_modeRadios[3] = { nullptr, nullptr, nullptr };
     QPushButton *m_startBtn = nullptr;
