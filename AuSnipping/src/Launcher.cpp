@@ -44,7 +44,7 @@ Launcher::Launcher(bool quitAfter, QWidget *parent)
     : QWidget(parent)
     , m_quitAfter(quitAfter)
 {
-    setWindowTitle(QStringLiteral("AuSnipping 截图"));
+    setWindowTitle(QStringLiteral("AuSnipping"));
     buildUi();
     applyHotkeySettings();
 }
