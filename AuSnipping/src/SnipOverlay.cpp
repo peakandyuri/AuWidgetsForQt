@@ -1,6 +1,8 @@
 #include "SnipOverlay.h"
 
 #include <QApplication>
+#include <QCursor>
+#include <QDebug>
 #include <QGuiApplication>
 #include <QKeyEvent>
 #include <QMouseEvent>
@@ -185,10 +187,12 @@ void SnipOverlay::mouseReleaseEvent(QMouseEvent *event)
 {
     if (m_mode == WindowMode || event->button() != Qt::LeftButton)
         return;
+    const QPointF pos = eventPos(event);
 
     if (m_state == Creating) {
         if (m_sel.width() * m_dpr >= 4 && m_sel.height() * m_dpr >= 4) {
             m_state = Fixed;
+            m_selReleasePos = pos;
             computeToolbar();
             m_toolbarVisible = true;
             update();
@@ -199,6 +203,7 @@ void SnipOverlay::mouseReleaseEvent(QMouseEvent *event)
         }
     } else if (m_state == Adjusting) {
         m_state = Fixed;
+        m_selReleasePos = pos;
         computeToolbar();
         m_toolbarVisible = true;
         update();
@@ -256,6 +261,10 @@ void SnipOverlay::finish()
         m_pending.windowMode = m_mode == WindowMode && !m_nativeDevice.isEmpty();
         m_pending.windowDevice = m_nativeDevice;
         m_pending.localRect = m_sel;
+        qWarning() << "[AuSnipping] 锁定选区: windowMode" << m_pending.windowMode
+                   << "localRect" << m_pending.localRect
+                   << "windowDevice" << m_pending.windowDevice
+                   << "屏幕" << m_grab.screenGeometry << "dpr" << m_grab.dpr;
         emit delayedConfirm();
         close();
         return;
@@ -263,16 +272,21 @@ void SnipOverlay::finish()
 
     QPixmap image;
     QPointF origin = m_grab.screenGeometry.topLeft();
+    QPointF cursorGlobal;
     if (m_mode == WindowMode && !m_nativeDevice.isEmpty()) {
         image = Capturer::cropDesktopDeviceRect(m_grab, m_nativeDevice);
         // 光标按“图像自身左上角的全局坐标”定位，窗口截图的原点要跟随窗口
         origin = m_grab.virtualTopLeft + QPointF(m_nativeDevice.left() / m_grab.dpr,
                                                  m_nativeDevice.top() / m_grab.dpr);
+        cursorGlobal = QPointF(QCursor::pos());     // 点击确认的位置即在窗口上
     } else {
         image = Capturer::cropScreenRect(m_grab, m_sel);
+        // 光标画在完成框选（松开鼠标）的位置——它必然在选区边界上；
+        // 触发瞬间的光标位置常常在选区之外，画进去会“看不见”
+        cursorGlobal = QPointF(m_grab.screenGeometry.topLeft()) + m_selReleasePos;
     }
 
-    Capturer::composeCursor(image, m_grab, m_captureCursor, origin);
+    Capturer::composeCursorAt(image, m_grab, m_captureCursor, origin, cursorGlobal);
     emit captured(image);
     // 确认后本次框选结束，直接销毁遮罩层；编辑窗关闭后由启动器回主界面，
     // 再次“开始截图”会重新抓取当前屏幕

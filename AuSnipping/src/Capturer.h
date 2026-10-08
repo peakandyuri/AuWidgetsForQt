@@ -54,8 +54,14 @@ public:
                                             const QPointF &globalLogical,
                                             const QSet<WId> &exclude);
 
-    // 若 enabled 且光标落在 image 内，把触发瞬间的光标合成进 image。
+    // 若 enabled 且光标落在 image 内，把抓取到的光标合成进 image（位置取触发瞬间）。
     // imageGlobalOrigin 为 image 左上角对应的全局逻辑坐标。
     static void composeCursor(QPixmap &image, const ScreenGrab &g, bool enabled,
                               const QPointF &imageGlobalOrigin);
+
+    // 同上，但光标位置由调用方指定（全局逻辑坐标）。交互式框选确认时，
+    // 用“完成框选/点击确认的位置”比触发瞬间的位置更符合直觉。
+    static void composeCursorAt(QPixmap &image, const ScreenGrab &g, bool enabled,
+                                const QPointF &imageGlobalOrigin,
+                                const QPointF &cursorPosGlobal);
 };

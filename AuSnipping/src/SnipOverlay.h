@@ -99,6 +99,7 @@ private:
 
     QRectF m_confirmRect;
     QRectF m_cancelRect;
+    QPointF m_selReleasePos;    // 松开鼠标完成框选时的位置（光标合成用）
     bool m_toolbarVisible = false;
     int m_hoverToolbar = 0;     // 0 无 / 1 确定 / 2 取消
     Handle m_hoverHandle = HandleNone;

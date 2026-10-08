@@ -3,6 +3,7 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QClipboard>
+#include <QDebug>
 #include <QDesktopServices>
 #include <QDir>
 #include <QEvent>
@@ -347,6 +348,11 @@ void Launcher::finishDelayedCapture(const SnipOverlay::PendingCrop &pending)
     } else {
         image = Capturer::cropScreenRect(grab, pending.localRect);
     }
+    qWarning() << "[AuSnipping] 延迟截图: 光标已抓取" << !grab.cursor.isNull()
+               << "光标位置" << grab.cursorPos << "光标尺寸" << grab.cursor.size()
+               << "裁剪区" << pending.localRect << "原点" << origin
+               << "dpr" << grab.dpr << "图像" << image.size()
+               << "图像dpr" << image.devicePixelRatio();
     Capturer::composeCursor(image, grab, AppSettings::captureCursor(), origin);
     postCapture(image);
 }

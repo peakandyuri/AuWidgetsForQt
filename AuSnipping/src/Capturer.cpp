@@ -592,19 +592,29 @@ NativeWindowHit Capturer::windowUnderPoint(const ScreenGrab &g,
 void Capturer::composeCursor(QPixmap &image, const ScreenGrab &g, bool enabled,
                              const QPointF &imageGlobalOrigin)
 {
+    composeCursorAt(image, g, enabled, imageGlobalOrigin, g.cursorPos);
+}
+
+void Capturer::composeCursorAt(QPixmap &image, const ScreenGrab &g, bool enabled,
+                               const QPointF &imageGlobalOrigin,
+                               const QPointF &cursorPosGlobal)
+{
     if (!enabled || !g.valid || image.isNull() || g.cursor.isNull())
         return;
 
     const qreal dpr = image.devicePixelRatio() > 0 ? image.devicePixelRatio() : 1.0;
     const QPointF hotspotLogical = g.cursorHotspot / g.dpr;
-    const QPointF drawTopLeft = g.cursorPos - hotspotLogical - imageGlobalOrigin;
+    const QPointF drawTopLeft = cursorPosGlobal - hotspotLogical - imageGlobalOrigin;
 
     const QRectF imageRect(0, 0, qreal(image.width()) / dpr, qreal(image.height()) / dpr);
     const QRectF cursorRect(drawTopLeft,
                             QSizeF(qreal(g.cursor.width()) / g.dpr,
                                    qreal(g.cursor.height()) / g.dpr));
-    if (!cursorRect.intersects(imageRect))
+    if (!cursorRect.intersects(imageRect)) {
+        qWarning() << "[AuSnipping] 光标超出图像范围，未合成: 光标矩形" << cursorRect
+                   << "图像矩形" << imageRect << "dpr" << dpr;
         return;
+    }
 
     QPainter p(&image);
     p.setRenderHint(QPainter::SmoothPixmapTransform);
