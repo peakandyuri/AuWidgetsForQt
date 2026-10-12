@@ -9,6 +9,7 @@
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDir>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPlainTextEdit>
@@ -19,6 +20,7 @@
 #include <QVBoxLayout>
 #include <QtMath>
 #include <chrono>
+#include <limits>
 
 // MSVC 的 M_PI 依赖 _USE_MATH_DEFINES 且受头文件包含顺序影响，直接兜底定义
 #ifndef M_PI
@@ -770,6 +772,175 @@ QVector<FeaturePage> makePlotPages()
             "// 右缘即跟随；用户拖走 / 缩放查看历史时暂停推进，拖回或点\n"
             "// \"跟随最新\"按钮恢复。\n"
             "// setViewRange 只推进可见范围、不设交互边界，历史数据可自由回看。\n");
+        pages << page;
+    }
+
+    // ============ 10. 图例与标题 ============
+    {
+        FeaturePage page;
+        page.title = QStringLiteral(u"图例与标题");
+        page.description = QStringLiteral(
+            u"setName() 非空的图元自动进入内置图例，点击条目切换曲线显隐（隐藏条目"
+            u"置灰保留，可再点恢复；自适应量程随之收窄）。图例位置可切换：顶部 / 底部"
+            u" / 左右预留边距，或四角悬浮不占空间；图表标题与轴标题（常放单位）自动"
+            u"预留布局空间。");
+        page.createDemo = []() -> QWidget * {
+            AuPlot *plot = new AuPlot;
+            plot->setTitle(QStringLiteral(u"设备运行监测"));
+            plot->xAxis()->setTitle(QStringLiteral(u"时间（小时）"));
+            plot->yAxis()->setTitle(QStringLiteral(u"数值"));
+
+            AuPlotCurve *temp = new AuPlotCurve;
+            temp->setName(QStringLiteral(u"温度"));
+            temp->setPoints(sineWave(200, 3.0, 0.2));
+            plot->addItem(temp);
+
+            AuPlotCurve *humidity = new AuPlotCurve;
+            humidity->setName(QStringLiteral(u"湿度"));
+            QVector<QPointF> pts;
+            for (int i = 0; i < 200; ++i) {
+                const double x = 10.0 * i / 199;
+                pts.append(QPointF(x, 5.0 + qCos(x * 1.7) * 2.0));
+            }
+            humidity->setPoints(pts);
+            plot->addItem(humidity);
+
+            AuPlotRefLine *alarm = new AuPlotRefLine(AuPlotRefLine::Orientation::Horizontal);
+            alarm->setName(QStringLiteral(u"报警线 6°C"));
+            alarm->setValue(6.0);
+            alarm->setLineColor(QColor(0xe7, 0x4c, 0x3c));
+            plot->addItem(alarm);
+
+            auto *posBox = new QComboBox;
+            posBox->addItems({ QStringLiteral(u"顶部(默认)"), QStringLiteral(u"底部"),
+                               QStringLiteral(u"左侧"), QStringLiteral(u"右侧"),
+                               QStringLiteral(u"悬浮左上"), QStringLiteral(u"悬浮右上"),
+                               QStringLiteral(u"悬浮左下"), QStringLiteral(u"悬浮右下") });
+            QObject::connect(posBox, QOverload<int>::of(&QComboBox::currentIndexChanged), plot,
+                             [plot](int index) {
+                                 static const AuPlotLegendPos positions[] = {
+                                     AuPlotLegendPos::Top,              AuPlotLegendPos::Bottom,
+                                     AuPlotLegendPos::Left,             AuPlotLegendPos::Right,
+                                     AuPlotLegendPos::FloatingTopLeft,  AuPlotLegendPos::FloatingTopRight,
+                                     AuPlotLegendPos::FloatingBottomLeft, AuPlotLegendPos::FloatingBottomRight
+                                 };
+                                 plot->legend()->setPosition(positions[index]);
+                             });
+
+            auto *status = new QLabel(QStringLiteral(u"点击图例条目试试"));
+            QObject::connect(plot, &AuPlot::itemVisibilityChanged, plot,
+                             [status](AuPlotItem *item, bool visible) {
+                                 status->setText(QStringLiteral(u"%1 → %2（外部面板可监听此信号同步）")
+                                                     .arg(item->name(),
+                                                          visible ? QStringLiteral(u"显示")
+                                                                  : QStringLiteral(u"隐藏")));
+                             });
+
+            QHBoxLayout *layout = new QHBoxLayout;
+            layout->addWidget(new QLabel(QStringLiteral(u"图例位置:")));
+            layout->addWidget(posBox);
+            layout->addSpacing(12);
+            layout->addWidget(status, 1);
+            return plotPanel(plot, layout);
+        };
+        page.code = QStringLiteral(
+            "// 图例：名字非空的图元自动进入内置图例\n"
+            "AuPlotCurve *temp = new AuPlotCurve;\n"
+            "temp->setName(QStringLiteral(\"温度\"));\n"
+            "plot->addItem(temp);\n"
+            "\n"
+            "// 图例配置（控件持有）：位置 / 点击切换 / 图标尺寸 / 换行上限\n"
+            "plot->legend()->setPosition(AuPlotLegendPos::Top);  // 底/左右/四角悬浮\n"
+            "plot->legend()->setClickToToggleEnabled(true);      // 默认开：点击条目\n"
+            "                                                    // 切换曲线显隐，\n"
+            "                                                    // 隐藏条目置灰保留\n"
+            "plot->legend()->setMaxRows(2);   // 换行行数/分列列数上限（0 不限）\n"
+            "\n"
+            "// 外部图例面板：监听两个信号同步状态\n"
+            "connect(plot, &AuPlot::legendEntryClicked, this,\n"
+            "        [](AuPlotItem *item) { /* ... */ });\n"
+            "connect(plot, &AuPlot::itemVisibilityChanged, this,\n"
+            "        [](AuPlotItem *item, bool visible) { /* ... */ });\n"
+            "\n"
+            "// 标题：图表标题 + 轴标题（常放单位），布局自动预留空间\n"
+            "plot->setTitle(QStringLiteral(\"设备运行监测\"));\n"
+            "plot->xAxis()->setTitle(QStringLiteral(\"时间（小时）\"));\n"
+            "plot->yAxis()->setTitle(QStringLiteral(\"°C\"));\n"
+            "\n"
+            "// 图例颜色 / 字体在样式里：legendFont / legendTextColor /\n"
+            "// legendDimmedTextColor / legendBackgroundColor / legendBorderColor\n");
+        pages << page;
+    }
+
+    // ============ 11. 框选缩放与导出 ============
+    {
+        FeaturePage page;
+        page.title = QStringLiteral(u"框选缩放与导出");
+        page.description = QStringLiteral(
+            u"Ctrl + 左键拖出矩形框选缩放（修饰键可改；Esc / 右键取消，方向受 "
+            u"zoomDirections 约束），双击绘图区恢复自适应量程。曲线中间有 NaN 断点："
+            u"线在断点处断开，无效点不参与量程计算。toImage() 可按任意尺寸 / 倍数"
+            u"导出图片（支持透明背景）。");
+        page.createDemo = []() -> QWidget * {
+            AuPlot *plot = new AuPlot;
+            plot->setDragEnabled(true);
+            plot->setZoomEnabled(true);
+            plot->setRubberBandZoomEnabled(true);
+            plot->setTitle(QStringLiteral(u"信号监测（含断采）"));
+
+            // 带断采缺口的信号：每 50 个点断 8 个（NaN 表示无数据）
+            AuPlotCurve *signal = new AuPlotCurve;
+            signal->setName(QStringLiteral(u"信号"));
+            QVector<QPointF> pts;
+            for (int i = 0; i < 400; ++i) {
+                const double x = 20.0 * i / 399.0;
+                const double y = (i % 50 < 42)
+                                     ? qSin(x * 2.0) * 3.0 + x * 0.1
+                                     : std::numeric_limits<double>::quiet_NaN();
+                pts.append(QPointF(x, y));
+            }
+            signal->setPoints(pts);
+            plot->addItem(signal);
+
+            auto *resetBtn = new QPushButton(QStringLiteral(u"重置视图"));
+            QObject::connect(resetBtn, &QPushButton::clicked, plot, [plot]() { plot->resetAxes(); });
+
+            auto *exportBtn = new QPushButton(QStringLiteral(u"导出高清图片"));
+            auto *status = new QLabel;
+            QObject::connect(exportBtn, &QPushButton::clicked, plot, [plot, status]() {
+                const QString path = QDir::temp().filePath(QStringLiteral(u"au-plot-export.png"));
+                // 目标尺寸 1600x1000、2 倍采样（3200x2000 物理像素，更清晰）
+                const QImage image = plot->toImage(QSize(1600, 1000), 2.0);
+                status->setText(image.save(path)
+                                    ? QStringLiteral(u"已导出：%1").arg(path)
+                                    : QStringLiteral(u"导出失败"));
+            });
+
+            QHBoxLayout *layout = new QHBoxLayout;
+            layout->addWidget(new QLabel(QStringLiteral(u"Ctrl+左键框选缩放，双击恢复；")));
+            layout->addWidget(resetBtn);
+            layout->addWidget(exportBtn);
+            layout->addWidget(status, 1);
+            return plotPanel(plot, layout);
+        };
+        page.code = QStringLiteral(
+            "// 框选缩放：修饰键（默认 Ctrl）+ 左键拖出矩形，松开生效\n"
+            "plot->setRubberBandZoomEnabled(true);\n"
+            "plot->setRubberBandModifiers(Qt::ControlModifier);  // 改成 NoModifier\n"
+            "                                                    // 则普通拖动即框选\n"
+            "// 方向受 zoomDirections 约束（同滚轮缩放）；选区某方向 < 4px\n"
+            "// 时该方向不缩放。Esc / 右键取消；双击恢复自适应量程：\n"
+            "plot->setDoubleClickResetEnabled(true);   // 默认开\n"
+            "plot->resetAxes();                        // 或代码按钮调用\n"
+            "\n"
+            "// NaN 断点：传感器断采处填 NaN，线自动断开，无效点不进量程\n"
+            "for (int i = 0; i < n; ++i)\n"
+            "    curve->addPoint(x, valid(i) ? y : qQNaN());\n"
+            "\n"
+            "// 导出图片：目标尺寸 / 缩放倍数 / 透明背景\n"
+            "QImage img = plot->toImage(QSize(1600, 1000), 2.0);\n"
+            "QImage png = plot->toImage(QSize(), 1.0, true);  // 当前尺寸透明底\n"
+            "img.save(\"plot.png\");\n");
         pages << page;
     }
 

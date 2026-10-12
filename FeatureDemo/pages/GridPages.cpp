@@ -3,6 +3,8 @@
 #include "PageHelpers.h"
 
 #include "AuCellEditValidator.h"
+#include "AuCellButton.h"
+#include "AuButtonCellRenderer.h"
 #include "AuCellRenderer.h"
 #include "AuColumnDef.h"
 #include "AuComboBoxCellEditor.h"
@@ -1064,7 +1066,149 @@ grid->editCell(2, 1);   // 打开编辑器，试试输入负数（对应演示�
         pages.append(page);
     }
 
-    // ============ 10a. 自定义单元格渲染器 ============
+    // ============ 10a. 内置按钮渲染器 ============
+    {
+        FeaturePage page;
+        page.title = QStringLiteral(u"内置按钮渲染器");
+        page.description = QStringLiteral(
+            u"AuButtonCellRenderer 内置 \"button\" / \"link\" 注册名：一格多个按钮，"
+            u"支持默认 / 悬停 / 按下三态样式（未设置自动派生）与语义预设。"
+            u"按钮来源三选一：按行回调 / 固定列表 / 单元格值解析；"
+            u"热区按下 + 释放确认点击，统一经 cellButtonClicked 信号发出。");
+        page.createDemo = []() {
+            AuGridModel *model = new AuGridModel(nullptr);
+            QVector<AuColumnDef> columns;
+            AuColumnDef name("name", QStringLiteral(u"名称"));
+            name.setWidth(90);
+            columns.append(name);
+            AuColumnDef status("status", QStringLiteral(u"状态"));
+            status.setWidth(90);
+            columns.append(status);
+            AuColumnDef op("op", QStringLiteral(u"操作(按行回调)"));
+            op.setWidth(190);
+            op.setCellRenderer(QStringLiteral("demoOp"));
+            op.setFocusable(false);   // 操作列建议关闭焦点锚点
+            columns.append(op);
+            AuColumnDef cfg("cfg", QStringLiteral(u"配置(数据驱动)"));
+            cfg.setWidth(210);
+            cfg.setCellRenderer(QStringLiteral("button"));
+            cfg.setFocusable(false);
+            columns.append(cfg);
+            model->setColumnDefs(columns);
+
+            // 行数据：status 驱动“操作”列按钮；cfg 为 QVariantList 按钮定义（数据驱动）
+            QVector<QVariantMap> rows;
+            for (int r = 0; r < 10; ++r) {
+                QVariantMap row;
+                row.insert(QStringLiteral("name"), QString("R%1").arg(r));
+                row.insert(QStringLiteral("status"), r % 2 == 0
+                            ? QStringLiteral(u"待审核") : QStringLiteral(u"已通过"));
+                QVariantList buttons;
+                QVariantMap detail;
+                detail.insert(QStringLiteral("text"), QStringLiteral(u"详情"));
+                detail.insert(QStringLiteral("type"), QStringLiteral("link"));
+                buttons.append(detail);
+                QVariantMap sync;
+                sync.insert(QStringLiteral("text"), QStringLiteral(u"同步"));
+                buttons.append(sync);
+                if (r == 3) {   // 演示禁用态
+                    QVariantMap off;
+                    off.insert(QStringLiteral("text"), QStringLiteral(u"禁用"));
+                    off.insert(QStringLiteral("enabled"), false);
+                    buttons.append(off);
+                }
+                row.insert(QStringLiteral("cfg"), buttons);
+                rows.append(row);
+            }
+            model->setRowData(rows);
+
+            AuGridWidget *grid = new AuGridWidget;
+            grid->setModel(model);
+            model->setParent(grid);
+
+            // “操作”列：按行回调，状态不同出不同按钮（改状态即换按钮组）
+            AuButtonCellRenderer *opRenderer = new AuButtonCellRenderer;
+            opRenderer->setButtonProvider(
+                [](int row, int column, const AuGridModel *m) -> QVector<AuCellButton> {
+                    Q_UNUSED(column)
+                    const QString status =
+                        m->rowData().value(row).value(QStringLiteral("status")).toString();
+                    if (status == QStringLiteral(u"待审核"))
+                        return QVector<AuCellButton>{ AuCellButton::primary(QStringLiteral(u"通过")),
+                                                      AuCellButton::warning(QStringLiteral(u"驳回")),
+                                                      AuCellButton::danger(QStringLiteral(u"删除")) };
+                    return QVector<AuCellButton>{ AuCellButton::plain(QStringLiteral(u"查看")),
+                                                  AuCellButton::danger(QStringLiteral(u"删除")) };
+                });
+            grid->registerCellRenderer(QStringLiteral("demoOp"),
+                                       QSharedPointer<AuCellRenderer>(opRenderer));
+
+            QPlainTextEdit *log = PageHelpers::makeLog();
+            // 所有按钮点击统一走表格信号：id 识别按钮，userData 随按钮带回
+            QObject::connect(grid, &AuGridWidget::cellButtonClicked, grid,
+                             [grid, log](int row, int column, const QVariantMap &button) {
+                                 Q_UNUSED(column)
+                                 const QString id = button.value(QStringLiteral("id")).toString();
+                                 PageHelpers::appendLog(
+                                     log, QStringLiteral(u"cellButtonClicked: [%1] 行%2")
+                                              .arg(id)
+                                              .arg(row));
+                                 if (id == QStringLiteral(u"删除")) {
+                                     grid->model()->removeRows(
+                                         {grid->model()->originalRowForVisibleRow(row)});
+                                 } else if (id == QStringLiteral(u"通过")) {
+                                     grid->model()->setCellValue(row, QStringLiteral("status"),
+                                                                 QStringLiteral(u"已通过"));
+                                 } else if (id == QStringLiteral(u"驳回")) {
+                                     grid->model()->setCellValue(row, QStringLiteral("status"),
+                                                                 QStringLiteral(u"待审核"));
+                                 }
+                             });
+            return PageHelpers::composeDemo(nullptr, grid, log);
+        };
+        page.code = R"snip(
+// 一格多按钮渲染器（AuGridWidget 已内置注册名 "button" / "link"，
+// 零配置直接 setCellRenderer 使用；需要配置按钮来源时创建实例注册）
+AuButtonCellRenderer *opRenderer = new AuButtonCellRenderer;
+
+// 按钮来源一：按行回调 —— 状态不同出不同按钮（改状态即换按钮组）
+opRenderer->setButtonProvider([](int row, int column, const AuGridModel *model) {
+    const QString status = model->rowData().value(row).value("status").toString();
+    if (status == "待审核")
+        return QVector<AuCellButton>{ AuCellButton::primary("通过"),
+                                      AuCellButton::warning("驳回"),
+                                      AuCellButton::danger("删除") };
+    return QVector<AuCellButton>{ AuCellButton::plain("查看") };
+});
+grid->registerCellRenderer("op",
+    QSharedPointer<AuCellRenderer>(opRenderer));
+
+// 按钮来源二：固定按钮集 —— opRenderer->setButtons({AuCellButton::primary("编辑")});
+// 按钮来源三：数据驱动 —— 单元格值直接给按钮定义（QVariantList / map / 字符串）
+row.insert("cfg", QVariantList{
+    QVariantMap{{"text", "详情"}, {"type", "link"}},
+    QVariantMap{{"text", "禁用"}, {"enabled", false}} });
+
+AuColumnDef op("op", "操作");
+op.setCellRenderer("op");
+op.setFocusable(false);          // 操作列建议关闭焦点锚点
+columns.append(op);
+
+// 样式：hover / pressed 未设置时由 normal 自动派生（提亮 / 加深）；
+// 也可逐状态覆盖：button.hover.textColor = QColor(...); button.radius = 12;
+
+// 点击统一走表格信号（热区按下 + 释放确认，移出即取消），无需逐按钮绑定回调
+connect(grid, &AuGridWidget::cellButtonClicked,
+        grid, [grid](int row, int column, const QVariantMap &button) {
+    const QString id = button.value("id").toString();   // id 缺省取 text
+    if (id == "删除")
+        grid->model()->removeRows({ grid->model()->originalRowForVisibleRow(row) });
+});
+)snip";
+        pages.append(page);
+    }
+
+    // ============ 10b. 自定义单元格渲染器 ============
     {
         FeaturePage page;
         page.title = QStringLiteral(u"自定义单元格渲染器");
@@ -1151,7 +1295,7 @@ connect(grid, &AuGridWidget::cellClicked, this, [grid](int row, int column) {
         pages.append(page);
     }
 
-    // ============ 10b. 自定义单元格编辑器 ============
+    // ============ 10b2. 自定义单元格编辑器 ============
     {
         FeaturePage page;
         page.title = QStringLiteral(u"自定义单元格编辑器");
@@ -1240,7 +1384,7 @@ connect(grid, &AuGridWidget::cellValueChanged,
         pages.append(page);
     }
 
-    // ============ 10b2. 集成 AuSelect / AuDatePicker 编辑器 ============
+    // ============ 10b3. 集成 AuSelect / AuDatePicker 编辑器 ============
     {
         FeaturePage page;
         page.title = QStringLiteral(u"集成 AuSelect / AuDatePicker");
@@ -1373,7 +1517,7 @@ date.setEditable(true);
         pages.append(page);
     }
 
-    // ============ 10c. 自定义表头渲染器 ============
+    // ============ 10d. 自定义表头渲染器 ============
     {
         FeaturePage page;
         page.title = QStringLiteral(u"自定义表头渲染器");
