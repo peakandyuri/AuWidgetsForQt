@@ -4,7 +4,9 @@
 #include "AuWindow_p.h"
 
 #include <QDateTime>
+#include <QCursor>
 #include <QEventLoop>
+#include <QGuiApplication>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
@@ -177,6 +179,7 @@ AuWindow::AuWindow(QWidget *parent, Qt::WindowFlags flags)
     , m_cornerClips{nullptr, nullptr, nullptr, nullptr}
     , m_grabRecoveryTimer(nullptr)
     , m_awaitingRelease(false)
+    , m_creationGeometry()
 {
     // 平台差异（窗口标志 / 属性、内容区容器、边缘缩放手柄、系统移动通道）
     platformInit();
@@ -546,6 +549,59 @@ bool AuWindow::event(QEvent *event)
     return QWidget::event(event);
 }
 
+// ---- 显示与默认摆放 ----
+
+// 首次显示的默认摆放：居中于可见父窗口（无父窗口 / 父窗口隐藏时居中于
+// 光标所在屏幕的工作区）。在 setVisible(true) 中、原生窗口创建之前调用：
+// 居中结果经 move() 写入 widget 几何，创建原生窗口时即为显式位置——系统
+// 默认摆放（无边框弹出窗口的左上角落在屏幕 / 父窗口中心）不再生效，也
+// 不存在"先按默认位置显示、再跳到居中位置"的闪动。用户已显式定位
+//（调过 move()/setGeometry()，WA_Moved，与 QDialog::adjustPosition 同一
+// 判定）或指定最大化 / 最小化 / 全屏状态时不干预。
+void AuWindow::adjustDefaultPosition()
+{
+    if (testAttribute(Qt::WA_Moved))
+        return;
+    if (isMaximized() || isMinimized() || isFullScreen())
+        return;
+
+    QWidget *parent = parentWidget();
+    QScreen *screen = nullptr;
+    QPoint center;
+    if (parent)
+        parent = parent->window();
+    if (parent && parent->isVisible()) {
+        screen = QGuiApplication::screenAt(parent->mapToGlobal(parent->rect().center()));
+        center = parent->geometry().center();
+    }
+    if (!screen) {
+        screen = QGuiApplication::screenAt(QCursor::pos());
+        if (!screen)
+            screen = QGuiApplication::primaryScreen();
+        if (!screen)
+            return;
+        center = screen->availableGeometry().center();
+    }
+
+    const QRect avail = screen->availableGeometry();
+    QPoint pos(center.x() - width() / 2, center.y() - height() / 2);
+    // 超出工作区的部分钳回屏幕内（窗口大于工作区时钳到左上角）
+    pos.setX(qBound(avail.left(), pos.x(), qMax(avail.left(), avail.right() - width() + 1)));
+    pos.setY(qBound(avail.top(), pos.y(), qMax(avail.top(), avail.bottom() - height() + 1)));
+    move(pos);
+}
+
+void AuWindow::setVisible(bool visible)
+{
+    if (visible && !isVisible()) {
+        adjustDefaultPosition();
+        // 原生窗口创建前的期望几何：Qt 创建窗口时按通用样式推算边框放大
+        // 原生矩形，widget 会被二次放大（见 AuWindowWin 的首显校正）
+        m_creationGeometry = geometry();
+    }
+    QWidget::setVisible(visible);
+}
+
 void AuWindow::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
@@ -555,17 +611,6 @@ void AuWindow::showEvent(QShowEvent *event)
         // 布局劫持兜底
         if (layout() && layout() != m_adoptedLayout)
             adoptLayout(layout());
-    }
-    // Dialog 首次显示时居中于父窗口（事件循环中执行，避免被 WM 的默认放置覆盖）
-    if (m_dialogMode && parentWidget() && parentWidget()->window() != this) {
-        QWidget *pw = parentWidget()->window();
-        QMetaObject::invokeMethod(this, [this, pw]() {
-            if (!isVisible() || !pw)
-                return;
-            const QPoint offset((pw->width() - width()) / 2,
-                                (pw->height() - height()) / 2);
-            move(pw->mapToGlobal(offset));
-        }, Qt::QueuedConnection);
     }
     relayout();
 }
@@ -790,8 +835,8 @@ void AuWindow::paintEvent(QPaintEvent *event)
     if (rounded) {
         // 抗锯齿：混成环境下窗口为 ARGB 透明背景，圆角靠 alpha 通道平滑
         painter.setRenderHint(QPainter::Antialiasing, true);
-        const QPainterPath path = AuWindowDetail::auRoundedRectPath(
-            QRectF(content), m_cornerRadii[0], m_cornerRadii[1],
+        const QPainterPath path = AuWindowDetail::auWindowBorderPath(
+            QRectF(content), rounded, m_cornerRadii[0], m_cornerRadii[1],
             m_cornerRadii[2], m_cornerRadii[3]);
         painter.setPen(Qt::NoPen);
         painter.setBrush(st->windowBackgroundColor());
@@ -809,7 +854,7 @@ void AuWindow::paintEvent(QPaintEvent *event)
         if (st->windowBorderColor().isValid()) {
             painter.setPen(QPen(st->windowBorderColor(), 1));
             painter.setBrush(Qt::NoBrush);
-            painter.drawRect(QRectF(content).adjusted(0.5, 0.5, -0.5, -0.5));
+            painter.drawPath(AuWindowDetail::auWindowBorderPath(QRectF(content), false, 0, 0, 0, 0));
         }
     }
 }

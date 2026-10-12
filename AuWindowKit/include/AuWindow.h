@@ -209,6 +209,7 @@ signals:
 protected:
     /// 手动触发整体重排（标题栏显隐等场景）。一般无需调用。
     void relayout();
+    void setVisible(bool visible) override;
     void paintEvent(QPaintEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
     void showEvent(QShowEvent *event) override;
@@ -231,6 +232,10 @@ private:
     int effectiveMargin() const;
     void ensurePolishedFrame();
     void connectTitleBar();
+    /// 首次显示前的默认摆放：用户未显式定位（未调用过 move()/setGeometry()，
+    /// 同 QDialog 的判定）时居中——有可见父窗口居中于父窗口，否则居中于
+    /// 光标所在屏幕的工作区。
+    void adjustDefaultPosition();
     /// 四角圆角裁剪浮层：按内容区几何摆放，清除不透明子控件盖住的圆角外像素
     void updateCornerClips(const QRect &content);
     /// X11：系统移动/缩放被 WM 接管会吞掉 release 事件（Qt 内部隐式抓取停在
@@ -305,6 +310,8 @@ private:
     void applyWindowStyles();
     void applyWindowRoundedCorners();
     void applyTaskbarVisibility();
+    QRect m_creationGeometry;           ///< 显示前捕获的期望几何（Windows 首显
+                                        ///  校正用：抵消 Qt 创建期放大的原生矩形）
     bool handleNcCalcSize(void *message, AuNativeEventResult *result);
     bool handleNcHitTest(void *message, AuNativeEventResult *result);
     bool handleMinMaxInfo(void *message, AuNativeEventResult *result);

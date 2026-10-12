@@ -51,6 +51,28 @@ RECT auVisibleFrameBounds(HWND hwnd)
 
 } // namespace
 
+// 背景擦除：以主题背景色替代系统擦除。Qt 注册的窗口类背景刷是
+// COLOR_WINDOW（白色）且不拦截 WM_ERASEBKGND——原生窗口被要求擦除时
+// 系统先铺一帧白色，Qt 的重绘是异步投递的，中间帧即肉眼可见的白闪
+// （实测触发路径：显示带属主关系的子窗体后，Qt 把内容区容器提升为
+// WS_CHILD 原生子窗口，其首次擦除恰逢窗口 A 上层弹窗，呈现为 A 的
+// 白色边框闪烁）。按窗体背景色填充后，擦除帧与后续绘制同色不可见；
+// GetClientRect 取设备像素矩形，缩放屏幕下同样铺满。
+void auEraseWithWindowBackground(const AuWindow *window, MSG *msg, AuNativeEventResult *result)
+{
+    if (window && msg->wParam) {
+        const QColor bg = window->style()->windowBackgroundColor();
+        const HDC hdc = reinterpret_cast<HDC>(msg->wParam);
+        RECT rc;
+        GetClientRect(msg->hwnd, &rc);
+        if (const HBRUSH brush = CreateSolidBrush(RGB(bg.red(), bg.green(), bg.blue()))) {
+            FillRect(hdc, &rc, brush);
+            DeleteObject(brush);
+        }
+    }
+    *result = 1;   // 告知系统"已擦除"
+}
+
 /// Windows 内容区容器：Qt 在某些时序下（实测：显示带属主关系的子窗体后）
 /// 会把本容器提升为原生子窗口（WS_CHILD），其矩形覆盖整个客户区——包括
 /// 边框缩放热区。系统命中测试先询问该原生 child，其默认回答 HTCLIENT 会让
@@ -72,6 +94,10 @@ protected:
     {
         if (eventType == QByteArrayLiteral("windows_generic_MSG")) {
             MSG *msg = static_cast<MSG *>(message);
+            if (msg->message == WM_ERASEBKGND) {
+                auEraseWithWindowBackground(m_window, msg, result);
+                return true;
+            }
             if (msg->message == WM_NCHITTEST) {
                 HWND win = reinterpret_cast<HWND>(m_window->winId());
                 if (!IsZoomed(win) && !m_window->isFullScreen() && !m_window->isMaximized()) {
@@ -118,6 +144,12 @@ void AuWindow::platformInit()
     // 互相污染（无法还原、边框热区失效）。
     m_edgeSnapEnabled = false;
     m_client = new AuClientArea(this);   // 边框热区 HTTRANSPARENT（见类注释）
+    // 让内容区容器自窗口创建起就是原生子窗口：否则显示带属主关系的子窗体
+    // 时，Qt 会在此刻才把容器提升为原生（新建一块空白表面盖在已渲染的内
+    // 容上），表面首次擦除（经 auEraseWithWindowBackground 填窗口背景色）
+    // 后、Qt 重绘子树前会露出一帧纯背景，内容区与窗体背景反色时呈现为
+    // 内容闪一下。提前建好原生窗口后该提升动作不复存在。
+    m_client->setAttribute(Qt::WA_NativeWindow);
 }
 
 void AuWindow::platformWinIdChanged()
@@ -129,7 +161,25 @@ void AuWindow::platformWinIdChanged()
     }
 }
 
-void AuWindow::platformFirstShow() {}
+void AuWindow::platformFirstShow()
+{
+    // 首显前最终几何校正：Qt 创建原生窗口时按通用样式推算边框，把原生
+    // 矩形放大了一圈（如 420x240 → 436x279），窗口创建与几何同步发生在
+    // 同一个调用栈里，widget 在 WinIdChange 之前就已被动放大——最终窗口
+    // 比请求尺寸大出边框条，且这次缩放在部分时序 / DPI 缩放环境下落在首
+    // 帧之后，呈现为子窗口首显"从大缩小"的闪动。期望几何已在 setVisible
+    // （创建前）存入 m_creationGeometry；此处（首个 ShowEvent 内、
+    // ShowWindow 之前，Qt 的创建期几何队列已冲刷完毕）把 widget / 原生
+    // 矩形一并校正回去，首帧即最终尺寸，不再有创建期缩放闪动。
+    if (!m_creationGeometry.isEmpty()) {
+        const QRect wanted = m_creationGeometry;
+        m_creationGeometry = QRect();
+        if (!isMaximized() && !isMinimized() && !isFullScreen()
+            && geometry() != wanted) {
+            setGeometry(wanted);
+        }
+    }
+}
 
 void AuWindow::platformResized()
 {
@@ -473,6 +523,11 @@ bool AuWindow::nativeEvent(const QByteArray &eventType, void *message, AuNativeE
         return QWidget::nativeEvent(eventType, message, result);
     MSG *msg = static_cast<MSG *>(message);
     switch (msg->message) {
+    case WM_ERASEBKGND:
+        // 顶层窗口的背景擦除同样来自 Qt 窗口类的白色背景刷（创建 / 显示、
+        // 系统发起的重绘等时机），以主题背景色替代，消除首帧白闪
+        auEraseWithWindowBackground(this, msg, result);
+        return true;
     case WM_NCACTIVATE:
         // 激活/失活统一传 lParam=-1：DefWindowProc 更新激活状态但跳过非
         // 客户区重绘。无 WS_CAPTION 时系统仍会在激活切换瞬间以传统路径

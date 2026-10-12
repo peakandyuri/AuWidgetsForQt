@@ -1,5 +1,6 @@
 #include "AuTitleBar.h"
 #include "AuWindow.h"
+#include "AuWindow_p.h"
 #include "AuWindowStyle.h"
 
 #include <QDateTime>
@@ -329,6 +330,30 @@ void AuTitleBar::paintEvent(QPaintEvent *event)
     }
 
     drawButtons(painter);
+
+    // 标题栏区段的窗体边框线重描：标题栏背景与按钮悬停背景会把窗体外沿的
+    // 1px 边框盖掉（顶边一行 + 两侧上段），不处理则边框呈"凵"形、与标题栏
+    // 脱节。这里在标题栏之上按窗体同一形状（窗口坐标系，自然裁剪到本控件
+    // 矩形）重描边框，边框即呈"口"字形完整包裹标题栏，衔接处像素一致。
+    const QColor border = style->windowBorderColor();
+    if (border.isValid()) {
+        const bool rounded = !(m_window->isMaximized() || m_window->isFullScreen())
+                             && m_window->windowRadius() > 0;
+        painter.save();
+        // 标题栏贴窗体顶部摆放，窗口坐标系原点平移到本控件坐标系
+        painter.translate(-QPointF(pos()));
+        painter.setRenderHint(QPainter::Antialiasing, rounded);
+        painter.setPen(QPen(border, 1));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawPath(AuWindowDetail::auWindowBorderPath(
+            QRectF(m_window->rect()), rounded,
+            m_window->cornerRadius(Qt::TopLeftCorner),
+            m_window->cornerRadius(Qt::TopRightCorner),
+            m_window->cornerRadius(Qt::BottomLeftCorner),
+            m_window->cornerRadius(Qt::BottomRightCorner)));
+        painter.restore();
+        painter.setRenderHint(QPainter::Antialiasing, false);
+    }
 }
 
 void AuTitleBar::drawButtons(QPainter &painter)

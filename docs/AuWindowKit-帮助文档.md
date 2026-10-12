@@ -92,7 +92,7 @@ const int code = dialog.exec();          // 模态阻塞：Esc=reject，Enter=�
 if (code == AuWindow::Accepted) { ... }
 ```
 
-- `setDialogMode(true)`：挂 `Qt::Dialog` 标志，显示时自动居中于父窗口；
+- `setDialogMode(true)`：挂 `Qt::Dialog` 标志，作为对话框展示；
 - `setModality(Modality::WindowModal / ApplicationModal)`：模态范围；
 - `exec()` / `accept()` / `reject()` / `done()` / `result()` 与 `QDialog` 语义一致；
 - `exec()` 期间键盘交互与 `QDialog` 一致：Esc 触发 `reject()`；Enter/Return
@@ -246,3 +246,8 @@ Windows 上 1~5 映射为系统小圆角（4px）、>5 映射为系统标准圆�
    通过 `AuWindow::setTitleBar()` 替换（构造时需传入窗体指针 `new MyBar(this)`）。
 9. **整窗皮肤**：AuWindow 只负责窗体框架（标题栏 / 背景 / 阴影），
    内容区控件配色建议搭配 QSS 或调色板（Demo 的主题切换有示例）。
+10. **默认居中摆放**：窗体首次显示（`show()` / `exec()`）时自动居中——
+   有可见父窗口的居中于父窗口，否则居中于光标所在屏幕的工作区（避开
+   任务栏，多显示器下不越界）。与 `QDialog` 相同，调用过 `move()` /
+   `setGeometry()` 显式定位（如恢复上次位置）的窗体不再干预；首次显示
+   后再次 `show()` 沿用上次位置。

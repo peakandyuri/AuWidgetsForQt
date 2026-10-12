@@ -49,6 +49,17 @@ inline QPainterPath auRoundedRectPath(const QRectF &r, qreal tl, qreal tr, qreal
     return path;
 }
 
+// 窗体 1px 描边路径（与 AuWindow::paintEvent 同一形状约定：圆角态用四角
+// 独立半径的圆角矩形；直角态用内缩 0.5px 的像素对齐矩形）。AuTitleBar
+// 重描标题栏区段的边框线时复用，保证衔接处像素级一致。
+inline QPainterPath auWindowBorderPath(const QRectF &r, bool rounded,
+                                       qreal tl, qreal tr, qreal bl, qreal br)
+{
+    if (!rounded)
+        return auRoundedRectPath(r.adjusted(0.5, 0.5, -0.5, -0.5), 0, 0, 0, 0);
+    return auRoundedRectPath(r, tl, tr, bl, br);
+}
+
 } // namespace AuWindowDetail
 
 #endif // AUWINDOW_P_H
