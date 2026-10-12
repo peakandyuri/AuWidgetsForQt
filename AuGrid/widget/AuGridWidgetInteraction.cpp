@@ -153,8 +153,24 @@ void AuGridWidget::mousePressEvent(QMouseEvent *event)
     }
 
     // 如果当前有编辑器，先尝试结束；若校验要求保持编辑，则禁止切换单元格
+    const bool hadEditor = m_activeEditor != nullptr;
     if (m_activeEditor && !tryFinishCurrentEdit())
         return;
+
+    // 单元格渲染器按钮热区按下：记录待释放（释放同按钮才确认点击）。
+    // 编辑器刚被本次点击收起时不触发（首次点击只收起编辑器）；行选中与
+    // cellClicked 流程保持不变
+    if (event->button() == Qt::LeftButton && !hadEditor
+        && cell.x() >= 0 && cell.x() < m_model->columnCount()) {
+        QSharedPointer<AuCellRenderer> renderer = rendererForColumn(cell.x());
+        if (renderer) {
+            const AuCellInteractionContext ctx = cellInteractionContext(cell.y(), cell.x(), event->pos());
+            if (renderer->cellMousePress(cell.y(), cell.x(), ctx)) {
+                m_cellRendererPressCell = QPoint(cell.x(), cell.y());
+                update(ctx.cellRect);
+            }
+        }
+    }
 
     // 不可聚焦的单元格（如放操作按钮的自定义列）：点击仍触发行选中与 cellClicked，
     // 但锚点（焦点框）不落到该格——保持原锚点列
@@ -230,6 +246,28 @@ void AuGridWidget::mouseMoveEvent(QMouseEvent *event)
 
 void AuGridWidget::mouseReleaseEvent(QMouseEvent *event)
 {
+    // 渲染器按钮热区：按下与释放落在同一按钮上才确认点击（移出即取消），
+    // 点击载荷（AuCellButton::toMap()）经 cellButtonClicked 统一发出
+    if (m_cellRendererPressCell.x() >= 0 && event->button() == Qt::LeftButton) {
+        const int column = m_cellRendererPressCell.x();
+        const int row = m_cellRendererPressCell.y();
+        m_cellRendererPressCell = QPoint(-1, -1);
+        if (m_model && row >= 0 && row < m_model->rowCount()
+            && column >= 0 && column < m_model->columnCount()) {
+            QSharedPointer<AuCellRenderer> renderer = rendererForColumn(column);
+            if (renderer) {
+                const AuCellInteractionContext ctx = cellInteractionContext(row, column, event->pos());
+                const QVariant payload = renderer->cellMouseRelease(row, column, ctx);
+                update(ctx.cellRect);   // 复位按下态视觉
+                if (payload.isValid()) {
+                    emit cellButtonClicked(row, column, payload.toMap());
+                    event->accept();
+                    return;
+                }
+            }
+        }
+    }
+
     if (m_headerRenderClickPending && event->button() == Qt::LeftButton) {
         m_headerRenderClickPending = false;
         int hLevel = 0;
@@ -428,7 +466,10 @@ void AuGridWidget::updateHoverCell(const QPoint &pos)
     QSharedPointer<AuCellRenderer> renderer = rendererForColumn(cell.x());
 
     if (m_hoverRow == cell.y() && m_hoverColumn == cell.x()) {
-        renderer->cellMouseMove(cell.y(), cell.x(), cellPos);
+        renderer->cellMouseMove(cell.y(), cell.x(), cellInteractionContext(cell.y(), cell.x(), pos));
+        // 按钮类渲染器：格内移动即重绘（hover 变色）
+        if (renderer->wantsMouseMoveUpdates())
+            update(crect);
         setCursor(renderer->wantsHoverCursor(cell.y(), cell.x(), cellPos)
                   ? Qt::PointingHandCursor
                   : Qt::ArrowCursor);
@@ -486,6 +527,29 @@ void AuGridWidget::notifyRendererLeave(int row, int column)
     if (row < 0 || column < 0 || isCheckboxColumn(column))
         return;
     rendererForColumn(column)->cellMouseLeave(row, column);
+}
+
+AuCellInteractionContext AuGridWidget::cellInteractionContext(int row, int column, const QPoint &pos) const
+{
+    AuCellInteractionContext ctx;
+    if (!m_model || column < 0 || column >= m_model->columnCount())
+        return ctx;
+
+    // 取值规则与 drawRows 的绘制上下文一致，保证热区几何与 paint 对齐
+    const AuColumnDef def = m_model->columnDefAt(column);
+    ctx.value = m_model->cellValue(row, column);
+    ctx.cellRect = cellRect(row, column);
+    ctx.cellPos = pos - ctx.cellRect.topLeft();
+    ctx.model = m_model;
+    ctx.style = m_style;
+    ctx.alignment = def.alignment() | Qt::AlignVCenter;
+    const QVariant alignVar = m_style->value(AuGridStyle::CellTextAlignment, m_model, row, column);
+    if (alignVar.isValid() && alignVar.toInt() != 0)
+        ctx.alignment = static_cast<Qt::Alignment>(alignVar.toInt()) | Qt::AlignVCenter;
+    ctx.font = m_style->font(m_model, row, column);
+    if (ctx.font == QFont())
+        ctx.font = this->font();
+    return ctx;
 }
 
 void AuGridWidget::focusInEvent(QFocusEvent *event)

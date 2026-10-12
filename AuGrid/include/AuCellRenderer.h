@@ -6,11 +6,30 @@
 #include <QVariant>
 #include <QPainter>
 #include <QColor>
+#include <QFont>
 #include <QPoint>
 
 class AuColumnDef;
 class AuGridModel;
 class AuGridStyle;
+
+/**
+ * @brief 渲染器交互回调的上下文：控件在鼠标事件时填充，随回调一并传入。
+ *
+ * cellRect 为单元格矩形（合并格为整个合并区域），cellPos 为鼠标相对
+ * 单元格左上角的坐标；value / model / style / alignment / font 与 paint
+ * 的取值规则一致，供渲染器还原绘制布局（热区几何与 paint 对齐）。
+ */
+struct AuCellInteractionContext
+{
+    QVariant value;                 ///< 单元格当前值
+    QRect cellRect;                 ///< 单元格矩形
+    QPoint cellPos;                 ///< 鼠标相对单元格左上角的坐标
+    Qt::Alignment alignment = Qt::AlignLeft | Qt::AlignVCenter;  ///< 与 paint 一致的最终对齐
+    QFont font;                     ///< 生效字体（样式覆盖或控件字体）
+    const AuGridModel *model = nullptr;  ///< 数据模型
+    const AuGridStyle *style = nullptr;  ///< 当前样式
+};
 
 /**
  * @brief 单元格绘制时的上下文状态，随 paint() 一并传给渲染器。
@@ -40,6 +59,10 @@ struct AuCellRendererContext
  *
  * 重绘时机：悬停状态变化、鼠标进出单元格（cellMouseEnter/Leave/Move）都会
  * 触发控件重绘相应区域；渲染器可维护内部状态（如按钮悬停）实现丰富交互。
+ *
+ * 热区点击协议（内置按钮渲染器使用）：cellMousePress 返回 true 表示命中
+ * 交互热区，控件记录待释放；释放落在同一热区时经 cellMouseRelease 返回
+ * 点击载荷，由控件发出 AuGridWidget::cellButtonClicked 信号。
  *
  * 最小实现只需重写带 AuCellRendererContext 的 paint()。
  */
@@ -83,6 +106,24 @@ public:
     virtual void cellMouseLeave(int row, int column) { Q_UNUSED(row) Q_UNUSED(column) }
     /// 鼠标在单元格内移动。
     virtual void cellMouseMove(int row, int column, const QPoint &cellPos) { Q_UNUSED(row) Q_UNUSED(column) Q_UNUSED(cellPos) }
+
+    // ---- 热区交互扩展（带完整上下文；按钮类渲染器使用，其余渲染器无需关心）----
+
+    /// 左键按下：命中交互热区返回 true（控件记录待释放并重绘该格）。
+    virtual bool cellMousePress(int row, int column, const AuCellInteractionContext &context)
+    { Q_UNUSED(row) Q_UNUSED(column) Q_UNUSED(context) return false; }
+
+    /// 左键释放：按下与释放落在同一热区时返回点击载荷（如按钮 toMap()），
+    /// 由控件发出 cellButtonClicked；返回无效 QVariant 表示未构成点击。
+    virtual QVariant cellMouseRelease(int row, int column, const AuCellInteractionContext &context)
+    { Q_UNUSED(row) Q_UNUSED(column) Q_UNUSED(context) return QVariant(); }
+
+    /// 鼠标在单元格内移动（带上下文重载）：控件优先调用；默认转调旧接口保持兼容。
+    virtual void cellMouseMove(int row, int column, const AuCellInteractionContext &context)
+    { cellMouseMove(row, column, context.cellPos); }
+
+    /// 该渲染器是否需要在格内移动时重绘（如按钮 hover 变色）；默认 false。
+    virtual bool wantsMouseMoveUpdates() const { return false; }
 
     // 返回 true 表示当前单元格需要显示手型光标。
     /// 该位置是否显示手型光标（如按钮热区上返回 true）。

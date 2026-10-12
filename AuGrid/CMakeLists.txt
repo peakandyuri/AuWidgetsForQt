@@ -15,6 +15,8 @@ add_library(AuGrid SHARED
     renderers/AuHeaderRenderer.cpp
     renderers/AuDefaultCellRenderer.cpp
     renderers/AuCheckBoxCellRenderer.cpp
+    renderers/AuButtonCellRenderer.cpp
+    renderers/AuCellButton.cpp
     editors/AuCellEditor.cpp
     editors/AuDefaultCellEditor.cpp
     editors/AuMultiLineCellEditor.cpp
@@ -33,6 +35,8 @@ add_library(AuGrid SHARED
     include/AuHeaderRenderer.h
     include/AuDefaultCellRenderer.h
     include/AuCheckBoxCellRenderer.h
+    include/AuCellButton.h
+    include/AuButtonCellRenderer.h
     include/AuCellEditor.h
     include/AuDefaultCellEditor.h
     include/AuMultiLineCellEditor.h

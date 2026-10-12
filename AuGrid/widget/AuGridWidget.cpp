@@ -14,6 +14,7 @@
 #include "AuScrollBar.h"
 #include "AuDefaultCellRenderer.h"
 #include "AuCheckBoxCellRenderer.h"
+#include "AuButtonCellRenderer.h"
 #include "AuDefaultCellEditor.h"
 #include "AuGridWidget_p.h"
 
@@ -46,6 +47,7 @@ AuGridWidget::AuGridWidget(QWidget *parent)
     , m_hoverHeaderColumn(-1)
     , m_hoverHeaderLevel(0)
     , m_headerRenderClickPending(false)
+    , m_cellRendererPressCell(-1, -1)
     , m_visibleRowBuffer(3)
     , m_rowOffsetsDirty(true)
     , m_leftPinnedWidth(0)
@@ -211,6 +213,13 @@ AuGridWidget::AuGridWidget(QWidget *parent)
     });
 
     applyStyleToScrollBars();
+
+    // 内置按钮 / 链接渲染器：setCellRenderer("button" / "link") 即用（零配置走
+    // 单元格值解析）；同名注册可覆盖内置实例
+    registerCellRenderer(QStringLiteral("button"),
+                         QSharedPointer<AuCellRenderer>(new AuButtonCellRenderer(AuCellButton::Type::Button)));
+    registerCellRenderer(QStringLiteral("link"),
+                         QSharedPointer<AuCellRenderer>(new AuButtonCellRenderer(AuCellButton::Type::Link)));
 }
 
 AuGridWidget::~AuGridWidget()

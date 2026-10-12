@@ -888,7 +888,7 @@ grid->setStyle(new MyStyle());
 
 ## 11. 单元格渲染器
 
-**头文件**：`AuGrid/include/AuCellRenderer.h`、`AuDefaultCellRenderer.h`、`AuCheckBoxCellRenderer.h`
+**头文件**：`AuGrid/include/AuCellRenderer.h`、`AuDefaultCellRenderer.h`、`AuCheckBoxCellRenderer.h`、`AuCellButton.h`、`AuButtonCellRenderer.h`
 
 ### 11.1 AuCellRendererContext
 
@@ -908,6 +908,10 @@ struct AuCellRendererContext {
 | `void paint(..., const AuCellRendererContext &context)` | 带 hover/selected 状态的绘制入口（控件调用此版本）；默认转调基础接口保持兼容 |
 | `void cellMouseEnter(row, column, cellPos)` / `cellMouseLeave(row, column)` / `cellMouseMove(row, column, cellPos)` | 鼠标进入 / 离开 / 在格内移动；`cellPos` 以单元格左上角为原点。渲染器可在内部记录状态用于重绘（如按钮 hover 效果） |
 | `bool wantsHoverCursor(row, column, cellPos)` | 返回 true 显示手型光标（如按钮热区） |
+| `bool cellMousePress(row, column, const AuCellInteractionContext &context)` | 热区交互：左键按下命中交互热区返回 true（控件记录待释放并重绘该格）。`AuCellInteractionContext` 含 value / cellRect / cellPos / alignment / font / model / style，与 paint 取值一致 |
+| `QVariant cellMouseRelease(row, column, const AuCellInteractionContext &context)` | 热区交互：按下与释放落在同一热区时返回点击载荷（无效 QVariant = 未构成点击），控件据此发出 `cellButtonClicked` |
+| `void cellMouseMove(row, column, const AuCellInteractionContext &context)` | 格内移动的带上下文重载（控件优先调用），默认转调旧接口 |
+| `bool wantsMouseMoveUpdates()` | 返回 true 时格内移动即重绘该格（驱动按钮 hover 变色） |
 | `int preferredHeight(rect, value, columnDef, row, column, model, style)` | 返回该格期望高度参与行高计算；返回 -1 用默认行高（WordWrap 文本渲染器用此机制实现自动行高） |
 | `QVariant copyContent(value, columnDef, row, column, model)` | Ctrl+C 复制内容；返回无效 QVariant 表示不提供复制 |
 
@@ -919,6 +923,7 @@ struct AuCellRendererContext {
 |---|---|
 | `AuDefaultCellRenderer` | 默认文本渲染器：按 `textWrapMode` 绘制文字，支持 `CellBackgroundColor` / `CellForegroundColor` 上下文样式与自动行高 |
 | `AuCheckBoxCellRenderer` | 复选框渲染器：值按 bool 绘制复选框，整格可点击（配合 `setEditable(true)`），`wantsHoverCursor` 返回 true |
+| `AuButtonCellRenderer` | 按钮渲染器：一格多个按钮 / 链接、三态样式、热区点击，注册名 `"button"` / `"link"` 已内置（详见 11.5） |
 
 ### 11.4 自定义示例（按钮列）
 
@@ -939,6 +944,70 @@ public:
 
 grid->registerCellRenderer("button", QSharedPointer<AuCellRenderer>(new ButtonRenderer()));
 def.setCellRenderer("button");
+```
+
+### 11.5 内置按钮渲染器（AuCellButton / AuButtonCellRenderer）
+
+**头文件**：`AuGrid/include/AuCellButton.h`、`AuGrid/include/AuButtonCellRenderer.h`
+
+一格内绘制多个按钮 / 文字链接，避免为操作列手写渲染器。注册名 `"button"` / `"link"` 已由控件内置（同名注册可覆盖），`def.setCellRenderer("button")` 即零配置可用。操作列建议 `setFocusable(false)`。
+
+**AuCellButton（按钮定义，值类型）**：
+
+| 字段 | 说明 |
+|---|---|
+| `text` | 按钮文字（必填） |
+| `id` | 点击识别键，缺省取 `text`，随 `cellButtonClicked` 发出 |
+| `tooltip` | 悬停提示（空 = 不显示） |
+| `type` | `Type::Button` 描边按钮 / `Type::Link` 文字链接（hover 下划线） |
+| `normal` / `hover` / `pressed` | 三态样式（`AuCellButtonStyle`：textColor / backgroundColor / borderColor）；hover、pressed 未设置的颜色由 normal 自动派生（提亮 / 加深） |
+| `radius` | 圆角半径，-1 用渲染器默认 |
+| `enabled` | false 灰显且不响应点击 |
+| `userData` | 自定义数据，点击时随信号原样带回 |
+
+语义预设（预置配色，免配样式）：`AuCellButton::primary / danger / success / warning / plain`。
+
+**按钮来源（优先级从高到低）**：
+
+1. `setButtonProvider(fn)`：按行回调 `QVector<AuCellButton>(int row, int column, const AuGridModel *)`，可按行状态出不同按钮（改状态即换按钮组）；
+2. `setButtons(list)`：整列固定按钮集；
+3. 单元格值解析：未配置上两者时，`QString` 视为单按钮文字，`QVariantMap` / `QVariantList`（元素为 QString 或 map）解析为按钮定义，适合后端下发按钮配置。
+
+**点击交互**：按钮热区按下高亮、移出取消、释放落在同一按钮才确认点击，统一经表格信号发出（无需逐按钮绑定回调）：
+
+```cpp
+void cellButtonClicked(int row, int column, const QVariantMap &button);
+// button 为 AuCellButton::toMap()：键 id / text / tooltip / type / enabled / userData 等
+```
+
+**布局配置**：`setSpacing(8)` / `setButtonHeight(22)` / `setHorizontalPadding(-1 = Button 10 / Link 4)` / `setRadius(4)` / `setDefaultColor(#1677FF)`。列宽不足时按钮被裁剪，热区仅限可见部分。
+
+```cpp
+// 一格多按钮：按行回调 + 状态切换按钮组
+AuButtonCellRenderer *opRenderer = new AuButtonCellRenderer;
+opRenderer->setButtonProvider([](int row, int column, const AuGridModel *model) {
+    if (model->rowData().value(row).value("status").toString() == "待审核")
+        return QVector<AuCellButton>{ AuCellButton::primary("通过"),
+                                      AuCellButton::warning("驳回"),
+                                      AuCellButton::danger("删除") };
+    return QVector<AuCellButton>{ AuCellButton::plain("查看") };
+});
+grid->registerCellRenderer("op", QSharedPointer<AuCellRenderer>(opRenderer));
+
+AuColumnDef op("op", "操作");
+op.setCellRenderer("op").setFocusable(false);
+columns.append(op);
+
+connect(grid, &AuGridWidget::cellButtonClicked, grid,
+        [grid](int row, int column, const QVariantMap &button) {
+    if (button.value("id") == "删除")
+        grid->model()->removeRows({ grid->model()->originalRowForVisibleRow(row) });
+});
+
+// 数据驱动：单元格值直接给按钮定义
+row.insert("cfg", QVariantList{
+    QVariantMap{{"text", "详情"}, {"type", "link"}},
+    QVariantMap{{"text", "禁用"}, {"enabled", false}} });
 ```
 
 ---
@@ -1156,6 +1225,7 @@ sync->syncFrom(gridA);      // 初始对齐
 | `cellEditingFinished(int row, int column)` | 编辑结束（提交或取消） |
 | `cellValueChanged(int row, int column, const QVariant &value)` | 编辑提交且通过校验 |
 | `cellCheckStateChanged(int row, int column, bool checked)` | 数据列内置复选框被切换 |
+| `cellButtonClicked(int row, int column, const QVariantMap &button)` | 内置按钮渲染器热区点击确认（按下与释放落在同一按钮；button 为 `AuCellButton::toMap()`） |
 | `rowCheckedChanged(int row, bool checked)` | 复选框列某行勾选变化（可见行号） |
 | `checkedStateChanged()` | 勾选集合变化（全选/清空/行拖拽影响等） |
 | `sortChanged(int column, Qt::SortOrder order)` | 排序变化 |

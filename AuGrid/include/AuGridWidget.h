@@ -387,6 +387,12 @@ signals:
     /// 数据列（columnDef.isCheckbox()）的复选框值被点击 / 空格切换。
     void cellCheckStateChanged(int row, int column, bool checked);
 
+    // 内置按钮渲染器
+    /// 渲染器按钮热区点击确认（按下与释放落在同一按钮上，移出即取消）。
+    /// 所有 AuButtonCellRenderer 按钮点击经此统一发出，button 为
+    /// AuCellButton::toMap()：键 id / text / tooltip / type / enabled / userData 等。
+    void cellButtonClicked(int row, int column, const QVariantMap &button);
+
     /// 排序变化（点击表头 / setSortRules / clearSort）。
     void sortChanged(int column, Qt::SortOrder order);
     /// 过滤状态变化。
@@ -752,6 +758,8 @@ private:
 
     void updateHoverCell(const QPoint &pos);
     void clearHoverCell();
+    /// 构造渲染器交互上下文（值 / 矩形 / 对齐 / 字体与 paint 取值规则一致）。
+    AuCellInteractionContext cellInteractionContext(int row, int column, const QPoint &pos) const;
     /// hover 变化整体重绘 body 区：合并单元格的锚点按整个合并区域填充 hover 背景，
     /// 任何局部行/单元格刷新都会让被覆盖行切片残留旧像素（视觉上逐一出现、与整行高亮不同步）。
     /// 可视行经过虚拟化后数量有限，整体重绘代价可忽略。
@@ -792,6 +800,7 @@ private:
     int m_hoverHeaderLevel;        ///< 悬停表头层级
     QPoint m_hoverHeaderPos;       ///< 悬停表头内相对坐标
     bool m_headerRenderClickPending;  ///< 表头渲染器热区按下待释放标记
+    QPoint m_cellRendererPressCell;   ///< 渲染器按钮热区按下待释放格（x 为列，-1 = 无）
     int m_visibleRowBuffer;        ///< 可视区上下缓冲行数
     QVector<int> m_columnOffsets;  ///< 列偏移表（size = columnCount + 1，首项为 0）
     QVector<int> m_autoFitWidths;  ///< AutoFit 列测量结果缓存
