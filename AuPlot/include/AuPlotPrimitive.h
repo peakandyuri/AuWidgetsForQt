@@ -41,6 +41,7 @@ protected:
     friend class AuPlot;
     void paint(QPainter *painter, const AuPlot *plot) override;
     QRectF computeBounds() const override;
+    void drawLegendIcon(QPainter *painter, const QRectF &iconRect) override;
 
 private:
     QVector<QPointF> m_points;
@@ -83,6 +84,7 @@ protected:
     friend class AuPlot;
     void paint(QPainter *painter, const AuPlot *plot) override;
     QRectF computeBounds() const override;
+    void drawLegendIcon(QPainter *painter, const QRectF &iconRect) override;
 
 private:
     QVector<QPointF> m_points;
@@ -129,6 +131,7 @@ protected:
     friend class AuPlot;
     void paint(QPainter *painter, const AuPlot *plot) override;
     QRectF computeBounds() const override;
+    void drawLegendIcon(QPainter *painter, const QRectF &iconRect) override;
 
 private:
     QVector<QPointF> m_points;
@@ -186,6 +189,7 @@ protected:
     friend class AuPlot;
     void paint(QPainter *painter, const AuPlot *plot) override;
     QRectF computeBounds() const override;
+    void drawLegendIcon(QPainter *painter, const QRectF &iconRect) override;
 
 private:
     Orientation m_orientation = Orientation::Horizontal;

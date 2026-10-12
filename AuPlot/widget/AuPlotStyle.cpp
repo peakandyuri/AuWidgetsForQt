@@ -31,7 +31,13 @@ AuPlotStyle::AuPlotStyle()
     , m_trackerBorderColor(0x33, 0x33, 0x33, 90)
     , m_trackerTextColor(0x33, 0x33, 0x33)
     , m_crosshairColor(0x99, 0x99, 0x99)
+    , m_legendDimmedTextColor(0x99, 0x99, 0x99)
+    , m_legendBackgroundColor(255, 255, 255, 220)
+    , m_legendBorderColor(0x33, 0x33, 0x33, 90)
+    , m_selectionRectFillColor(0x2f, 0x6f, 0xdb, 36)
+    , m_selectionRectBorderColor(0x2f, 0x6f, 0xdb)
 {
+    m_titleFont.setBold(true);   // 图表标题默认应用字体加粗
 }
 
 AuPlotStyle::~AuPlotStyle()
@@ -57,6 +63,11 @@ AuPlotStyle *AuPlotStyle::createDarkStyle()
     style->setTrackerBorderColor(QColor(0xd0, 0xd3, 0xd8, 70));
     style->setTrackerTextColor(QColor(0xd0, 0xd3, 0xd8));
     style->setCrosshairColor(QColor(0x77, 0x7a, 0x7e));
+    style->setLegendDimmedTextColor(QColor(0x6b, 0x6f, 0x76));
+    style->setLegendBackgroundColor(QColor(0x26, 0x28, 0x2c, 225));
+    style->setLegendBorderColor(QColor(0xd0, 0xd3, 0xd8, 70));
+    style->setSelectionRectFillColor(QColor(0x2f, 0x6f, 0xdb, 60));
+    style->setSelectionRectBorderColor(QColor(0x7a, 0xa7, 0xe8));
     return style;
 }
 
@@ -269,4 +280,120 @@ Qt::PenStyle AuPlotStyle::crosshairStyle() const
 void AuPlotStyle::setCrosshairStyle(Qt::PenStyle style)
 {
     m_crosshairStyle = style;
+}
+
+// ---- 图表标题 / 轴标题 ----
+
+QColor AuPlotStyle::titleColor() const
+{
+    return m_titleColor;
+}
+
+void AuPlotStyle::setTitleColor(const QColor &color)
+{
+    m_titleColor = color;
+}
+
+QFont AuPlotStyle::titleFont() const
+{
+    return m_titleFont;
+}
+
+void AuPlotStyle::setTitleFont(const QFont &font)
+{
+    m_titleFont = font;
+}
+
+QColor AuPlotStyle::axisTitleColor() const
+{
+    return m_axisTitleColor;
+}
+
+void AuPlotStyle::setAxisTitleColor(const QColor &color)
+{
+    m_axisTitleColor = color;
+}
+
+QFont AuPlotStyle::axisTitleFont() const
+{
+    return m_axisTitleFont;
+}
+
+void AuPlotStyle::setAxisTitleFont(const QFont &font)
+{
+    m_axisTitleFont = font;
+}
+
+// ---- 图例 ----
+
+QColor AuPlotStyle::legendTextColor() const
+{
+    return m_legendTextColor;
+}
+
+void AuPlotStyle::setLegendTextColor(const QColor &color)
+{
+    m_legendTextColor = color;
+}
+
+QColor AuPlotStyle::legendDimmedTextColor() const
+{
+    return m_legendDimmedTextColor;
+}
+
+void AuPlotStyle::setLegendDimmedTextColor(const QColor &color)
+{
+    m_legendDimmedTextColor = color;
+}
+
+QColor AuPlotStyle::legendBackgroundColor() const
+{
+    return m_legendBackgroundColor;
+}
+
+void AuPlotStyle::setLegendBackgroundColor(const QColor &color)
+{
+    m_legendBackgroundColor = color;
+}
+
+QColor AuPlotStyle::legendBorderColor() const
+{
+    return m_legendBorderColor;
+}
+
+void AuPlotStyle::setLegendBorderColor(const QColor &color)
+{
+    m_legendBorderColor = color;
+}
+
+QFont AuPlotStyle::legendFont() const
+{
+    return m_legendFont;
+}
+
+void AuPlotStyle::setLegendFont(const QFont &font)
+{
+    m_legendFont = font;
+}
+
+// ---- 框选缩放 ----
+
+QColor AuPlotStyle::selectionRectFillColor() const
+{
+    return m_selectionRectFillColor;
+}
+
+void AuPlotStyle::setSelectionRectFillColor(const QColor &color)
+{
+    m_selectionRectFillColor = color;
+}
+
+QColor AuPlotStyle::selectionRectBorderColor() const
+{
+    return m_selectionRectBorderColor;
+}
+
+void AuPlotStyle::setSelectionRectBorderColor(const QColor &color)
+{
+    m_selectionRectBorderColor = color;
 }

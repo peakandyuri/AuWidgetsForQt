@@ -348,6 +348,22 @@ void AuPlotAxis::setAxisColor(const QColor &color)
         plot->update();
 }
 
+// ---- 轴标题 ----
+
+QString AuPlotAxis::title() const
+{
+    return m_title;
+}
+
+void AuPlotAxis::setTitle(const QString &title)
+{
+    if (m_title == title)
+        return;
+    m_title = title;
+    if (AuPlot *plot = qobject_cast<AuPlot *>(parent()))
+        plot->update();
+}
+
 // ---- 内部 ----
 
 void AuPlotAxis::setCurrentRange(double min, double max)

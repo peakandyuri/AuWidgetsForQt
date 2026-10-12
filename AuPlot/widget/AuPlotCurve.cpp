@@ -7,6 +7,7 @@
 #include <QPainterPath>
 #include <QtMath>
 #include <algorithm>
+#include <cmath>
 
 namespace {
 
@@ -163,15 +164,18 @@ void AuPlotCurve::setPoints(const QVector<QPointF> &points)
 {
     m_points = points;
     m_xAscending = true;
-    bool boundsValid = !m_points.isEmpty();
+    bool boundsValid = false;
     double minX = 0.0, maxX = 0.0, minY = 0.0, maxY = 0.0;
     for (int i = 0; i < m_points.size(); ++i) {
         const QPointF &pt = m_points.at(i);
         if (i > 0 && pt.x() < m_points.at(i - 1).x())
             m_xAscending = false;
-        if (i == 0) {
+        if (!AuPlotInternal::isFinitePoint(pt))
+            continue;   // NaN / Inf 不参与量程（绘制时断段）
+        if (!boundsValid) {
             minX = maxX = pt.x();
             minY = maxY = pt.y();
+            boundsValid = true;
         } else {
             minX = qMin(minX, pt.x());
             maxX = qMax(maxX, pt.x());
@@ -193,14 +197,18 @@ void AuPlotCurve::addPoint(double x, double y)
     // 缓存无效（removeFirstPoints / 初始）时保持无效，由下一次 computeBounds
     // 全量重建——单靠新点重建会丢掉存量数据的极值
     if (m_runningBoundsValid) {
-        if (x < m_runningBounds.left())
-            m_runningBounds.setLeft(x);
-        if (x > m_runningBounds.right())
-            m_runningBounds.setRight(x);
-        if (y < m_runningBounds.top())
-            m_runningBounds.setTop(y);
-        if (y > m_runningBounds.bottom())
-            m_runningBounds.setBottom(y);
+        if (std::isfinite(x)) {
+            if (x < m_runningBounds.left())
+                m_runningBounds.setLeft(x);
+            if (x > m_runningBounds.right())
+                m_runningBounds.setRight(x);
+        }
+        if (std::isfinite(y)) {
+            if (y < m_runningBounds.top())
+                m_runningBounds.setTop(y);
+            if (y > m_runningBounds.bottom())
+                m_runningBounds.setBottom(y);
+        }
     }
     invalidateBounds();
 }
@@ -440,9 +448,6 @@ void AuPlotCurve::setFillBaseline(double y)
 
 QRectF AuPlotCurve::computeBounds() const
 {
-    if (m_points.isEmpty())
-        return QRectF();
-
     // 增量缓存在（addPoint 逐点扩展）：O(1) 返回，实时追加不必全量重扫
     if (m_runningBoundsValid) {
         QRectF bounds = m_runningBounds;
@@ -453,16 +458,26 @@ QRectF AuPlotCurve::computeBounds() const
         return bounds;
     }
 
-    double minX = m_points.constFirst().x();
-    double maxX = minX;
-    double minY = m_points.constFirst().y();
-    double maxY = minY;
+    // 全量重扫：跳过 NaN / Inf 点（无效点不参与量程）
+    bool boundsValid = false;
+    double minX = 0.0, maxX = 0.0, minY = 0.0, maxY = 0.0;
     for (const QPointF &pt : m_points) {
-        minX = qMin(minX, pt.x());
-        maxX = qMax(maxX, pt.x());
-        minY = qMin(minY, pt.y());
-        maxY = qMax(maxY, pt.y());
+        if (!AuPlotInternal::isFinitePoint(pt))
+            continue;
+        if (!boundsValid) {
+            minX = maxX = pt.x();
+            minY = maxY = pt.y();
+            boundsValid = true;
+        } else {
+            minX = qMin(minX, pt.x());
+            maxX = qMax(maxX, pt.x());
+            minY = qMin(minY, pt.y());
+            maxY = qMax(maxY, pt.y());
+        }
     }
+    if (!boundsValid)
+        return QRectF();
+
     if (m_fillVisible) {
         minY = qMin(minY, m_fillBaseline);
         maxY = qMax(maxY, m_fillBaseline);
@@ -511,27 +526,48 @@ void AuPlotCurve::paint(QPainter *painter, const AuPlot *plot)
     for (int i = 0; i < drawn.size(); ++i)
         pixels[i] = QPointF(toPixelX(drawn.at(i).x()), toPixelY(drawn.at(i).y()));
 
+    // 按 NaN / Inf 断点把像素序列切成连续段：线与填充在断点处断开，
+    // 无效点本身不绘制（传感器断采 / 缺数据的常规表达方式）
+    QVector<QVector<QPointF>> runs;
+    QVector<QPointF> current;
+    for (const QPointF &px : pixels) {
+        if (!std::isfinite(px.x()) || !std::isfinite(px.y())) {
+            if (!current.isEmpty())
+                runs.append(current);
+            current.clear();
+            continue;
+        }
+        current.append(px);
+    }
+    if (!current.isEmpty())
+        runs.append(current);
+
     const QColor fallbackLineColor = m_lineColor.isValid()
                                          ? m_lineColor
                                          : QColor(0x2f, 0x6f, 0xdb);
 
-    // 面：曲线与基线之间填充（在线下层）
+    // 面：各连续段与基线之间填充（在线下层）
     if (m_fillVisible && m_fillColor.isValid() && m_fillColor.alpha() > 0) {
-        QPainterPath fillPath;
-        fillPath.moveTo(pixels.first());
-        for (int i = 1; i < pixels.size(); ++i)
-            fillPath.lineTo(pixels.at(i));
-        fillPath.lineTo(pixels.last().x(), toPixelY(m_fillBaseline));
-        fillPath.lineTo(pixels.first().x(), toPixelY(m_fillBaseline));
-        fillPath.closeSubpath();
-        painter->fillPath(fillPath, m_fillColor);
+        const qreal baselineY = toPixelY(m_fillBaseline);
+        for (const QVector<QPointF> &run : runs) {
+            if (run.size() < 2)
+                continue;
+            QPainterPath fillPath;
+            fillPath.moveTo(run.first());
+            for (int i = 1; i < run.size(); ++i)
+                fillPath.lineTo(run.at(i));
+            fillPath.lineTo(run.last().x(), baselineY);
+            fillPath.lineTo(run.first().x(), baselineY);
+            fillPath.closeSubpath();
+            painter->fillPath(fillPath, m_fillColor);
+        }
     }
 
     // 线。
     // 密集曲线（点数超过像素列数 2 倍，抽稀后仍大量近垂直线段）时切换为 0 宽装饰笔：
     // 抗锯齿的常规描边在这种几何上会退化到几百毫秒，装饰笔走光栅引擎的快速
     // 线段路径只需 1~2ms，且视觉上密集折线本来就呈 1px 细带，无差别。
-    if (m_lineVisible && pixels.size() >= 2) {
+    if (m_lineVisible) {
         const bool dense = pixels.size() > int(rect.width()) * 2;
         QPen pen = AuPlotInternal::makeLinePen(m_lineColor, fallbackLineColor,
                                                m_lineWidth, m_lineStyle,
@@ -545,28 +581,54 @@ void AuPlotCurve::paint(QPainter *painter, const AuPlot *plot)
                     scaled[i] *= m_lineWidth;
                 pen.setDashPattern(scaled);
             }
-            painter->setPen(pen);
-            painter->setBrush(Qt::NoBrush);
-            painter->drawPolyline(pixels.constData(), pixels.size());
-        } else {
-            QPainterPath linePath;
-            linePath.moveTo(pixels.first());
-            for (int i = 1; i < pixels.size(); ++i)
-                linePath.lineTo(pixels.at(i));
-            painter->setPen(pen);
-            painter->setBrush(Qt::NoBrush);
-            painter->drawPath(linePath);
+        }
+        for (const QVector<QPointF> &run : runs) {
+            if (run.size() < 2)
+                continue;
+            if (dense) {
+                painter->setPen(pen);
+                painter->setBrush(Qt::NoBrush);
+                painter->drawPolyline(run.constData(), run.size());
+            } else {
+                QPainterPath linePath;
+                linePath.moveTo(run.first());
+                for (int i = 1; i < run.size(); ++i)
+                    linePath.lineTo(run.at(i));
+                painter->setPen(pen);
+                painter->setBrush(Qt::NoBrush);
+                painter->drawPath(linePath);
+            }
         }
     }
 
-    // 点标记：点数超过像素可容纳数量时按步长抽稀，避免糊成一团
+    // 点标记：点数超过像素可容纳数量时按步长抽稀，避免糊成一团；无效点跳过
     if (m_pointStyle != AuPlotPointStyle::None) {
         const int maxMarkers = qMax(1, int(rect.width()) / 2);
         const int stride = qMax(1, pixels.size() / maxMarkers);
-        for (int i = 0; i < pixels.size(); i += stride)
-            AuPlotInternal::drawPointMarker(painter, pixels.at(i), m_pointStyle,
+        for (int i = 0; i < pixels.size(); i += stride) {
+            const QPointF &px = pixels.at(i);
+            if (!std::isfinite(px.x()) || !std::isfinite(px.y()))
+                continue;
+            AuPlotInternal::drawPointMarker(painter, px, m_pointStyle,
                                             m_pointSize,
                                             m_pointColor.isValid() ? m_pointColor
                                                                    : fallbackLineColor);
+        }
+    }
+}
+
+void AuPlotCurve::drawLegendIcon(QPainter *painter, const QRectF &iconRect)
+{
+    const QColor color = m_lineColor.isValid() ? m_lineColor : QColor(0x2f, 0x6f, 0xdb);
+    const qreal midY = iconRect.center().y();
+    painter->setRenderHint(QPainter::Antialiasing, true);
+    painter->setPen(AuPlotInternal::makeLinePen(color, color, m_lineWidth,
+                                                m_lineStyle, m_dashPattern, m_dashOffset));
+    painter->setBrush(Qt::NoBrush);
+    painter->drawLine(QPointF(iconRect.left(), midY), QPointF(iconRect.right(), midY));
+    if (m_pointStyle != AuPlotPointStyle::None) {
+        AuPlotInternal::drawPointMarker(painter, iconRect.center(), m_pointStyle,
+                                        qMin<qreal>(qreal(m_pointSize), iconRect.height() + 2.0),
+                                        m_pointColor.isValid() ? m_pointColor : color);
     }
 }

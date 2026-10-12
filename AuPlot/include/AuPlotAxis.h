@@ -6,6 +6,7 @@
 #include <QtCore/qglobal.h>
 #include <QColor>
 #include <QObject>
+#include <QString>
 #include <QVector>
 #include <functional>
 
@@ -118,6 +119,14 @@ public:
     /// 小刻度值列表（相邻大刻度之间均分，不含大刻度本身）。
     QVector<double> minorTickValues(qreal pixelLength) const;
 
+    // ---- 轴标题 ----
+    /// 轴标题（常用于单位，如 "°C" / "MPa"）；空（默认）不显示。
+    /// 位置：X 轴在刻度值外侧居中，Y 轴在刻度值外侧旋转 90° 居中；
+    /// 颜色 / 字体用 AuPlotStyle::axisTitleColor / axisTitleFont
+    /// （未设置时跟随刻度值）。
+    QString title() const;
+    void setTitle(const QString &title);
+
     // ---- 轴颜色覆盖 ----
     /// 轴线 / 刻度线颜色：无效时使用 AuPlotStyle::axisColor()。双轴时给 Y2
     /// 设置独立颜色可与 Y1 区分。
@@ -167,6 +176,7 @@ private:
     bool m_minorGridVisible = false;
 
     QColor m_axisColor;                 ///< 无效 → 全局样式
+    QString m_title;
 
     // 刻度缓存：范围或像素长度变化时重新生成
     mutable QVector<double> m_majorTicks;

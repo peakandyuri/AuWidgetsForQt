@@ -5,9 +5,11 @@
 #include "AuPlotAxis.h"
 #include "AuPlotCurve.h"
 #include "AuPlotItem.h"
+#include "AuPlotLegend.h"
 #include "AuPlotStyle.h"
 #include "AuPlotTypes.h"
 
+#include <QImage>
 #include <QList>
 #include <QPair>
 #include <QPointF>
@@ -33,13 +35,26 @@
  * 控制层级（默认曲线 0，负值在曲线下方，正值在上方，先画层级低的）。
  * 控件接管图元所有权。
  *
- * 交互（需求 9，默认全部关闭）：
+ * 图例：setName() 非空的图元自动进入内置图例（AuPlot::legend() 调整位置 /
+ * 交互），点击条目默认可切换曲线显隐（隐藏条目置灰保留，可点击恢复）；
+ * itemVisibilityChanged() / legendEntryClicked() 信号供外部图例面板同步。
+ *
+ * 标题：setTitle() 图表标题（顶部居中），AuPlotAxis::setTitle() 轴标题
+ * （常用于单位），布局自动为标题预留空间。
+ *
+ * 交互（需求 9，拖动 / 缩放 / 框选默认关闭）：
  *  - setDragEnabled(true) 拖动平移；setDragDirections() 可精细化只允许横向
  *    或纵向拖动；
  *  - setZoomEnabled(true) 鼠标滚轮缩放（以光标为中心）；setZoomDirections()
  *    可只缩放横向或纵向；
+ *  - setRubberBandZoomEnabled(true) 框选缩放（默认 Ctrl + 左键拖出矩形，
+ *    修饰键可改）；框选同样受 zoomDirections 约束，Esc / 右键取消；
+ *  - 双击绘图区恢复所有轴自适应量程（setDoubleClickResetEnabled 可关），
+ *    也可代码调用 resetAxes()；
  *  - 拖动 / 缩放过的轴自动脱离数据自适应量程（setAutoRange(true) 可恢复）；
  *  - 轴设置 setRange() / setLimits() 后，拖动与缩放被钳制在该范围内（需求 15）。
+ *
+ * 导出：toImage() 按当前或指定尺寸渲染为图片（支持缩放倍数与透明背景）。
  *
  * 样式（需求 14）：默认白底；背景支持透明与任意颜色（含透明度），轴色、
  * 刻度值、网格、曲线 / 点 / 线 / 面的颜色均独立可控（见 AuPlotStyle 与各图元）。
@@ -50,6 +65,10 @@ class AUPLOT_EXPORT AuPlot : public QWidget
     Q_PROPERTY(bool dualAxisEnabled READ dualAxisEnabled WRITE setDualAxisEnabled)
     Q_PROPERTY(bool dragEnabled READ dragEnabled WRITE setDragEnabled)
     Q_PROPERTY(bool zoomEnabled READ zoomEnabled WRITE setZoomEnabled)
+    Q_PROPERTY(QString title READ title WRITE setTitle)
+    Q_PROPERTY(bool legendVisible READ legendVisible WRITE setLegendVisible)
+    Q_PROPERTY(bool rubberBandZoomEnabled READ rubberBandZoomEnabled WRITE setRubberBandZoomEnabled)
+    Q_PROPERTY(bool doubleClickResetEnabled READ doubleClickResetEnabled WRITE setDoubleClickResetEnabled)
 
 public:
     explicit AuPlot(QWidget *parent = nullptr);
@@ -77,6 +96,18 @@ public:
     /// 移除并 delete 全部图元。
     void clearItems();
     QList<AuPlotItem *> items() const;
+
+    // ---- 标题 ----
+    /// 图表标题（顶部居中）；空（默认）不显示、不占空间。
+    QString title() const;
+    void setTitle(const QString &title);
+
+    // ---- 图例 ----
+    /// 图例配置（控件持有，永不为空）；显示名来自 AuPlotItem::setName()。
+    AuPlotLegend *legend() const;
+    /// 图例整体显隐（等价 legend()->setVisible，属性化便于设计器配置）。
+    bool legendVisible() const;
+    void setLegendVisible(bool on);
 
     // ---- 坐标映射 ----
     /// 主绘图区（坐标轴围成的区域），控件局部坐标。
@@ -111,6 +142,29 @@ public:
     qreal zoomFactor() const;
     void setZoomFactor(qreal factor);
 
+    // ---- 框选缩放与视图恢复 ----
+    /// 框选缩放（默认关）：按住 rubberBandModifiers 修饰键 + 左键拖出矩形，
+    /// 松开后把矩形范围设为可见范围（与 zoomDirections 一致的方向生效）。
+    bool rubberBandZoomEnabled() const;
+    void setRubberBandZoomEnabled(bool on);
+    /// 触发框选的键盘修饰键（默认 Qt::ControlModifier；设为 Qt::NoModifier
+    /// 则普通左键拖动即框选，此时拖动平移在其上不可用）。
+    Qt::KeyboardModifiers rubberBandModifiers() const;
+    void setRubberBandModifiers(Qt::KeyboardModifiers modifiers);
+    /// 所有轴恢复数据自适应量程（清除 setRange / 拖动缩放造成的固定量程，
+    /// setLimits 硬边界保留）。
+    void resetAxes();
+    /// 双击绘图区是否恢复自适应量程（默认开）。
+    bool doubleClickResetEnabled() const;
+    void setDoubleClickResetEnabled(bool on);
+
+    // ---- 导出 ----
+    /// 渲染为图片。size 为空（默认）时用控件当前尺寸；导出会临时按目标
+    /// 尺寸重排（可见控件会闪动后恢复）。devicePixelRatio 支持高清导出
+    /// （如 2.0）；transparentBackground = true 时背景透明。
+    QImage toImage(const QSize &size = QSize(), qreal devicePixelRatio = 1.0,
+                   bool transparentBackground = false) const;
+
     // ---- 追踪器与十字线（默认关闭） ----
     /// 追踪器：鼠标在绘图区内移动时，以鼠标 x 为基准同时吸附所有可见曲线上
     /// 最近的数据点（升序曲线二分查找，百万级数据无压力）——每条曲线画一个
@@ -144,6 +198,10 @@ signals:
     /// 追踪吸附点变化：某条可见曲线的吸附点变化时发出该曲线及其新吸附点；
     /// curve 为 nullptr 表示鼠标已离开所有曲线 / 绘图区。
     void trackerChanged(AuPlotCurve *curve, const QPointF &dataPoint);
+    /// 图元可见性变化（代码 setVisible / 图例点击切换都会发出）。
+    void itemVisibilityChanged(AuPlotItem *item, bool visible);
+    /// 点击图例条目（无论是否切换可见性都会发出；item 为对应图元）。
+    void legendEntryClicked(AuPlotItem *item);
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -151,6 +209,8 @@ protected:
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
+    void mouseDoubleClickEvent(QMouseEvent *event) override;
+    void keyPressEvent(QKeyEvent *event) override;
     void leaveEvent(QEvent *event) override;
     void wheelEvent(QWheelEvent *event) override;
 
@@ -160,6 +220,13 @@ private:
     friend class AuPlotPoints;
     friend class AuPlotLine;
     friend class AuPlotArea;
+    friend class AuPlotRefLine;
+
+    /// 图例条目（绘制时记录，供点击命中测试）。
+    struct LegendEntry {
+        AuPlotItem *item;
+        QRectF rect;   // 控件局部坐标（含图标 + 文字的完整命中区）
+    };
 
     AuPlotAxis *axisAt(AuPlotAxisPos pos) const;
     /// 生效样式指针（不会为空）。
@@ -172,18 +239,32 @@ private:
     void assignDefaultColor(AuPlotItem *item);
     /// 图元 zLevel 变化后把它移到 m_items 中正确的排序位置。
     void reinsertItem(AuPlotItem *item);
+    /// 图元可见性变化（setVisible / 图例点击）：清理追踪态并广播信号。
+    void handleItemVisibility(AuPlotItem *item, bool visible);
 
     void drawGrid(QPainter *painter, const QRectF &rect, const AuPlotStyle *st);
     void drawAxes(QPainter *painter, const QRectF &rect, const AuPlotStyle *st);
     void drawCrosshair(QPainter *painter);
     void drawTracker(QPainter *painter);
+    void drawTitle(QPainter *painter, const AuPlotStyle *st);
+    void drawLegend(QPainter *painter, const AuPlotStyle *st);
+    void drawRubberBand(QPainter *painter);
     /// 根据鼠标位置更新十字线与追踪器状态（必要时重绘并发出 trackerChanged）。
     void updateTracker(const QPoint &pos);
+
+    /// 布局图例：计算所有条目的命中矩形与条带背景矩形（控件局部坐标）。
+    /// 无可见图例（关闭 / 无命名图元）时返回 false。布局与绘制共用，
+    /// calculatePlotRect 用它预留边距。
+    bool layoutLegend(QVector<LegendEntry> *entries, QRectF *bandRect) const;
+    /// 图表标题条带高度（未设置标题时为 0）。
+    int titleStripHeight() const;
 
     /// 拖动平移一条轴：脱离自适应量程、按边界钳制并触发重绘。
     void panAxis(AuPlotAxis *axis, double dataDelta);
     /// 以 anchor（数据值）为中心缩放一条轴：脱离自适应量程、钳制并触发重绘。
     void zoomAxis(AuPlotAxis *axis, qreal factor, double anchor);
+    /// 把框选矩形（控件像素）应用为各可见轴的新可见范围。
+    void applyRubberBandZoom(const QRect &rect);
 
     AuPlotAxis *m_xAxis = nullptr;
     AuPlotAxis *m_yAxis = nullptr;
@@ -213,6 +294,22 @@ private:
     QVector<QPair<AuPlotCurve *, int>> m_trackerHits;
     QPoint m_trackerPos;                    ///< 追踪 tooltip 锚定的鼠标位置
     QPoint m_crosshairPos;                  ///< 十字线位置（控件局部坐标）
+
+    // 标题 / 图例
+    QString m_title;
+    AuPlotLegend *m_legend = nullptr;
+    QVector<LegendEntry> m_legendEntries;   ///< 最近一次绘制记录的图例条目命中区
+
+    // 框选缩放
+    bool m_rubberBandZoomEnabled = false;
+    Qt::KeyboardModifiers m_rubberBandModifiers = Qt::ControlModifier;
+    bool m_rubberBandActive = false;        ///< 正在拖出框选矩形
+    QPoint m_rubberBandOrigin;              ///< 框选起点（控件局部坐标）
+    QRect m_rubberBandRect;                 ///< 当前框选矩形（钳制在绘图区内）
+
+    // 双击恢复 / 导出
+    bool m_doubleClickResetEnabled = true;
+    mutable bool m_exportTransparent = false;   ///< toImage 期间跳过背景填充
 };
 
 #endif // AUPLOT_H

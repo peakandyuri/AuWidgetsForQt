@@ -166,6 +166,20 @@ void AuPlotItem::setVisible(bool on)
         return;
     m_visible = on;
     if (m_plot)
+        m_plot->handleItemVisibility(this, on);
+}
+
+QString AuPlotItem::name() const
+{
+    return m_name;
+}
+
+void AuPlotItem::setName(const QString &name)
+{
+    if (m_name == name)
+        return;
+    m_name = name;
+    if (m_plot)
         m_plot->update();
 }
 
@@ -206,6 +220,12 @@ QRectF AuPlotItem::dataBounds() const
         m_boundsValid = true;
     }
     return m_bounds;
+}
+
+void AuPlotItem::drawLegendIcon(QPainter *painter, const QRectF &iconRect)
+{
+    Q_UNUSED(painter);
+    Q_UNUSED(iconRect);
 }
 
 void AuPlotItem::invalidateBounds()

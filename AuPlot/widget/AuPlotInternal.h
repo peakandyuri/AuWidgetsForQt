@@ -11,8 +11,15 @@
 #include <QPainter>
 #include <QPointF>
 #include <QVector>
+#include <cmath>
 
 namespace AuPlotInternal {
+
+/// 数据点坐标是否有效（NaN / Inf 视为无效：绘制时断开线段，量程统计时跳过）。
+inline bool isFinitePoint(const QPointF &pt)
+{
+    return std::isfinite(pt.x()) && std::isfinite(pt.y());
+}
 
 /// 在 pos 处绘制一个 pointStyle 标记（size 为直径 / 边长，px）。
 /// 实心类样式填充 color；空心类以 color 描边；Cross / XCross / RingedCross 画线。

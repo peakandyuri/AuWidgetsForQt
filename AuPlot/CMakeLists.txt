@@ -3,6 +3,7 @@ add_library(AuPlot SHARED
     widget/AuPlotAxis.cpp
     widget/AuPlotCurve.cpp
     widget/AuPlotItem.cpp
+    widget/AuPlotLegend.cpp
     widget/AuPlotPrimitive.cpp
     widget/AuPlotStyle.cpp
     include/AuPlot_global.h
@@ -10,6 +11,7 @@ add_library(AuPlot SHARED
     include/AuPlotAxis.h
     include/AuPlotCurve.h
     include/AuPlotItem.h
+    include/AuPlotLegend.h
     include/AuPlotPrimitive.h
     include/AuPlotStyle.h
     include/AuPlotTypes.h

@@ -74,6 +74,45 @@ public:
     qreal gridWidth() const;
     void setGridWidth(qreal width);
 
+    // ---- 图表标题 / 轴标题 ----
+    /// 图表标题颜色（AuPlot::setTitle）；无效（默认）时跟随刻度值颜色。
+    QColor titleColor() const;
+    void setTitleColor(const QColor &color);
+    /// 图表标题字体（默认应用字体加粗）。
+    QFont titleFont() const;
+    void setTitleFont(const QFont &font);
+    /// 轴标题颜色（AuPlotAxis::setTitle）；无效（默认）时跟随刻度值颜色。
+    QColor axisTitleColor() const;
+    void setAxisTitleColor(const QColor &color);
+    /// 轴标题字体（默认应用字体）。
+    QFont axisTitleFont() const;
+    void setAxisTitleFont(const QFont &font);
+
+    // ---- 图例 ----
+    /// 图例文字颜色；无效（默认）时跟随刻度值颜色。
+    QColor legendTextColor() const;
+    void setLegendTextColor(const QColor &color);
+    /// 已隐藏图元的图例文字颜色（置灰提示可点击恢复）。
+    QColor legendDimmedTextColor() const;
+    void setLegendDimmedTextColor(const QColor &color);
+    /// 图例背景色（可带透明度）；无效（默认）时不绘制背景。
+    QColor legendBackgroundColor() const;
+    void setLegendBackgroundColor(const QColor &color);
+    /// 图例边框颜色；无效（默认）时不绘制边框。
+    QColor legendBorderColor() const;
+    void setLegendBorderColor(const QColor &color);
+    /// 图例字体（默认应用字体）。
+    QFont legendFont() const;
+    void setLegendFont(const QFont &font);
+
+    // ---- 框选缩放 ----
+    /// 框选矩形填充色（默认蓝色半透明）。
+    QColor selectionRectFillColor() const;
+    void setSelectionRectFillColor(const QColor &color);
+    /// 框选矩形边框色（默认蓝色虚线）。
+    QColor selectionRectBorderColor() const;
+    void setSelectionRectBorderColor(const QColor &color);
+
     // ---- 曲线默认调色板 ----
     /// 新加入的曲线 / 点 / 线未显式设置颜色时按此调色板轮转取色。
     QVector<QColor> curvePalette() const;
@@ -120,6 +159,18 @@ private:
     QFont m_trackerFont;
     QColor m_crosshairColor;
     Qt::PenStyle m_crosshairStyle = Qt::DotLine;
+
+    QColor m_titleColor;                ///< 无效 → 刻度值颜色
+    QFont m_titleFont;                  ///< 默认应用字体加粗
+    QColor m_axisTitleColor;            ///< 无效 → 刻度值颜色
+    QFont m_axisTitleFont;              ///< 默认应用字体
+    QColor m_legendTextColor;           ///< 无效 → 刻度值颜色
+    QColor m_legendDimmedTextColor;
+    QColor m_legendBackgroundColor;
+    QColor m_legendBorderColor;
+    QFont m_legendFont;                 ///< 默认应用字体
+    QColor m_selectionRectFillColor;
+    QColor m_selectionRectBorderColor;
 };
 
 #endif // AUPLOT_STYLE_H

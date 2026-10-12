@@ -22,6 +22,7 @@ SOURCES += \
     widget/AuPlotAxis.cpp \
     widget/AuPlotCurve.cpp \
     widget/AuPlotItem.cpp \
+    widget/AuPlotLegend.cpp \
     widget/AuPlotPrimitive.cpp \
     widget/AuPlotStyle.cpp
 
@@ -31,6 +32,7 @@ HEADERS += \
     include/AuPlotAxis.h \
     include/AuPlotCurve.h \
     include/AuPlotItem.h \
+    include/AuPlotLegend.h \
     include/AuPlotPrimitive.h \
     include/AuPlotStyle.h \
     include/AuPlotTypes.h \

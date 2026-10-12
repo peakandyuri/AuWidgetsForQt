@@ -29,6 +29,9 @@ class AuPlot;
  * 时按像素列做 min/max 抽稀（每列保留首、最小、最大、末 4 个点），百万级数据
  * 依旧流畅，且极值峰谷形状不丢。
  *
+ * 无效数据：坐标为 NaN / Inf 的点视为断点——线与填充在该点断开（传感器断采
+ * 常见），点标记跳过；包围盒 / 自适应量程统计自动忽略无效点。
+ *
  * 实时追加：addPoint() 为 O(1)（均摊），数据包围盒增量维护，追加后无需全量
  * 重扫（配合固定量程轴可支撑 15ms/拍 级别的滚动绘制）；removeFirstPoints()
  * 用于滚动窗口裁剪头部旧数据。
@@ -99,6 +102,7 @@ protected:
     friend class AuPlot;
     void paint(QPainter *painter, const AuPlot *plot) override;
     QRectF computeBounds() const override;
+    void drawLegendIcon(QPainter *painter, const QRectF &iconRect) override;
 
 private:
     QVector<QPointF> m_points;

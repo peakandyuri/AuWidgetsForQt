@@ -5,6 +5,7 @@
 #include "AuPlotPrimitive.h"
 
 #include <QFontMetrics>
+#include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
@@ -18,6 +19,18 @@ namespace {
 bool closeEnough(double a, double b)
 {
     return std::fabs(a - b) <= 1e-9 * qMax(1.0, qMax(std::fabs(a), std::fabs(b)));
+}
+
+/// 图例文字生效颜色（无效 → 刻度值颜色）。
+QColor effectiveLegendTextColor(const AuPlotStyle *st)
+{
+    return st->legendTextColor().isValid() ? st->legendTextColor() : st->tickLabelColor();
+}
+
+/// 轴标题生效颜色（无效 → 刻度值颜色）。
+QColor effectiveAxisTitleColor(const AuPlotStyle *st)
+{
+    return st->axisTitleColor().isValid() ? st->axisTitleColor() : st->tickLabelColor();
 }
 
 } // namespace
@@ -46,11 +59,14 @@ AuPlot::AuPlot(QWidget *parent)
     m_yAxis2->setGridVisible(false);
 
     m_defaultStyle = new AuPlotStyle;
+    m_legend = new AuPlotLegend;
+    m_legend->attachPlot(this);
 }
 
 AuPlot::~AuPlot()
 {
     qDeleteAll(m_items);
+    delete m_legend;
     delete m_customStyle;
     delete m_defaultStyle;
 }
@@ -140,6 +156,10 @@ void AuPlot::removeItem(AuPlotItem *item)
     }
     if (m_trackerHits.isEmpty())
         m_trackerValid = false;
+    for (int i = m_legendEntries.size() - 1; i >= 0; --i) { // 图例命中区同理
+        if (m_legendEntries.at(i).item == item)
+            m_legendEntries.removeAt(i);
+    }
     delete item;
     update();
 }
@@ -154,6 +174,7 @@ void AuPlot::clearItems()
     m_items.clear();
     m_trackerHits.clear();
     m_trackerValid = false;
+    m_legendEntries.clear();
     update();
 }
 
@@ -398,6 +419,131 @@ void AuPlot::replot()
     update();
 }
 
+// ============================================================
+// 标题 / 图例
+// ============================================================
+
+QString AuPlot::title() const
+{
+    return m_title;
+}
+
+void AuPlot::setTitle(const QString &title)
+{
+    if (m_title == title)
+        return;
+    m_title = title;
+    update();
+}
+
+AuPlotLegend *AuPlot::legend() const
+{
+    return m_legend;
+}
+
+bool AuPlot::legendVisible() const
+{
+    return m_legend->isVisible();
+}
+
+void AuPlot::setLegendVisible(bool on)
+{
+    if (m_legend->isVisible() == on)
+        return;
+    m_legend->setVisible(on);
+    update();
+}
+
+void AuPlot::handleItemVisibility(AuPlotItem *item, bool visible)
+{
+    // 该图元的追踪吸附立即失效（隐藏后标记 / 数值行不能再显示）
+    for (int i = m_trackerHits.size() - 1; i >= 0; --i) {
+        if (m_trackerHits.at(i).first == item)
+            m_trackerHits.removeAt(i);
+    }
+    if (m_trackerHits.isEmpty())
+        m_trackerValid = false;
+    emit itemVisibilityChanged(item, visible);
+    update();
+}
+
+// ============================================================
+// 框选缩放 / 视图恢复 / 导出
+// ============================================================
+
+bool AuPlot::rubberBandZoomEnabled() const
+{
+    return m_rubberBandZoomEnabled;
+}
+
+void AuPlot::setRubberBandZoomEnabled(bool on)
+{
+    if (m_rubberBandZoomEnabled == on)
+        return;
+    m_rubberBandZoomEnabled = on;
+    if (!on && m_rubberBandActive) {
+        m_rubberBandActive = false;
+        m_rubberBandRect = QRect();
+        update();
+    }
+}
+
+Qt::KeyboardModifiers AuPlot::rubberBandModifiers() const
+{
+    return m_rubberBandModifiers;
+}
+
+void AuPlot::setRubberBandModifiers(Qt::KeyboardModifiers modifiers)
+{
+    m_rubberBandModifiers = modifiers;
+}
+
+void AuPlot::resetAxes()
+{
+    for (const AuPlotAxisPos pos : { AuPlotAxisPos::X1, AuPlotAxisPos::X2,
+                                     AuPlotAxisPos::Y1, AuPlotAxisPos::Y2 })
+        axisAt(pos)->setAutoRange(true);
+    // 同步重算自适应量程：调用后立刻读取轴范围即为新值（否则要等下一帧绘制）
+    fitAutoRanges();
+    update();
+}
+
+bool AuPlot::doubleClickResetEnabled() const
+{
+    return m_doubleClickResetEnabled;
+}
+
+void AuPlot::setDoubleClickResetEnabled(bool on)
+{
+    m_doubleClickResetEnabled = on;
+}
+
+QImage AuPlot::toImage(const QSize &size, qreal devicePixelRatio,
+                       bool transparentBackground) const
+{
+    AuPlot *self = const_cast<AuPlot *>(this);
+    const QSize target = size.isValid() && !size.isEmpty() ? size : self->size();
+
+    const QSize oldSize = self->size();
+    const bool needResize = target != oldSize;
+    if (needResize)
+        self->resize(target);   // 导出按目标尺寸重排（隐藏控件也适用）
+
+    const qreal ratio = devicePixelRatio > 0.0 ? devicePixelRatio : 1.0;
+    QImage image(target * ratio, QImage::Format_ARGB32_Premultiplied);
+    image.setDevicePixelRatio(ratio);
+    image.fill(transparentBackground ? Qt::transparent : Qt::white);
+
+    const bool oldTransparent = m_exportTransparent;
+    m_exportTransparent = transparentBackground;
+    self->render(&image, QPoint(), QRegion(), QWidget::DrawChildren);
+    m_exportTransparent = oldTransparent;
+
+    if (needResize)
+        self->resize(oldSize);
+    return image;
+}
+
 void AuPlot::panAxis(AuPlotAxis *axis, double dataDelta)
 {
     if (dataDelta == 0.0)
@@ -423,12 +569,89 @@ void AuPlot::zoomAxis(AuPlotAxis *axis, qreal factor, double anchor)
     update();
 }
 
+void AuPlot::applyRubberBandZoom(const QRect &rect)
+{
+    // 某个方向上的选区太小（< 4px）时该方向不缩放，避免把量程缩成噪声
+    if ((m_zoomDirections & Qt::Horizontal) && rect.width() >= 4) {
+        for (AuPlotAxis *ax : { m_xAxis, m_xAxis2 }) {
+            if (!ax->isVisible())
+                continue;
+            const AuPlotAxisPos pos = ax == m_xAxis2 ? AuPlotAxisPos::X2 : AuPlotAxisPos::X1;
+            double mn = pixelToX(rect.left(), pos);
+            double mx = pixelToX(rect.right(), pos);
+            if (!(mx > mn))
+                continue;
+            ax->m_autoRange = false;
+            ax->clampToBounds(mn, mx);
+            if (mx > mn)
+                ax->setCurrentRange(mn, mx);
+        }
+    }
+    if ((m_zoomDirections & Qt::Vertical) && rect.height() >= 4) {
+        for (AuPlotAxis *ay : { m_yAxis, m_yAxis2 }) {
+            if (!ay->isVisible())
+                continue;
+            const AuPlotAxisPos pos = ay == m_yAxis2 ? AuPlotAxisPos::Y2 : AuPlotAxisPos::Y1;
+            double mn = pixelToY(rect.bottom(), pos);
+            double mx = pixelToY(rect.top(), pos);
+            if (!(mx > mn))
+                continue;
+            ay->m_autoRange = false;
+            ay->clampToBounds(mn, mx);
+            if (mx > mn)
+                ay->setCurrentRange(mn, mx);
+        }
+    }
+}
+
 void AuPlot::mousePressEvent(QMouseEvent *event)
 {
+    const QPoint pos = event->pos();
+
+    // 框选缩放：修饰键匹配 + 左键按下即开始（优先于拖动平移）
+    if (event->button() == Qt::LeftButton && m_rubberBandZoomEnabled
+        && (event->modifiers() & m_rubberBandModifiers) == m_rubberBandModifiers
+        && m_plotRect.contains(pos)) {
+        m_rubberBandActive = true;
+        m_rubberBandOrigin = pos;
+        m_rubberBandRect = QRect();
+        // 框选期间隐藏十字线 / 追踪器，避免与选框叠在一起
+        if (m_trackerValid || m_crosshairValid || !m_trackerHits.isEmpty()) {
+            m_trackerValid = false;
+            m_crosshairValid = false;
+            m_trackerHits.clear();
+        }
+        event->accept();
+        return;
+    }
+
+    // 右键取消正在拖出的框选
+    if (m_rubberBandActive && event->button() == Qt::RightButton) {
+        m_rubberBandActive = false;
+        m_rubberBandRect = QRect();
+        update();
+        event->accept();
+        return;
+    }
+
+    // 图例条目点击：发信号，默认同时切换对应图元可见性（隐藏条目置灰保留，
+    // 可再次点击恢复；可见性变化会自动触发重绘与 itemVisibilityChanged）
+    if (event->button() == Qt::LeftButton && m_legend->isVisible()) {
+        for (const LegendEntry &entry : m_legendEntries) {
+            if (entry.item && entry.rect.contains(pos)) {
+                emit legendEntryClicked(entry.item);
+                if (m_legend->clickToToggleEnabled())
+                    entry.item->setVisible(!entry.item->isVisible());
+                event->accept();
+                return;
+            }
+        }
+    }
+
     if (m_dragEnabled && event->button() == Qt::LeftButton
-        && m_dragDirections != 0 && m_plotRect.contains(event->pos())) {
+        && m_dragDirections != 0 && m_plotRect.contains(pos)) {
         m_dragging = true;
-        m_lastMousePos = event->pos();
+        m_lastMousePos = pos;
         setCursor(Qt::ClosedHandCursor);
         event->accept();
         return;
@@ -438,6 +661,15 @@ void AuPlot::mousePressEvent(QMouseEvent *event)
 
 void AuPlot::mouseMoveEvent(QMouseEvent *event)
 {
+    if (m_rubberBandActive) {
+        m_rubberBandRect = QRect(m_rubberBandOrigin, event->pos())
+                               .normalized()
+                               .intersected(m_plotRect.toRect());
+        update();
+        event->accept();
+        return;
+    }
+
     if (m_dragging) {
         const QPoint pos = event->pos();
         const int dx = pos.x() - m_lastMousePos.x();
@@ -472,8 +704,20 @@ void AuPlot::mouseMoveEvent(QMouseEvent *event)
 
     updateTracker(event->pos());
 
+    // 悬停图例条目：手型光标提示可点击
+    bool overLegend = false;
+    if (m_legend->isVisible()) {
+        for (const LegendEntry &entry : m_legendEntries) {
+            if (entry.item && entry.rect.contains(event->pos())) {
+                overLegend = true;
+                break;
+            }
+        }
+    }
+    if (overLegend)
+        setCursor(Qt::PointingHandCursor);
     // 悬停光标提示可拖动
-    if (m_dragEnabled && m_plotRect.contains(event->pos()))
+    else if (m_dragEnabled && m_plotRect.contains(event->pos()))
         setCursor(Qt::OpenHandCursor);
     else
         unsetCursor();
@@ -482,6 +726,15 @@ void AuPlot::mouseMoveEvent(QMouseEvent *event)
 
 void AuPlot::mouseReleaseEvent(QMouseEvent *event)
 {
+    if (m_rubberBandActive && event->button() == Qt::LeftButton) {
+        m_rubberBandActive = false;
+        const QRect rect = m_rubberBandRect;
+        m_rubberBandRect = QRect();
+        applyRubberBandZoom(rect);
+        update();
+        event->accept();
+        return;
+    }
     if (m_dragging) {
         m_dragging = false;
         unsetCursor();
@@ -491,10 +744,39 @@ void AuPlot::mouseReleaseEvent(QMouseEvent *event)
     QWidget::mouseReleaseEvent(event);
 }
 
+void AuPlot::mouseDoubleClickEvent(QMouseEvent *event)
+{
+    if (m_doubleClickResetEnabled && event->button() == Qt::LeftButton
+        && m_plotRect.contains(event->pos())) {
+        resetAxes();
+        event->accept();
+        return;
+    }
+    QWidget::mouseDoubleClickEvent(event);
+}
+
+void AuPlot::keyPressEvent(QKeyEvent *event)
+{
+    // Esc 取消正在拖出的框选
+    if (event->key() == Qt::Key_Escape && m_rubberBandActive) {
+        m_rubberBandActive = false;
+        m_rubberBandRect = QRect();
+        update();
+        event->accept();
+        return;
+    }
+    QWidget::keyPressEvent(event);
+}
+
 void AuPlot::leaveEvent(QEvent *event)
 {
     if (!m_dragging)
         unsetCursor();
+    if (m_rubberBandActive) {
+        m_rubberBandActive = false;
+        m_rubberBandRect = QRect();
+        update();
+    }
     if (m_trackerValid || m_crosshairValid || !m_trackerHits.isEmpty()) {
         m_trackerValid = false;
         m_crosshairValid = false;
@@ -659,10 +941,20 @@ void AuPlot::fitAutoRanges()
     }
 }
 
+int AuPlot::titleStripHeight() const
+{
+    if (m_title.isEmpty())
+        return 0;
+    const AuPlotStyle *st = effectiveStyle();
+    const QFontMetrics fm(st->titleFont());
+    return fm.height() + 6;
+}
+
 QRectF AuPlot::calculatePlotRect() const
 {
     const AuPlotStyle *st = effectiveStyle();
     const QFontMetrics fm(st->tickLabelFont());
+    const QFontMetrics titleFm(st->axisTitleFont());
 
     // 边距需要在知道绘图区像素长度前确定：用估算长度生成刻度取最大刻度值宽度
     const int estimateYLength = qMax(50, height() - 60);
@@ -678,6 +970,8 @@ QRectF AuPlot::calculatePlotRect() const
                 maxWidth = qMax(maxWidth, fm.horizontalAdvance(ax->formatTickLabel(value)));
             margin += maxWidth + 4;
         }
+        if (!ax->title().isEmpty())
+            margin += titleFm.height() + 4;   // 轴标题（旋转 90°，占一个字高）
         return margin;
     };
     auto xAxisMargin = [&](const AuPlotAxis *ax) -> int {
@@ -686,13 +980,28 @@ QRectF AuPlot::calculatePlotRect() const
         int margin = st->tickLength() + 4;
         if (ax->tickLabelsVisible())
             margin += fm.height() + 3;
+        if (!ax->title().isEmpty())
+            margin += titleFm.height() + 4;
         return margin;
     };
 
-    const int left = yAxisMargin(m_yAxis);
-    const int right = yAxisMargin(m_yAxis2);
-    const int top = xAxisMargin(m_xAxis2);
-    const int bottom = xAxisMargin(m_xAxis);
+    int left = yAxisMargin(m_yAxis);
+    int right = yAxisMargin(m_yAxis2);
+    int top = xAxisMargin(m_xAxis2) + titleStripHeight();   // 图表标题在最外层
+    int bottom = xAxisMargin(m_xAxis);
+
+    // 图例条带（Top / Bottom / Left / Right 预留边距；悬浮模式不占边距）
+    QVector<LegendEntry> entries;
+    QRectF band;
+    if (layoutLegend(&entries, &band)) {
+        switch (m_legend->position()) {
+        case AuPlotLegendPos::Top:    top += int(band.height()); break;
+        case AuPlotLegendPos::Bottom: bottom += int(band.height()); break;
+        case AuPlotLegendPos::Left:   left += int(band.width()); break;
+        case AuPlotLegendPos::Right:  right += int(band.width()); break;
+        default: break;
+        }
+    }
 
     return QRectF(left, top,
                   qMax<qreal>(10.0, width() - left - right),
@@ -710,7 +1019,7 @@ void AuPlot::paintEvent(QPaintEvent *event)
     painter.setRenderHint(QPainter::Antialiasing, true);
 
     AuPlotStyle *st = effectiveStyle();
-    if (st->backgroundColor().isValid())
+    if (st->backgroundColor().isValid() && !m_exportTransparent)
         painter.fillRect(rect(), st->backgroundColor());
 
     fitAutoRanges();
@@ -732,9 +1041,23 @@ void AuPlot::paintEvent(QPaintEvent *event)
 
     drawAxes(&painter, rect, st);
 
-    // 覆盖层：十字线 / 追踪器（最上层，不参与 zLevel 排序）
+    // 覆盖层：标题 / 图例 / 框选 / 十字线 / 追踪器（最上层，不参与 zLevel 排序）
+    drawRubberBand(&painter);
+    drawTitle(&painter, st);
+    drawLegend(&painter, st);
     drawCrosshair(&painter);
     drawTracker(&painter);
+}
+
+void AuPlot::drawTitle(QPainter *painter, const AuPlotStyle *st)
+{
+    if (m_title.isEmpty())
+        return;
+    const QFont font = st->titleFont();
+    painter->setFont(font);
+    painter->setPen(st->titleColor().isValid() ? st->titleColor() : st->tickLabelColor());
+    painter->drawText(QRectF(0, 0, width(), titleStripHeight()),
+                      Qt::AlignHCenter | Qt::AlignVCenter, m_title);
 }
 
 void AuPlot::drawGrid(QPainter *painter, const QRectF &rect, const AuPlotStyle *st)
@@ -901,6 +1224,232 @@ void AuPlot::drawTracker(QPainter *painter)
     }
 }
 
+bool AuPlot::layoutLegend(QVector<LegendEntry> *entries, QRectF *bandRect) const
+{
+    entries->clear();
+    *bandRect = QRectF();
+    if (!m_legend->isVisible())
+        return false;
+
+    for (AuPlotItem *item : m_items) {
+        if (!item->name().isEmpty())
+            entries->append(LegendEntry{ item, QRectF() });
+    }
+    if (entries->isEmpty())
+        return false;
+
+    const AuPlotStyle *st = effectiveStyle();
+    const QFontMetrics fm(st->legendFont());
+    const qreal icon = m_legend->iconSize();
+    const qreal entryHeight = qMax<qreal>(fm.height(), icon) + 4.0;
+    const qreal rowGap = 2.0;
+    const qreal pad = 8.0;
+    const qreal spacing = 14.0;
+    const int maxRows = m_legend->maxRows();
+    const AuPlotLegendPos pos = m_legend->position();
+    auto entryWidth = [&](const LegendEntry &e) {
+        return icon + 5.0 + fm.horizontalAdvance(e.item->name());
+    };
+
+    if (pos == AuPlotLegendPos::Top || pos == AuPlotLegendPos::Bottom) {
+        // 横向流式：一行放不下自动换行；maxRows 限制行数，超出的条目省略
+        qreal x = pad;
+        qreal y = pad;
+        int row = 0;
+        int count = 0;
+        for (LegendEntry &e : *entries) {
+            const qreal w = entryWidth(e);
+            if (x > pad && x + w > width() - pad) {
+                ++row;
+                if (maxRows > 0 && row >= maxRows)
+                    break;
+                x = pad;
+                y += entryHeight + rowGap;
+            }
+            e.rect = QRectF(x, y, w, entryHeight);
+            x += w + spacing;
+            ++count;
+        }
+        entries->resize(count);
+        if (entries->isEmpty())
+            return false;
+        const qreal bandHeight = y + entryHeight + pad;
+        // 条目布局时以 0 为顶，需整体平移进条带（Top 在标题条之下、Bottom 贴底）
+        if (pos == AuPlotLegendPos::Top)
+            *bandRect = QRectF(0, titleStripHeight(), width(), bandHeight);
+        else
+            *bandRect = QRectF(0, height() - bandHeight, width(), bandHeight);
+        for (LegendEntry &e : *entries)
+            e.rect.translate(0, bandRect->top());
+        return true;
+    }
+
+    if (pos == AuPlotLegendPos::Left || pos == AuPlotLegendPos::Right) {
+        // 纵向流式：超出控件高度自动分列；maxRows 限制列数，超出的条目省略
+        QVector<int> entryCol(entries->size());
+        QVector<qreal> entryY(entries->size());
+        QVector<qreal> colWidths;
+        qreal y = pad;
+        qreal colMax = 0.0;
+        int col = 0;
+        int count = 0;
+        for (int i = 0; i < entries->size(); ++i) {
+            const qreal w = entryWidth(entries->at(i));
+            if (y > pad && y + entryHeight > height() - pad) {
+                colWidths.append(colMax);
+                ++col;
+                if (maxRows > 0 && col >= maxRows)
+                    break;
+                y = pad;
+                colMax = 0.0;
+            }
+            entryCol[i] = col;
+            entryY[i] = y;
+            colMax = qMax(colMax, w);
+            y += entryHeight + rowGap;
+            ++count;
+        }
+        colWidths.append(colMax);
+        entries->resize(count);
+        if (entries->isEmpty())
+            return false;
+
+        QVector<qreal> colX(colWidths.size());
+        qreal x = pad;
+        for (int c = 0; c < colWidths.size(); ++c) {
+            colX[c] = x;
+            x += colWidths.at(c) + spacing;
+        }
+        const qreal bandWidth = colX.last() + colWidths.last() + pad;
+        for (int i = 0; i < entries->size(); ++i) {
+            (*entries)[i].rect = QRectF(colX.at(entryCol.at(i)), entryY.at(i),
+                                        entryWidth(entries->at(i)), entryHeight);
+        }
+        if (pos == AuPlotLegendPos::Left) {
+            *bandRect = QRectF(0, 0, bandWidth, height());
+        } else {
+            // Right 条带贴控件右缘：条目整体平移进条带
+            *bandRect = QRectF(width() - bandWidth, 0, bandWidth, height());
+            for (LegendEntry &e : *entries)
+                e.rect.translate(bandRect->left(), 0);
+        }
+        return true;
+    }
+
+    // 悬浮：绘图区角落单列，超出绘图区高度或 maxRows 时省略
+    const qreal inset = 6.0;
+    qreal yOff = pad;
+    qreal maxWidth = 0.0;
+    int count = 0;
+    for (LegendEntry &e : *entries) {
+        if (maxRows > 0 && count >= maxRows)
+            break;
+        if (yOff + entryHeight + pad > m_plotRect.height() - inset)
+            break;
+        e.rect = QRectF(0, yOff, entryWidth(e), entryHeight);
+        maxWidth = qMax(maxWidth, e.rect.width());
+        yOff += entryHeight + rowGap;
+        ++count;
+    }
+    entries->resize(count);
+    if (entries->isEmpty())
+        return false;
+
+    const qreal bandWidth = maxWidth + pad * 2.0;
+    const qreal bandHeight = pad + count * entryHeight + (count - 1) * rowGap + pad;
+    qreal x0 = 0.0;
+    qreal y0 = 0.0;
+    switch (pos) {
+    case AuPlotLegendPos::FloatingTopLeft:
+        x0 = m_plotRect.left() + inset;
+        y0 = m_plotRect.top() + inset;
+        break;
+    case AuPlotLegendPos::FloatingTopRight:
+        x0 = m_plotRect.right() - inset - bandWidth;
+        y0 = m_plotRect.top() + inset;
+        break;
+    case AuPlotLegendPos::FloatingBottomLeft:
+        x0 = m_plotRect.left() + inset;
+        y0 = m_plotRect.bottom() - inset - bandHeight;
+        break;
+    default:   // FloatingBottomRight
+        x0 = m_plotRect.right() - inset - bandWidth;
+        y0 = m_plotRect.bottom() - inset - bandHeight;
+        break;
+    }
+    *bandRect = QRectF(x0, y0, bandWidth, bandHeight);
+    for (LegendEntry &e : *entries)
+        e.rect = QRectF(x0 + pad, y0 + e.rect.top(), e.rect.width(), entryHeight);
+    return true;
+}
+
+void AuPlot::drawLegend(QPainter *painter, const AuPlotStyle *st)
+{
+    QVector<LegendEntry> entries;
+    QRectF band;
+    if (!layoutLegend(&entries, &band)) {
+        m_legendEntries.clear();
+        return;
+    }
+    m_legendEntries = entries;
+
+    const bool floating = m_legend->position() >= AuPlotLegendPos::FloatingTopLeft;
+    if (band.isValid()) {
+        if (st->legendBackgroundColor().isValid()) {
+            painter->setPen(st->legendBorderColor().isValid()
+                                ? QPen(st->legendBorderColor())
+                                : Qt::NoPen);
+            painter->setBrush(st->legendBackgroundColor());
+            if (floating)
+                painter->drawRoundedRect(band, 4, 4);
+            else
+                painter->drawRect(band);
+        } else if (st->legendBorderColor().isValid() && floating) {
+            painter->setPen(QPen(st->legendBorderColor()));
+            painter->setBrush(Qt::NoBrush);
+            painter->drawRoundedRect(band, 4, 4);
+        }
+    }
+
+    const QFont font = st->legendFont();
+    const QFontMetrics fm(font);
+    const qreal icon = m_legend->iconSize();
+    painter->setFont(font);
+
+    for (const LegendEntry &e : entries) {
+        QColor textColor = effectiveLegendTextColor(st);
+        if (!e.item->isVisible() && st->legendDimmedTextColor().isValid())
+            textColor = st->legendDimmedTextColor();
+        const QRectF iconRect(e.rect.left() + 1.0, e.rect.center().y() - icon / 2.0, icon, icon);
+        painter->save();
+        if (!e.item->isVisible())
+            painter->setOpacity(0.35);   // 隐藏图元：图标置灰半透明，可点击恢复
+        e.item->drawLegendIcon(painter, iconRect);
+        painter->restore();
+
+        painter->setPen(textColor);
+        painter->drawText(QPointF(e.rect.left() + icon + 5.0,
+                                  e.rect.center().y() - fm.height() / 2.0 + fm.ascent()),
+                          e.item->name());
+    }
+}
+
+void AuPlot::drawRubberBand(QPainter *painter)
+{
+    if (!m_rubberBandActive || m_rubberBandRect.isNull())
+        return;
+    const AuPlotStyle *st = effectiveStyle();
+    QPen pen(st->selectionRectBorderColor().isValid() ? st->selectionRectBorderColor()
+                                                      : QColor(0x2f, 0x6f, 0xdb),
+             1, Qt::DashLine);
+    painter->save();
+    painter->setPen(pen);
+    painter->setBrush(st->selectionRectFillColor().isValid() ? st->selectionRectFillColor()
+                                                             : Qt::NoBrush);
+    painter->drawRect(m_rubberBandRect);
+    painter->restore();
+}
+
 void AuPlot::updateTracker(const QPoint &pos)
 {
     bool needUpdate = false;
@@ -932,8 +1481,11 @@ void AuPlot::updateTracker(const QPoint &pos)
                     continue;
             }
             const int index = curve->nearestIndexForX(cursorX);
-            if (index >= 0)
-                hits.append(qMakePair(curve, index));
+            if (index < 0)
+                continue;
+            if (!AuPlotInternal::isFinitePoint(curve->pointAt(index)))
+                continue;   // 吸附到 NaN / Inf 断点：该曲线不进追踪（tip 不显示 nan 行）
+            hits.append(qMakePair(curve, index));
         }
     }
 
@@ -1017,6 +1569,23 @@ void AuPlot::drawAxes(QPainter *painter, const QRectF &rect, const AuPlotStyle *
                     painter->setPen(axisPen);
                 }
             }
+
+            // 轴标题（刻度值外侧水平居中）
+            if (!ax->title().isEmpty()) {
+                const QFont tFont = st->axisTitleFont();
+                const QFontMetrics tFm(tFont);
+                const qreal labelSpace = showLabels ? fm.height() + 3.0 : 0.0;
+                const qreal titleW = tFm.horizontalAdvance(ax->title());
+                painter->setFont(tFont);
+                painter->setPen(effectiveAxisTitleColor(st));
+                const qreal centerY = axisY + dir * (tickLen + labelSpace + 4.0
+                                                     + tFm.height() / 2.0);
+                painter->drawText(QPointF(rect.center().x() - titleW / 2.0,
+                                          centerY - tFm.height() / 2.0 + tFm.ascent()),
+                                  ax->title());
+                painter->setFont(st->tickLabelFont());
+                painter->setPen(axisPen);
+            }
         } else {
             // Y 轴：轴线垂直，刻度朝左 / 右延伸
             const qreal axisX = side.topOrRight ? rect.right() : rect.left();
@@ -1051,6 +1620,26 @@ void AuPlot::drawAxes(QPainter *painter, const QRectF &rect, const AuPlotStyle *
                                       text);
                     painter->setPen(axisPen);
                 }
+            }
+
+            // 轴标题（刻度值外侧，旋转 90°：左侧自下而上，右侧自上而下）
+            if (!ax->title().isEmpty()) {
+                const QFont tFont = st->axisTitleFont();
+                const QFontMetrics tFm(tFont);
+                const qreal labelSpace = showLabels ? maxLabelWidth + 4.0 : 0.0;
+                const qreal titleW = tFm.horizontalAdvance(ax->title());
+                painter->save();
+                painter->setFont(tFont);
+                painter->setPen(effectiveAxisTitleColor(st));
+                const qreal centerX = axisX + dir * (tickLen + labelSpace + 4.0
+                                                     + tFm.height() / 2.0);
+                painter->translate(centerX, rect.center().y());
+                painter->rotate(side.topOrRight ? 90.0 : -90.0);
+                painter->drawText(QPointF(-titleW / 2.0, -tFm.height() / 2.0 + tFm.ascent()),
+                                  ax->title());
+                painter->restore();
+                painter->setFont(st->tickLabelFont());
+                painter->setPen(axisPen);
             }
         }
     }

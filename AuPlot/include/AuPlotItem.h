@@ -5,6 +5,7 @@
 #include "AuPlotTypes.h"
 
 #include <QRectF>
+#include <QString>
 
 class QPainter;
 class AuPlot;
@@ -21,6 +22,10 @@ class AuPlot;
  *
  * 坐标：图元数据点一律使用数据坐标（对应绑定的 X / Y 轴的数值范围），绘制时
  * 由 AuPlot 换算为像素；绑定轴默认 X1 + Y1，双轴模式下可绑定 X2 / Y2。
+ *
+ * 图例：setName() 设置显示名后图元自动进入 AuPlot 内置图例（名字为空不进）；
+ * 自定义图元子类覆盖 drawLegendIcon() 即可定义图例图标外观，未覆盖时图标
+ * 为空。可见性变化（含图例点击切换）通过 AuPlot::itemVisibilityChanged() 通知。
  */
 class AUPLOT_EXPORT AuPlotItem
 {
@@ -34,6 +39,10 @@ public:
 
     bool isVisible() const;
     void setVisible(bool on);
+
+    /// 图例显示名；空（默认）表示不进图例。
+    QString name() const;
+    void setName(const QString &name);
 
     /// 数据绑定的 X 轴（默认底部 X1）。
     AuPlotAxisPos xAxis() const;
@@ -55,6 +64,9 @@ protected:
     virtual void paint(QPainter *painter, const AuPlot *plot) = 0;
     /// 计算数据包围盒（子类实现，只管算不管缓存）。
     virtual QRectF computeBounds() const = 0;
+    /// 绘制图例图标（iconRect 为可用矩形）；默认不绘制任何内容，
+    /// 自定义图元子类可覆盖（线型图元建议画一条中线 + 标记采样）。
+    virtual void drawLegendIcon(QPainter *painter, const QRectF &iconRect);
     /// 数据变化后由子类调用：包围盒失效并请求所属 AuPlot 重绘。
     void invalidateBounds();
     /// 所属 AuPlot（未加入前为 nullptr）。
@@ -64,6 +76,7 @@ private:
     AuPlot *m_plot = nullptr;
     int m_zLevel = 0;
     bool m_visible = true;
+    QString m_name;
     AuPlotAxisPos m_xAxis = AuPlotAxisPos::X1;
     AuPlotAxisPos m_yAxis = AuPlotAxisPos::Y1;
     mutable QRectF m_bounds;

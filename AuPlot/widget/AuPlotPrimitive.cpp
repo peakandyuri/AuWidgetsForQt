@@ -5,6 +5,7 @@
 
 #include <QPainter>
 #include <QPainterPath>
+#include <cmath>
 
 // ============================================================
 // AuPlotPoints 独立"点"
@@ -75,18 +76,24 @@ void AuPlotPoints::setPointColor(const QColor &color)
 
 QRectF AuPlotPoints::computeBounds() const
 {
-    if (m_points.isEmpty())
-        return QRectF();
-    double minX = m_points.constFirst().x();
-    double maxX = minX;
-    double minY = m_points.constFirst().y();
-    double maxY = minY;
+    bool boundsValid = false;
+    double minX = 0.0, maxX = 0.0, minY = 0.0, maxY = 0.0;
     for (const QPointF &pt : m_points) {
-        minX = qMin(minX, pt.x());
-        maxX = qMax(maxX, pt.x());
-        minY = qMin(minY, pt.y());
-        maxY = qMax(maxY, pt.y());
+        if (!AuPlotInternal::isFinitePoint(pt))
+            continue;
+        if (!boundsValid) {
+            minX = maxX = pt.x();
+            minY = maxY = pt.y();
+            boundsValid = true;
+        } else {
+            minX = qMin(minX, pt.x());
+            maxX = qMax(maxX, pt.x());
+            minY = qMin(minY, pt.y());
+            maxY = qMax(maxY, pt.y());
+        }
     }
+    if (!boundsValid)
+        return QRectF();
     return QRectF(minX, minY, maxX - minX, maxY - minY);
 }
 
@@ -100,6 +107,8 @@ void AuPlotPoints::paint(QPainter *painter, const AuPlot *plot)
     const double xMaxV = plot->pixelToX(rect.right(), xAxis());
 
     for (const QPointF &pt : m_points) {
+        if (!AuPlotInternal::isFinitePoint(pt))
+            continue;
         if (pt.x() < xMinV || pt.x() > xMaxV)
             continue;
         AuPlotInternal::drawPointMarker(painter,
@@ -107,6 +116,14 @@ void AuPlotPoints::paint(QPainter *painter, const AuPlot *plot)
                                                 plot->yToPixel(pt.y(), yAxis())),
                                         m_pointStyle, m_pointSize, m_pointColor);
     }
+}
+
+void AuPlotPoints::drawLegendIcon(QPainter *painter, const QRectF &iconRect)
+{
+    painter->setRenderHint(QPainter::Antialiasing, true);
+    AuPlotInternal::drawPointMarker(painter, iconRect.center(), m_pointStyle,
+                                    qMin<qreal>(qreal(m_pointSize), iconRect.height() + 2.0),
+                                    m_pointColor);
 }
 
 // ============================================================
@@ -202,18 +219,24 @@ void AuPlotLine::setDashOffset(qreal offset)
 
 QRectF AuPlotLine::computeBounds() const
 {
-    if (m_points.isEmpty())
-        return QRectF();
-    double minX = m_points.constFirst().x();
-    double maxX = minX;
-    double minY = m_points.constFirst().y();
-    double maxY = minY;
+    bool boundsValid = false;
+    double minX = 0.0, maxX = 0.0, minY = 0.0, maxY = 0.0;
     for (const QPointF &pt : m_points) {
-        minX = qMin(minX, pt.x());
-        maxX = qMax(maxX, pt.x());
-        minY = qMin(minY, pt.y());
-        maxY = qMax(maxY, pt.y());
+        if (!AuPlotInternal::isFinitePoint(pt))
+            continue;
+        if (!boundsValid) {
+            minX = maxX = pt.x();
+            minY = maxY = pt.y();
+            boundsValid = true;
+        } else {
+            minX = qMin(minX, pt.x());
+            maxX = qMax(maxX, pt.x());
+            minY = qMin(minY, pt.y());
+            maxY = qMax(maxY, pt.y());
+        }
     }
+    if (!boundsValid)
+        return QRectF();
     return QRectF(minX, minY, maxX - minX, maxY - minY);
 }
 
@@ -222,17 +245,40 @@ void AuPlotLine::paint(QPainter *painter, const AuPlot *plot)
     if (m_points.size() < 2)
         return;
 
+    // NaN / Inf 点断开线段：各连续段单独一条子路径
     QPainterPath path;
-    path.moveTo(plot->xToPixel(m_points.constFirst().x(), xAxis()),
-                plot->yToPixel(m_points.constFirst().y(), yAxis()));
-    for (int i = 1; i < m_points.size(); ++i) {
-        path.lineTo(plot->xToPixel(m_points.at(i).x(), xAxis()),
-                    plot->yToPixel(m_points.at(i).y(), yAxis()));
+    bool hasCurrent = false;
+    for (const QPointF &pt : m_points) {
+        if (!AuPlotInternal::isFinitePoint(pt)) {
+            hasCurrent = false;
+            continue;
+        }
+        const QPointF px(plot->xToPixel(pt.x(), xAxis()),
+                         plot->yToPixel(pt.y(), yAxis()));
+        if (hasCurrent)
+            path.lineTo(px);
+        else {
+            path.moveTo(px);
+            hasCurrent = true;
+        }
     }
+    if (!hasCurrent)
+        return;
+
     painter->setPen(AuPlotInternal::makeLinePen(m_lineColor, QColor(), m_lineWidth,
                                                 m_lineStyle, m_dashPattern, m_dashOffset));
     painter->setBrush(Qt::NoBrush);
     painter->drawPath(path);
+}
+
+void AuPlotLine::drawLegendIcon(QPainter *painter, const QRectF &iconRect)
+{
+    const qreal midY = iconRect.center().y();
+    painter->setRenderHint(QPainter::Antialiasing, true);
+    painter->setPen(AuPlotInternal::makeLinePen(m_lineColor, m_lineColor, m_lineWidth,
+                                                m_lineStyle, m_dashPattern, m_dashOffset));
+    painter->setBrush(Qt::NoBrush);
+    painter->drawLine(QPointF(iconRect.left(), midY), QPointF(iconRect.right(), midY));
 }
 
 // ============================================================
@@ -345,18 +391,24 @@ void AuPlotArea::setBorderDashPattern(const QVector<qreal> &pattern)
 
 QRectF AuPlotArea::computeBounds() const
 {
-    if (m_points.isEmpty())
-        return QRectF();
-    double minX = m_points.constFirst().x();
-    double maxX = minX;
-    double minY = m_points.constFirst().y();
-    double maxY = minY;
+    bool boundsValid = false;
+    double minX = 0.0, maxX = 0.0, minY = 0.0, maxY = 0.0;
     for (const QPointF &pt : m_points) {
-        minX = qMin(minX, pt.x());
-        maxX = qMax(maxX, pt.x());
-        minY = qMin(minY, pt.y());
-        maxY = qMax(maxY, pt.y());
+        if (!AuPlotInternal::isFinitePoint(pt))
+            continue;
+        if (!boundsValid) {
+            minX = maxX = pt.x();
+            minY = maxY = pt.y();
+            boundsValid = true;
+        } else {
+            minX = qMin(minX, pt.x());
+            maxX = qMax(maxX, pt.x());
+            minY = qMin(minY, pt.y());
+            maxY = qMax(maxY, pt.y());
+        }
     }
+    if (!boundsValid)
+        return QRectF();
     return QRectF(minX, minY, maxX - minX, maxY - minY);
 }
 
@@ -365,14 +417,31 @@ void AuPlotArea::paint(QPainter *painter, const AuPlot *plot)
     if (m_points.size() < 2)
         return;
 
+    // NaN / Inf 顶点把多边形切成多个连续段，各段独立闭合填充 / 描边
     QPainterPath path;
-    path.moveTo(plot->xToPixel(m_points.constFirst().x(), xAxis()),
-                plot->yToPixel(m_points.constFirst().y(), yAxis()));
-    for (int i = 1; i < m_points.size(); ++i) {
-        path.lineTo(plot->xToPixel(m_points.at(i).x(), xAxis()),
-                    plot->yToPixel(m_points.at(i).y(), yAxis()));
+    int runStart = -1;   // 当前连续段的起始索引；-1 = 无活动段
+    const int n = m_points.size();
+    auto closeRun = [&](int end) {
+        if (runStart < 0 || end - runStart < 1)
+            return;
+        path.moveTo(plot->xToPixel(m_points.at(runStart).x(), xAxis()),
+                    plot->yToPixel(m_points.at(runStart).y(), yAxis()));
+        for (int i = runStart + 1; i <= end; ++i)
+            path.lineTo(plot->xToPixel(m_points.at(i).x(), xAxis()),
+                        plot->yToPixel(m_points.at(i).y(), yAxis()));
+        path.closeSubpath();   // 自动闭合
+    };
+    for (int i = 0; i < n; ++i) {
+        if (!AuPlotInternal::isFinitePoint(m_points.at(i))) {
+            closeRun(i - 1);
+            runStart = -1;
+        } else if (runStart < 0) {
+            runStart = i;
+        }
     }
-    path.closeSubpath();   // 自动闭合
+    closeRun(n - 1);
+    if (path.isEmpty())
+        return;
 
     if (m_fillColor.isValid() && m_fillColor.alpha() > 0)
         painter->fillPath(path, m_fillColor);
@@ -383,6 +452,23 @@ void AuPlotArea::paint(QPainter *painter, const AuPlot *plot)
                                                     m_borderDashPattern, 0.0));
         painter->setBrush(Qt::NoBrush);
         painter->drawPath(path);
+    }
+}
+
+void AuPlotArea::drawLegendIcon(QPainter *painter, const QRectF &iconRect)
+{
+    painter->setRenderHint(QPainter::Antialiasing, true);
+    if (m_fillColor.isValid() && m_fillColor.alpha() > 0) {
+        painter->setPen(Qt::NoPen);
+        painter->setBrush(m_fillColor);
+        painter->drawRect(iconRect);
+    }
+    if (m_borderVisible) {
+        painter->setPen(AuPlotInternal::makeLinePen(m_borderColor, m_borderColor,
+                                                    1.0, m_borderStyle,
+                                                    m_borderDashPattern, 0.0));
+        painter->setBrush(Qt::NoBrush);
+        painter->drawRect(iconRect);
     }
 }
 
@@ -495,6 +581,8 @@ QRectF AuPlotRefLine::computeBounds() const
 
 void AuPlotRefLine::paint(QPainter *painter, const AuPlot *plot)
 {
+    if (!std::isfinite(m_value))
+        return;
     const QRectF rect = plot->plotRect();
     painter->setPen(AuPlotInternal::makeLinePen(m_lineColor, QColor(), m_lineWidth,
                                                 m_lineStyle, m_dashPattern, m_dashOffset));
@@ -506,4 +594,14 @@ void AuPlotRefLine::paint(QPainter *painter, const AuPlot *plot)
         const qreal x = plot->xToPixel(m_value, xAxis());
         painter->drawLine(QPointF(x, rect.top()), QPointF(x, rect.bottom()));
     }
+}
+
+void AuPlotRefLine::drawLegendIcon(QPainter *painter, const QRectF &iconRect)
+{
+    const qreal midY = iconRect.center().y();
+    painter->setRenderHint(QPainter::Antialiasing, true);
+    painter->setPen(AuPlotInternal::makeLinePen(m_lineColor, m_lineColor, m_lineWidth,
+                                                m_lineStyle, m_dashPattern, m_dashOffset));
+    painter->setBrush(Qt::NoBrush);
+    painter->drawLine(QPointF(iconRect.left(), midY), QPointF(iconRect.right(), midY));
 }

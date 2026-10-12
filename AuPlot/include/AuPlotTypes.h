@@ -18,6 +18,24 @@ enum class AuPlotAxisPos {
 };
 
 /**
+ * @brief 图例位置。
+ *
+ * Top / Bottom / Left / Right：图例作为固定条带放在绘图区外侧，
+ * AuPlot 自动为它预留边距，不遮挡曲线；
+ * Floating 系列浮在绘图区对应角落上方（半透明背景），不占用边距。
+ */
+enum class AuPlotLegendPos {
+    Top,               ///< 绘图区上方（图表标题之下）
+    Bottom,            ///< 绘图区下方
+    Left,              ///< 绘图区左侧
+    Right,             ///< 绘图区右侧
+    FloatingTopLeft,     ///< 悬浮：绘图区左上角
+    FloatingTopRight,    ///< 悬浮：绘图区右上角
+    FloatingBottomLeft,  ///< 悬浮：绘图区左下角
+    FloatingBottomRight  ///< 悬浮：绘图区右下角
+};
+
+/**
  * @brief "点"标记的内置样式。
  *
  * 实心类样式以 color 填充；空心类样式以 color 描边（不填充）；
