@@ -78,6 +78,10 @@ AuPlotStyle *AuPlotStyle::globalStyle()
 
 void AuPlotStyle::setGlobalStyle(AuPlotStyle *style)
 {
+    // 传入当前全局实例时直接返回：先 delete 再存回会留下悬空指针，
+    // 所有绘图路径解引用即崩溃
+    if (s_globalStyle == style)
+        return;
     delete s_globalStyle;
     s_globalStyle = style;
 }

@@ -48,10 +48,13 @@ AuDateRangePanel::AuDateRangePanel(QWidget *parent)
     const QDate next = QDate(today.year(), today.month(), 1).addMonths(1);
     if (next.isValid())
         m_right->showMonth(next.year(), next.month());
+
+    AuDatePickerStyle::registerPanelObserver(this); // 独立内嵌时跟随全局样式更换
 }
 
 AuDateRangePanel::~AuDateRangePanel()
 {
+    AuDatePickerStyle::unregisterPanelObserver(this);
 }
 
 void AuDateRangePanel::setStyle(AuDatePickerStyle *style)
@@ -63,6 +66,11 @@ void AuDateRangePanel::setStyle(AuDatePickerStyle *style)
     m_right->setStyle(style);
     updateGeometry();
     update();
+}
+
+AuDatePickerStyle *AuDateRangePanel::style() const
+{
+    return m_style;
 }
 
 // ---------------------------------------------------------------------------

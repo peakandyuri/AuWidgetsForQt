@@ -331,6 +331,7 @@ void Launcher::finishDelayedCapture(const SnipOverlay::PendingCrop &pending)
     // 倒计时结束重抓实时画面，按先前锁定的选区裁剪（光标取此刻位置）
     const ScreenGrab grab = Capturer::grab(pending.screen, AppSettings::captureCursor());
     if (!grab.valid || grab.screenImage.isNull()) {
+        m_capturing = false; // 与 doGrab 失败路径一致，否则此后截图入口全部静默失效
         QMessageBox::warning(this, QStringLiteral("AuSnipping"), tr("抓取屏幕失败。"));
         if (m_quitAfter)
             qApp->quit();

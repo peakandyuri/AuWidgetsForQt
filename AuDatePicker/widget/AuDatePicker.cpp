@@ -493,6 +493,11 @@ void AuDatePicker::setSelectionMode(SelectionMode mode)
 {
     if (m_selectionMode == mode)
         return;
+    // 弹层打开时切换粒度：直接收起，下次弹出按新模式重建内容。
+    // 若沿用已显示的旧内容，点击会进入新模式分支，命中尚未创建的
+    // m_rangeContent / m_dayContent 空指针
+    if (isPopupVisible())
+        hidePopup();
     // 离开范围模式时清除自动设置的范围占位文本
     if (m_selectionMode == SelectDateRange && m_rangePlaceholderAuto) {
         m_lineEdit->setPlaceholderText(QString());
@@ -969,6 +974,12 @@ void AuDatePicker::ensurePopupContent()
                     m_hoverDate = date;
                     updateRangePreview();
                 });
+        // 内容切换会 deleteLater 旧内容部件：footer 若已被旧内容接管，先摘回，
+        // 避免随旧内容一起销毁（showPopup 随后经 pushFooterConfig 重新接管）
+        if (m_footerWidget && m_footerWidget->parentWidget() != this) {
+            m_footerWidget->setParent(this);
+            m_footerWidget->hide();
+        }
         m_panel->setContentWidget(m_rangeContent); // 旧内容（单日历）由面板销毁
         m_content = m_rangeContent.data();
     } else {
@@ -981,7 +992,7 @@ void AuDatePicker::ensurePopupContent()
                 &AuDatePicker::handlePanelTimeSelected);
         connect(m_dayContent, &AuDatePickerPanel::confirmClicked, this,
                 &AuDatePicker::handleConfirmClicked);
-        m_panel->setContentWidget(m_dayContent);
+        m_panel->setContentWidget(m_dayContent); // 旧内容（范围面板）不持有 footer
         m_content = m_dayContent.data();
     }
     applyStyleToWidgets();
@@ -990,6 +1001,8 @@ void AuDatePicker::ensurePopupContent()
 void AuDatePicker::handlePanelDateSelected(const QDate &date)
 {
     if (m_selectionMode == SelectDateRange) {
+        if (!m_rangeContent)
+            return; // 弹层内容仍为旧模式（正常流程已收起，防御异常路径）
         if (!m_picking) {
             // 第一次选择：起点（终点待选，起点前后日期均可选）
             m_picking = true;
@@ -1016,6 +1029,8 @@ void AuDatePicker::handlePanelDateSelected(const QDate &date)
     if (hasTimePart()) {
         // 含时间部分：点击日期（含 footer 快捷项）只更新待选值并实时预览，
         // 由确定按钮 / 回车提交（时间不能一次点击完成选择）
+        if (!m_dayContent)
+            return; // 弹层内容仍为旧模式（正常流程已收起，防御异常路径）
         m_pendingDate = date;
         if (!m_pendingTime.isValid())
             m_pendingTime = initialPendingTime();

@@ -459,7 +459,9 @@ void AuPlotAxis::generateTicks(qreal pixelLength) const
 
     // 小刻度：相邻大刻度之间均分 m_minorCount 个（不含大刻度本身）
     const int minorCount = m_minorCount;
-    if (minorCount <= 0 || m_majorTicks.size() < 2)
+    // step 可能为 0（非规格化范围下 niceStep 下溢）：minorStep 为 0 时
+    // 下面的循环 value 永不推进，会无限 prepend 卡死界面
+    if (minorCount <= 0 || m_majorTicks.size() < 2 || !(step > 0.0))
         return;
     const double minorStep = step / (minorCount + 1);
     // 首个大刻度之前（到范围下限）与最后一个大刻度之后（到范围上限）也补齐

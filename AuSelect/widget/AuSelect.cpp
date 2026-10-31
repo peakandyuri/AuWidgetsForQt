@@ -146,9 +146,11 @@ AuSelect::AuSelect(QWidget *parent)
 
     connect(m_lineEdit, &QLineEdit::textEdited, this, [this](const QString &text) {
         emit textEdited(text);
-        applyFilter(text);
+        // 先展开面板再应用过滤：showPopup 会复位过滤条件，顺序颠倒时
+        // 弹窗关闭状态下输入的首个字符会被立即清掉
         if (!isPopupVisible() && isEnabled() && count() > 0)
             showPopup();
+        applyFilter(text);
     });
 
     m_arrowWidget = new AuSelectDefaultArrow(this);
@@ -239,6 +241,11 @@ void AuSelect::clear()
     m_model->clear();
     m_activeGroupId = -1;
     m_currentIndex = -1;
+    // 与 removeItem / clearSelection 一致：复位高亮、编辑框文本与过滤条件，
+    // 否则编辑框残留上一选中项文本（多选下残留文本还是活过滤条件）
+    syncCurrentRowToModel();
+    updateEditorText(QString());
+    applyFilter(QString());
     relayoutEditor();
     emit currentIndexChanged(-1);
     emit currentTextChanged(QString());
@@ -550,15 +557,18 @@ void AuSelect::setItemDelegate(AuSelectItemDelegate *delegate)
 {
     if (m_delegate == delegate)
         return;
+    // nullptr 语义为“恢复默认代理”：立即创建默认实例，保证 m_delegate
+    // 永不为空（showPopup 等处直接解引用），也避免旧代理已 deleteLater
+    // 而列表视图仍持有它的悬空窗口
+    if (!delegate)
+        delegate = new AuSelectItemDelegate(style(), this);
     AuSelectItemDelegate *oldDelegate = m_delegate;
     m_delegate = delegate;
-    if (m_delegate) {
-        m_delegate->setParent(this);
-        m_delegate->setStyle(style());
-        m_delegate->setMultiSelection(m_multiSelection);
-        if (m_listView)
-            m_listView->setItemDelegate(m_delegate);
-    }
+    m_delegate->setParent(this);
+    m_delegate->setStyle(style());
+    m_delegate->setMultiSelection(m_multiSelection);
+    if (m_listView)
+        m_listView->setItemDelegate(m_delegate);
     if (oldDelegate)
         oldDelegate->deleteLater();
 }

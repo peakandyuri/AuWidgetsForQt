@@ -46,16 +46,7 @@ bool AuGridWidget::editCell(int row, int column, const QString &initialText)
     if (m_activeEditor)
         closeEditor(false);
 
-    const AuColumnDef def = m_model->columnDefAt(column);
-    QSharedPointer<AuCellEditor> editor = m_defaultCellEditor;
-    const QString editorName = def.cellEditor();
-    if (!editorName.isEmpty()) {
-        auto it = m_cellEditors.find(editorName);
-        if (it != m_cellEditors.end())
-            editor = it.value();
-    } else if (def.textWrapMode() == AuColumnDef::TextWrapMode::WordWrap) {
-        editor = m_defaultMultiLineCellEditor;
-    }
+    QSharedPointer<AuCellEditor> editor = editorImplForColumn(column);
 
     QWidget *editorWidget = editor->createEditor(this);
     if (!editorWidget)
@@ -189,7 +180,12 @@ bool AuGridWidget::tryFinishCurrentEdit(bool focusOut)
 
     const int row = m_editRow;
     const int column = m_editColumn;
-    QSharedPointer<AuCellEditor> editorImpl = editorImplForColumn(column);
+    // 取值 / 校验必须用编辑时实际选用的实现（m_activeEditorImpl）：
+    // editorImplForColumn 不含 WordWrap 回退等分支时，对多行编辑器做
+    // qobject_cast 会得到空值，校验将永远针对空文本进行
+    QSharedPointer<AuCellEditor> editorImpl = m_activeEditorImpl;
+    if (!editorImpl)
+        editorImpl = editorImplForColumn(column);
 
     const QVariant oldValue = m_model->cellValue(row, column);
     const QVariant newValue = editorImpl->editorValue(m_activeEditor);
@@ -273,7 +269,10 @@ void AuGridWidget::refreshEditError()
 
     const int row = m_editRow;
     const int column = m_editColumn;
-    const QSharedPointer<AuCellEditor> editorImpl = editorImplForColumn(column);
+    // 与 tryFinishCurrentEdit 一致：用实际编辑器实现取值，避免 WordWrap
+    // 列解析到单行实现后总是校验空文本
+    const QSharedPointer<AuCellEditor> editorImpl = m_activeEditorImpl
+            ? m_activeEditorImpl : editorImplForColumn(column);
     if (!editorImpl) {
         clearEditError();
         return;
@@ -319,12 +318,17 @@ QSharedPointer<AuCellEditor> AuGridWidget::editorImplForColumn(int column) const
     if (!m_model || column < 0 || column >= m_model->columnCount())
         return m_defaultCellEditor;
 
-    const QString editorName = m_model->columnDefAt(column).cellEditor();
+    // 与 editCell 的选择逻辑保持一致（含 WordWrap 多行回退），
+    // 否则外部按列反查实现时会对多行编辑器解析到单行实现
+    const AuColumnDef def = m_model->columnDefAt(column);
+    const QString editorName = def.cellEditor();
     if (!editorName.isEmpty()) {
         auto it = m_cellEditors.find(editorName);
         if (it != m_cellEditors.end())
             return it.value();
     }
+    if (def.textWrapMode() == AuColumnDef::TextWrapMode::WordWrap)
+        return m_defaultMultiLineCellEditor;
     return m_defaultCellEditor;
 }
 

@@ -422,10 +422,13 @@ void AuGridWidget::startSortMoveAnimation()
 
 void AuGridWidget::finishSortMoveAnimation()
 {
+    // 可能在自身 finished 槽内被调用：先置空成员并断开信号，用 deleteLater 销毁
     if (m_dataAnimation) {
-        m_dataAnimation->stop();
-        delete m_dataAnimation;
+        QVariantAnimation *anim = m_dataAnimation;
         m_dataAnimation = nullptr;
+        QObject::disconnect(anim, nullptr, this, nullptr);
+        anim->stop();
+        anim->deleteLater();
     }
     if (m_dataAnimationEntries.isEmpty() && m_removedRowGhosts.isEmpty()
         && m_dataAnimationProgress == 0.0)
@@ -474,10 +477,13 @@ void AuGridWidget::startDataResetAnimation()
 
 void AuGridWidget::finishDataResetAnimation()
 {
+    // 同 finishSortMoveAnimation：可能在自身 finished 槽内被调用，用 deleteLater
     if (m_dataResetAnimation) {
-        m_dataResetAnimation->stop();
-        delete m_dataResetAnimation;
+        QVariantAnimation *anim = m_dataResetAnimation;
         m_dataResetAnimation = nullptr;
+        QObject::disconnect(anim, nullptr, this, nullptr);
+        anim->stop();
+        anim->deleteLater();
     }
     if (!m_dataResetAnimating)
         return;

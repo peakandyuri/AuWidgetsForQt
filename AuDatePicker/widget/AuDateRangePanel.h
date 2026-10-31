@@ -40,6 +40,7 @@ public:
 
     // ---- 样式（非持有，转发给两个子日历）----
     void setStyle(AuDatePickerStyle *style);
+    AuDatePickerStyle *style() const;
 
     // ---- footer ----
     /// 显示 / 隐藏 footer（默认隐藏；配置过自定义链接后自动显示）。

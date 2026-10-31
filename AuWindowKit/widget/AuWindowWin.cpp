@@ -245,8 +245,14 @@ bool AuWindow::platformStartSystemMove()
         m_titleBar->releaseMouse();
     ReleaseCapture();
     m_titleBar->resetDragState();
+    // QCursor::pos() 为 Qt 逻辑全局坐标，WM_NCLBUTTONDOWN 的 lParam 期望
+    // 物理屏幕像素：非 100% 缩放下不换算会让系统移动循环以偏移的锚点
+    // 开始（拖动起点窗口跳动）
+    const qreal dpr = devicePixelRatioF();
+    const QPoint cursor = QCursor::pos();
+    const POINT physical = { qRound(cursor.x() * dpr), qRound(cursor.y() * dpr) };
     PostMessageW(reinterpret_cast<HWND>(winId()), WM_NCLBUTTONDOWN, HTCAPTION,
-                 MAKELPARAM(QCursor::pos().x(), QCursor::pos().y()));
+                 MAKELPARAM(physical.x, physical.y));
     return true;
 }
 
@@ -474,7 +480,12 @@ bool AuWindow::handleNcHitTest(void *message, AuNativeEventResult *result)
 
     // 标题栏空白区交给系统作为标题栏：原生拖动 / 边缘分屏（Aero Snap）/ 双击最大化
     if (hit == HTCLIENT && m_titleBar && m_titleBar->isVisible()) {
-        const QPoint tbPos = m_titleBar->mapFromGlobal(global);
+        // lParam 为物理屏幕像素，mapFromGlobal 期望 Qt 逻辑全局坐标：
+        // 非 100% 缩放下直接混用会让标题栏热区错位（右侧 / 下部拖不动、
+        // 双击最大化失效）
+        const qreal dpr = devicePixelRatioF();
+        const QPoint logical(qRound(global.x() / dpr), qRound(global.y() / dpr));
+        const QPoint tbPos = m_titleBar->mapFromGlobal(logical);
         if (m_titleBar->rect().contains(tbPos) && m_titleBar->hitTestCaption(tbPos))
             hit = HTCAPTION;
     }

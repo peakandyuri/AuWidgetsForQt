@@ -39,10 +39,13 @@ AuTimePanel::AuTimePanel(QWidget *parent)
         });
         m_scrollAnims[i] = anim;
     }
+
+    AuDatePickerStyle::registerPanelObserver(this); // 独立内嵌时跟随全局样式更换
 }
 
 AuTimePanel::~AuTimePanel()
 {
+    AuDatePickerStyle::unregisterPanelObserver(this);
 }
 
 // ---------------------------------------------------------------------------

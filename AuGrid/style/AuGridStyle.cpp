@@ -184,7 +184,13 @@ void AuGridStyle::setGlobalStyle(AuGridStyle *style)
     if (s_globalStyle == style)
         return;
 
-    delete s_globalStyle;
+    // 只释放库内部创建的默认样式实例；外部传入的全局样式所有权归调用者
+    //（见头文件说明），由调用者自行决定何时删除，此处删除会造成其它
+    // 持有该实例的控件悬空
+    if (s_globalStyle && s_globalStyle == s_defaultLightStyle) {
+        delete s_globalStyle;
+        s_defaultLightStyle = nullptr;
+    }
     s_globalStyle = style;
     notifyGlobalStyleChanged();
 }

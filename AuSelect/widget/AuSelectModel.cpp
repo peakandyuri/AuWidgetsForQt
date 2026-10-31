@@ -88,6 +88,15 @@ int AuSelectListModel::insertItem(int row, const QString &text, const QVariant &
     record.groupId = groupId;
     m_records.insert(row, record);
     endInsertRows();
+
+    // 行号整体后移：修正勾选集合与高亮行（与 removeRecord 对称，
+    // 否则插入后勾选状态指向错误的条目）
+    QSet<int> shifted;
+    for (int checkedRow : qAsConst(m_checkedRows))
+        shifted.insert(checkedRow >= row ? checkedRow + 1 : checkedRow);
+    m_checkedRows = shifted;
+    if (m_highlightRow >= row)
+        ++m_highlightRow;
     return row;
 }
 

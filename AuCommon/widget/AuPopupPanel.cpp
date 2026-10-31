@@ -448,13 +448,18 @@ bool AuPopupPanel::eventFilter(QObject *watched, QEvent *event)
         break;
     }
     case QEvent::WindowDeactivate:
-    case QEvent::Hide: {
+    case QEvent::Hide:
+    case QEvent::HideToParent: {
         if (watched == m_ownerWindow.data()) {
             // 面板显示本身可能引发宿主窗口失活（offscreen 等不遵守
             // WA_ShowWithoutActivating 的平台会激活面板），此时不收起；
             // 用户切换到其他应用时活动窗口为空，正常收起。
             if (QApplication::activeWindow() != this)
                 closePopup();
+        } else if (watched == m_owner.data()) {
+            // 宿主控件自身被 hide()（祖先隐藏时子控件收到 HideToParent，
+            // 如切换 QTabWidget 页）同样失去锚点，收起避免面板悬浮残留
+            closePopup();
         }
         break;
     }

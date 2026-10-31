@@ -43,13 +43,13 @@ qint64 readBigEndian(const QByteArray &data, qint64 pos, qint64 width, qint64 de
 {
     if (width <= 0)
         return defaultValue;
-    qint64 value = 0;
-    for (qint64 i = 0; i < width; ++i) {
-        if (pos + i >= data.size())
-            return defaultValue;
+    // pos 可以来自不可信的 /W 负宽度运算，必须同时防下界与上界
+    if (pos < 0 || pos + width > data.size())
+        return defaultValue;
+    quint64 value = 0;
+    for (qint64 i = 0; i < width; ++i)
         value = (value << 8) | quint8(data.at(int(pos + i)));
-    }
-    return value;
+    return qint64(value);
 }
 
 // qUncompress 要求 4 字节大端“解压后大小”前缀，而 PDF 的 FlateDecode 流
@@ -59,8 +59,11 @@ QByteArray pdfInflate(const QByteArray &zlibData)
 {
     if (zlibData.isEmpty())
         return QByteArray();
+    // 解压上限（zip 炸弹防护）：压缩数据的 1024 倍与 256 MB 取较大者；
+    // 此处只解压 xref 流 / 对象流等元数据，正常文件远达不到该量级
+    const qint64 cap = qMax<qint64>(qint64(zlibData.size()) * 1024, 256 * 1024 * 1024);
     qint64 estimate = qint64(zlibData.size()) * 4 + 64;
-    while (estimate < (qint64(1) << 31)) {
+    while (estimate <= cap) {
         quint32 be = quint32(estimate);
         char prefix[4];
         prefix[0] = char((be >> 24) & 0xFF);
@@ -88,7 +91,9 @@ char PdfParser::charAt(qint64 pos) const
 
 void PdfParser::skipWhitespace(qint64 &pos) const
 {
-    while (true) {
+    // 越界时 charAt 返回 '\0'，而 '\0' 按规范属于空白字符；
+    // 必须先判 EOF，否则文件结尾处会无限推进
+    while (pos < m_data->size()) {
         char c = charAt(pos);
         if (isWhitespaceChar(c)) {
             ++pos;
@@ -678,8 +683,13 @@ bool PdfParser::parseXrefStreamAt(qint64 objOffset, QHash<int, qint64> *offsets,
         return false;
     }
     qint64 fieldWidth[3];
-    for (int i = 0; i < 3; ++i)
+    for (int i = 0; i < 3; ++i) {
         fieldWidth[i] = w.arrayAt(i).toInt();
+        if (fieldWidth[i] < 0) {
+            m_error = QStringLiteral("交叉引用流 /W 字段非法");
+            return false;
+        }
+    }
 
     QVector<qint64> starts;
     QVector<qint64> counts;
@@ -773,39 +783,56 @@ bool PdfParser::parseObjectStream(const PdfObject &objStm, PdfFileData &out)
     PdfObject firstObj = objStm.dictGet("First");
     if (!countObj.isNumber() || !firstObj.isNumber())
         return false;
-    int count = int(countObj.toNumber());
-    int first = int(firstObj.toNumber());
-    if (count <= 0 || first < 0)
+    // /N 与 /First 来自不可信输入：先排除 NaN / 越界再做 int 转换
+    double countValue = countObj.toNumber();
+    double firstValue = firstObj.toNumber();
+    if (!(countValue >= 1.0) || countValue > 2147483647.0
+            || !(firstValue >= 0.0) || firstValue > 2147483647.0)
         return false;
+    int count = int(countValue);
+    int first = int(firstValue);
     QByteArray raw = objStm.streamData();
     if (objStm.hasKey("Filter")) {
         raw = inflate(raw);
         if (raw.isEmpty())
             return false;
     }
+    // 每对“对象号 相对偏移”至少占 3 字节，超出该上限的 /N 只会来自损坏文件
+    count = qMin(count, raw.size() / 3 + 1);
+    // 词法器从 m_data 读取；临时把 m_data 指向解码后的流数据，
+    // 使头部与对象体均按 ObjStm 内容解析（此前误读整个 PDF 文件）
+    const QByteArray *outerData = m_data;
+    m_data = &raw;
     // 头部为 N 对 “对象号 相对偏移”
     qint64 pos = 0;
     QVector<QPair<int, int> > pairs;
     pairs.reserve(count);
+    bool headOk = true;
     for (int i = 0; i < count; ++i) {
         skipWhitespace(pos);
         qint64 num = 0;
         qint64 offset = 0;
-        if (!parseIntAt(pos, &num, &pos) || !parseIntAt(pos, &offset, &pos))
-            return false;
+        if (!parseIntAt(pos, &num, &pos) || !parseIntAt(pos, &offset, &pos)
+                || num < 0 || num > 2147483647 || offset < 0 || offset > 2147483647) {
+            headOk = false;
+            break;
+        }
         pairs.append(qMakePair(int(num), int(offset)));
     }
-    for (int i = 0; i < pairs.size(); ++i) {
-        qint64 bodyPos = first + pairs.at(i).second;
-        if (bodyPos < 0 || bodyPos >= raw.size())
-            continue;
-        qint64 p = bodyPos;
-        bool ok = false;
-        PdfObject value = parseValue(p, 0, &ok);
-        if (ok)
-            out.objects.insert(pairs.at(i).first, value);
+    if (headOk) {
+        for (int i = 0; i < pairs.size(); ++i) {
+            qint64 bodyPos = first + pairs.at(i).second;
+            if (bodyPos < 0 || bodyPos >= raw.size())
+                continue;
+            qint64 p = bodyPos;
+            bool ok = false;
+            PdfObject value = parseValue(p, 0, &ok);
+            if (ok)
+                out.objects.insert(pairs.at(i).first, value);
+        }
     }
-    return true;
+    m_data = outerData;
+    return headOk;
 }
 
 bool PdfParser::repairScan(PdfFileData &out)

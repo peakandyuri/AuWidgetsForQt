@@ -639,9 +639,13 @@ void AuPlot::mousePressEvent(QMouseEvent *event)
     if (event->button() == Qt::LeftButton && m_legend->isVisible()) {
         for (const LegendEntry &entry : m_legendEntries) {
             if (entry.item && entry.rect.contains(pos)) {
-                emit legendEntryClicked(entry.item);
-                if (m_legend->clickToToggleEnabled())
-                    entry.item->setVisible(!entry.item->isVisible());
+                AuPlotItem *item = entry.item;
+                emit legendEntryClicked(item);
+                // 槽内可能 removeItem / clearItems（发信号会改变图元与
+                // m_legendEntries）：返回后先确认条目仍挂在图上再切换可见性，
+                // 否则解引用已销毁的 item 与悬空的 entry 引用
+                if (m_legend->clickToToggleEnabled() && m_items.contains(item))
+                    item->setVisible(!item->isVisible());
                 event->accept();
                 return;
             }
@@ -892,7 +896,11 @@ void AuPlot::fitAutoRanges()
         if (!item->isVisible())
             continue;
         const QRectF bounds = item->dataBounds();
-        if (bounds.isNull() || !bounds.isValid())
+        // 只跳过含 NaN / Inf 的边界：平数据（恒定 y、垂直线、单点）宽或高
+        // 为 0 会被 QRectF::isValid 判为无效，但坐标本身有意义，
+        // 必须参与自适应（下方的单点 +/-1 扩展分支才能生效）
+        if (!qIsFinite(bounds.left()) || !qIsFinite(bounds.top())
+                || !qIsFinite(bounds.right()) || !qIsFinite(bounds.bottom()))
             continue;
         unite(fits[int(item->xAxis())], bounds.left());
         unite(fits[int(item->xAxis())], bounds.right());
@@ -1490,18 +1498,27 @@ void AuPlot::updateTracker(const QPoint &pos)
     }
 
     if (hits != m_trackerHits) {
-        if (hits.isEmpty() && !m_trackerHits.isEmpty()) {
-            emit trackerChanged(nullptr, QPointF());   // 全部曲线离开吸附
-        } else {
-            for (const auto &hit : hits) {
-                if (!m_trackerHits.contains(hit))
-                    emit trackerChanged(hit.first, hit.first->pointAt(hit.second));
-            }
-        }
+        const bool hadHits = !m_trackerHits.isEmpty();
+        const QVector<QPair<AuPlotCurve *, int>> previousHits = m_trackerHits;
+        // 先提交新吸附集合再发信号：槽内 removeItem / clearItems 会按新集合
+        // 修剪 m_trackerHits 并销毁曲线，信号返回后不得再把持有已销毁
+        // 曲线指针的本地副本写回（否则下次绘制 tracker 时解引用悬空指针）
         m_trackerHits = hits;
         m_trackerValid = !hits.isEmpty();
         m_trackerPos = pos;
         needUpdate = true;
+        if (hits.isEmpty()) {
+            if (hadHits)
+                emit trackerChanged(nullptr, QPointF());   // 全部曲线离开吸附
+        } else {
+            for (const auto &hit : hits) {
+                if (previousHits.contains(hit))
+                    continue;   // 原有吸附未变，不重复发信号
+                if (!m_trackerHits.contains(hit))
+                    continue;   // 槽内删除了该曲线：跳过对已销毁指针取点
+                emit trackerChanged(hit.first, hit.first->pointAt(hit.second));
+            }
+        }
     } else if (m_trackerValid && m_trackerPos != pos) {
         // 吸附点未变但鼠标在动：tooltip 跟随鼠标，需要重绘
         m_trackerPos = pos;

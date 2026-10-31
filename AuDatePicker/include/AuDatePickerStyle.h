@@ -5,9 +5,14 @@
 
 #include <QColor>
 #include <QFont>
+#include <QPointer>
 #include <QVector>
+#include <QWidget>
 
 class AuDatePicker;
+class AuDatePickerPanel;
+class AuDateRangePanel;
+class AuTimePanel;
 
 /**
  * @brief AuDatePicker 样式：编辑框、日历图标 / 清除图标、弹层面板、面板头部、
@@ -197,8 +202,16 @@ private:
     friend class AuDatePicker;
     static void registerGlobalObserver(AuDatePicker *widget);
     static void unregisterGlobalObserver(AuDatePicker *widget);
-    static void notifyGlobalStyleChanged();
+    static void notifyGlobalStyleChanged(AuDatePickerStyle *oldStyle);
 
+public:
+    /// 独立内嵌面板（AuDatePickerPanel / AuDateRangePanel / AuTimePanel）观察者：
+    /// 注册后全局样式更换时自动刷新仍指向旧全局样式的面板，避免其持有
+    /// 已被释放的旧样式实例。面板应在析构时注销。
+    static void registerPanelObserver(QWidget *panel);
+    static void unregisterPanelObserver(QWidget *panel);
+
+private:
     void applySizeModePreset(SizeMode mode);            ///< 将尺寸类字段重置为档位预设
 
     SizeMode m_sizeMode;
@@ -284,6 +297,7 @@ private:
 
     static AuDatePickerStyle *s_globalStyle;
     static QVector<AuDatePicker *> s_observers;
+    static QVector<QPointer<QWidget> > s_panelObservers;
 };
 
 #endif // AUDATEPICKERSTYLE_H

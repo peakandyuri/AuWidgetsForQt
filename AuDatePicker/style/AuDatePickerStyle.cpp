@@ -1,12 +1,16 @@
 #include "AuDatePickerStyle.h"
 
 #include "AuDatePicker.h"
+#include "AuDatePickerPanel.h"
+#include "AuDateRangePanel.h"
+#include "AuTimePanel.h"
 
 #include <QApplication>
 #include <QtGlobal>
 
 AuDatePickerStyle *AuDatePickerStyle::s_globalStyle = nullptr;
 QVector<AuDatePicker *> AuDatePickerStyle::s_observers;
+QVector<QPointer<QWidget> > AuDatePickerStyle::s_panelObservers;
 
 AuDatePickerStyle::AuDatePickerStyle()
 {
@@ -163,9 +167,10 @@ void AuDatePickerStyle::setGlobalStyle(AuDatePickerStyle *style)
 {
     if (s_globalStyle == style)
         return;
+    AuDatePickerStyle *oldStyle = s_globalStyle;
     delete s_globalStyle;
     s_globalStyle = style;
-    notifyGlobalStyleChanged();
+    notifyGlobalStyleChanged(oldStyle);
 }
 
 AuDatePickerStyle::SizeMode AuDatePickerStyle::sizeMode() const
@@ -411,12 +416,40 @@ void AuDatePickerStyle::unregisterGlobalObserver(AuDatePicker *widget)
     s_observers.removeOne(widget);
 }
 
-void AuDatePickerStyle::notifyGlobalStyleChanged()
+void AuDatePickerStyle::registerPanelObserver(QWidget *panel)
+{
+    if (panel && !s_panelObservers.contains(panel))
+        s_panelObservers.append(panel);
+}
+
+void AuDatePickerStyle::unregisterPanelObserver(QWidget *panel)
+{
+    s_panelObservers.removeOne(panel);
+}
+
+void AuDatePickerStyle::notifyGlobalStyleChanged(AuDatePickerStyle *oldStyle)
 {
     // 拷贝一份再遍历：观察者可能在回调中销毁或重新注册
     const QVector<AuDatePicker *> observers = s_observers;
     for (AuDatePicker *widget : observers) {
         if (widget)
             widget->onGlobalStyleChanged();
+    }
+    // 独立内嵌面板：仍指向旧全局样式的（即跟随全局的）刷新为新样式；
+    // 显式 setStyle 过的面板保持自己的样式不动
+    const QVector<QPointer<QWidget> > panels = s_panelObservers;
+    for (const QPointer<QWidget> &panel : panels) {
+        if (!panel)
+            continue;
+        if (auto *p = qobject_cast<AuDatePickerPanel *>(panel)) {
+            if (p->style() == oldStyle)
+                p->setStyle(s_globalStyle);
+        } else if (auto *r = qobject_cast<AuDateRangePanel *>(panel)) {
+            if (r->style() == oldStyle)
+                r->setStyle(s_globalStyle);
+        } else if (auto *t = qobject_cast<AuTimePanel *>(panel)) {
+            if (t->style() == oldStyle)
+                t->setStyle(s_globalStyle);
+        }
     }
 }

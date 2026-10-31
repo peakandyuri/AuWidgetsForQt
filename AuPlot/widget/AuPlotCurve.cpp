@@ -88,6 +88,7 @@ QVector<QPointF> decimateVisible(const QVector<QPointF> &points, int a, int b,
         int iLast = -1;
         int iMin = -1;
         int iMax = -1;
+        int iNan = -1;      // 列内首个非有限 y：断点必须随抽稀保留
         double minY = 0.0;
         double maxY = 0.0;
     };
@@ -114,6 +115,10 @@ QVector<QPointF> decimateVisible(const QVector<QPointF> &points, int a, int b,
                 agg.iMax = i;
             }
         }
+        // min/max 比较对 NaN 恒为 false，非有限点只能显式记录：
+        // 否则列内的 NaN 缺数据点被抽稀丢弃，断线被画成连线
+        if (agg.iNan < 0 && !qIsFinite(pt.y()))
+            agg.iNan = i;
         agg.iLast = i;
     }
 
@@ -131,8 +136,13 @@ QVector<QPointF> decimateVisible(const QVector<QPointF> &points, int a, int b,
     for (const ColumnAgg &agg : columns2) {
         if (agg.iFirst < 0)
             continue;
-        // 按索引顺序发：首 -> 最小/最大（按索引排）-> 末
-        if (agg.iMin < agg.iMax) {
+        if (agg.iNan >= 0) {
+            // 列内含缺数据点：发首 / 断点 / 末，绘制端按 NaN 分段，
+            // 线与填充在该点断开（丢弃列内 min/max，保断裂优先于保形状）
+            emitIndex(agg.iFirst);
+            emitIndex(agg.iNan);
+        } else if (agg.iMin < agg.iMax) {
+            // 按索引顺序发：首 -> 最小/最大（按索引排）-> 末
             emitIndex(agg.iFirst);
             emitIndex(agg.iMin);
             emitIndex(agg.iMax);
@@ -448,15 +458,20 @@ void AuPlotCurve::setFillBaseline(double y)
 
 QRectF AuPlotCurve::computeBounds() const
 {
+    // 基线扩展只作用于返回副本、绝不写回缓存：否则全量重扫后关掉填充或
+    // 调低基线，缓存里残留的旧基线会让 Y 量程一直被撑大
+    auto applyFillBaseline = [this](const QRectF &bounds) {
+        if (!m_fillVisible)
+            return bounds;
+        QRectF out = bounds;
+        out.setTop(qMin(out.top(), m_fillBaseline));
+        out.setBottom(qMax(out.bottom(), m_fillBaseline));
+        return out;
+    };
+
     // 增量缓存在（addPoint 逐点扩展）：O(1) 返回，实时追加不必全量重扫
-    if (m_runningBoundsValid) {
-        QRectF bounds = m_runningBounds;
-        if (m_fillVisible) {
-            bounds.setTop(qMin(bounds.top(), m_fillBaseline));
-            bounds.setBottom(qMax(bounds.bottom(), m_fillBaseline));
-        }
-        return bounds;
-    }
+    if (m_runningBoundsValid)
+        return applyFillBaseline(m_runningBounds);
 
     // 全量重扫：跳过 NaN / Inf 点（无效点不参与量程）
     bool boundsValid = false;
@@ -478,13 +493,9 @@ QRectF AuPlotCurve::computeBounds() const
     if (!boundsValid)
         return QRectF();
 
-    if (m_fillVisible) {
-        minY = qMin(minY, m_fillBaseline);
-        maxY = qMax(maxY, m_fillBaseline);
-    }
     m_runningBounds = QRectF(minX, minY, maxX - minX, maxY - minY);
     m_runningBoundsValid = true;
-    return m_runningBounds;
+    return applyFillBaseline(m_runningBounds);
 }
 
 void AuPlotCurve::paint(QPainter *painter, const AuPlot *plot)

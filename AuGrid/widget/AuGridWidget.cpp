@@ -271,8 +271,16 @@ void AuGridWidget::setModel(AuGridModel *model)
     m_editColumn = -1;
     m_activeEditor = nullptr;
     m_checkedOriginalRows.clear();
+    // 半选集合与排序状态都以旧模型的行列索引为键，换模型后随之失效
+    m_partialOriginalRows.clear();
+    const bool hadSort = (m_sortedColumn >= 0);
+    m_sortedColumn = -1;
+    m_sortOrder = Qt::AscendingOrder;
+    m_sortRules.clear();
     captureLayoutSnapshot();   // 建立布局基线：下一次排序 / 过滤据此播放位移动画
     updateScrollBars();
+    if (hadSort)
+        emit sortChanged(-1, Qt::AscendingOrder);
     update();
 }
 
@@ -430,8 +438,13 @@ AuGridWidget::SizeMode AuGridWidget::sizeMode() const
 void AuGridWidget::setStyle(AuGridStyle *style)
 {
     if (style) {
-        if (m_style == style && m_explicitStyle)
+        if (m_style == style) {
+            // 传入的就是当前样式（典型：显式指回全局单例，或传回自己的样式）：
+            // 只标记为显式引用，不得接管所有权——否则全局样式实例会随本控件
+            // 析构被误删，其它跟随全局样式的控件随即悬空
+            m_explicitStyle = true;
             return;
+        }
         if (m_ownStyle)
             delete m_style;
         m_style = style;
@@ -524,15 +537,7 @@ void AuGridWidget::connectModel()
         if (m_activeEditor && m_editRow >= topRow && m_editRow <= bottomRow
             && m_editColumn >= leftColumn && m_editColumn <= rightColumn) {
             const QVariant value = m_model->cellValue(m_editRow, m_editColumn);
-            const AuColumnDef def = m_model->columnDefAt(m_editColumn);
-            QSharedPointer<AuCellEditor> editor = m_defaultCellEditor;
-            const QString editorName = def.cellEditor();
-            if (!editorName.isEmpty()) {
-                auto it = m_cellEditors.find(editorName);
-                if (it != m_cellEditors.end())
-                    editor = it.value();
-            }
-            editor->setEditorValue(m_activeEditor, value);
+            editorImplForColumn(m_editColumn)->setEditorValue(m_activeEditor, value);
         }
         update();
     });

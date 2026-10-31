@@ -81,10 +81,13 @@ AuDatePickerPanel::AuDatePickerPanel(QWidget *parent)
         m_scrollPos = value.toReal();
         update();
     });
+
+    AuDatePickerStyle::registerPanelObserver(this); // 独立内嵌时跟随全局样式更换
 }
 
 AuDatePickerPanel::~AuDatePickerPanel()
 {
+    AuDatePickerStyle::unregisterPanelObserver(this);
 }
 
 // ---------------------------------------------------------------------------

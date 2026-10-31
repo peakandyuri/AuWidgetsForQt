@@ -405,9 +405,22 @@ void AuGridModel::setColumnPinMode(int column, AuColumnDef::PinMode mode)
 
 void AuGridModel::setColumnPinMode(const QString &field, AuColumnDef::PinMode mode)
 {
-    const int column = columnIndexForField(field);
-    if (column >= 0)
-        setColumnPinMode(column, mode);
+    // field 可指向分组列（与文档一致整组停靠）：组列不在叶子索引里，
+    // 直接 columnIndexForField 会得到 -1 静默失效，这里按叶子列展开
+    const QVector<QString> leafFields = leafFieldsForField(field);
+    bool changed = false;
+    for (const QString &leafField : leafFields) {
+        const int column = columnIndexForField(leafField);
+        if (column < 0 || column >= m_leafColumnDefs.size())
+            continue;
+        AuColumnDef *def = m_leafColumnDefs[column];
+        if (def->pinMode() == mode)
+            continue;
+        def->setPinMode(mode);
+        changed = true;
+    }
+    if (changed)
+        emit columnsChanged();
 }
 
 AuColumnDef::PinMode AuGridModel::columnPinMode(int column) const

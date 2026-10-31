@@ -455,9 +455,16 @@ int AuWindow::exec()
         setWindowModality(parentWidget() ? Qt::WindowModal : Qt::ApplicationModal);
     show();
 
-    QEventLoop loop(this);
+    // 循环不能以 this 为父对象：exec 期间窗口可能被销毁（如开启关闭拦截
+    // + WA_DeleteOnClose 时点关闭按钮），QObject 析构会连带 delete 这个
+    // 栈上对象。与 QDialog::exec 相同：无父对象循环 + QPointer 守卫；
+    // 窗口析构会经 m_eventLoop->exit() 退出循环（见 ~AuWindow）。
+    QPointer<AuWindow> guard(this);
+    QEventLoop loop;
     m_eventLoop = &loop;
     const int code = loop.exec();
+    if (!guard)
+        return code; // 窗口已在循环内销毁，不能再访问成员
     m_eventLoop = nullptr;
     return code;
 }

@@ -160,7 +160,8 @@ void AuGridWidget::setRowCheckableCallback(const std::function<bool(const AuGrid
             }
         }
         recomputeAllCheckStates();
-    } else {
+    } else if (m_model) {
+        // 允许在 setModel 之前配置回调，此时无行可裁决
         for (int row = 0; row < m_model->rowCount(); ++row) {
             if (!isRowCheckable(row)) {
                 const int originalRow = m_model->originalRowForVisibleRow(row);
@@ -452,10 +453,14 @@ void AuGridWidget::applyTreeRowAnimation(qreal progress)
 
 void AuGridWidget::finishTreeAnimation()
 {
+    // 动画可能在自身 finished 槽内走到这里：先置空成员并断开信号，
+    // 用 deleteLater 销毁，避免删除仍处于发射栈帧中的对象
     if (m_treeAnimation) {
-        m_treeAnimation->stop();
-        delete m_treeAnimation;
+        QVariantAnimation *anim = m_treeAnimation;
         m_treeAnimation = nullptr;
+        QObject::disconnect(anim, nullptr, this, nullptr);
+        anim->stop();
+        anim->deleteLater();
     }
     const bool pendingCollapse = m_treeAnimationPendingCollapse;
     const int pendingRow = m_treeAnimationPendingRow;
@@ -825,6 +830,13 @@ void AuGridWidget::startRowDrag(int visibleRow, const QPoint &globalPos)
     if (!m_model || visibleRow < 0 || visibleRow >= m_model->rowCount())
         return;
 
+    // 过滤 / 排序激活时可见序与原始序不再一致，拖拽换位无法映射回原始行序
+    //（与树形模式一致：拒绝开始拖拽）
+    if (!m_sortRules.isEmpty() || m_model->hasSortComparator() || isFiltered()) {
+        qWarning() << "AuGridWidget: row drag is not supported while sort or filter is active.";
+        return;
+    }
+
     QSet<int> checked = m_checkedOriginalRows;
     QVector<int> dragging;
     if (!checked.isEmpty()) {
@@ -1071,10 +1083,13 @@ void AuGridWidget::applyDragReorderAnimation(qreal progress)
 
 void AuGridWidget::finishDragReorderAnimation()
 {
+    // 同 finishTreeAnimation：可能在自身 finished 槽内被调用，用 deleteLater
     if (m_dragOffsetAnimation) {
-        m_dragOffsetAnimation->stop();
-        delete m_dragOffsetAnimation;
+        QVariantAnimation *anim = m_dragOffsetAnimation;
         m_dragOffsetAnimation = nullptr;
+        QObject::disconnect(anim, nullptr, this, nullptr);
+        anim->stop();
+        anim->deleteLater();
     }
     m_dragAnimationEntries.clear();
     m_dragAnimationOldOrder.clear();
@@ -1102,25 +1117,6 @@ int AuGridWidget::targetVisibleIndexForDrag(const QPoint &pos) const
     else if (visibleRow >= m_model->rowCount())
         visibleRow = m_model->rowCount() - 1;
 
-    // 先找到被拖动行的连续可见块
-    QSet<int> draggedSet;
-    for (int original : m_draggingOriginalRows)
-        draggedSet.insert(original);
-    int blockStart = -1;
-    int blockEnd = -1;
-    for (int v = 0; v < m_model->rowCount(); ++v) {
-        const int original = m_model->originalRowForVisibleRow(v);
-        if (draggedSet.contains(original)) {
-            if (blockStart < 0)
-                blockStart = v;
-            blockEnd = v;
-        }
-    }
-    if (blockStart < 0)
-        return 0;
-
-    const int K = blockEnd - blockStart + 1;
-
     // 只要拖到其它行上就触发移动，无需超过该行一半；用真实拖动方向决定插入到目标行前还是后。
     int targetVisibleIndex;
     if (m_rowDragDirection < 0)
@@ -1134,12 +1130,19 @@ int AuGridWidget::targetVisibleIndexForDrag(const QPoint &pos) const
     if (visibleRow == m_model->rowCount() - 1 && contentY >= rowBottom)
         targetVisibleIndex = m_model->rowCount();
 
-    // 换算为移除拖动块之后的插入下标
-    if (targetVisibleIndex <= blockStart)
-        return targetVisibleIndex;
-    if (targetVisibleIndex > blockEnd + 1)
-        return targetVisibleIndex - K;
-    return blockStart;
+    // 换算为移除拖动行之后的插入下标：目标位置之前的非拖动行数即插入位置。
+    // 对连续拖动块与散落的勾选行都成立（此前用首末行跨度当行数，
+    // 勾选行不相邻时会插到错误位置）
+    QSet<int> draggedSet;
+    for (int original : m_draggingOriginalRows)
+        draggedSet.insert(original);
+    int draggedBeforeTarget = 0;
+    const int scanEnd = qMin(targetVisibleIndex, m_model->rowCount());
+    for (int v = 0; v < scanEnd; ++v) {
+        if (draggedSet.contains(m_model->originalRowForVisibleRow(v)))
+            ++draggedBeforeTarget;
+    }
+    return targetVisibleIndex - draggedBeforeTarget;
 }
 
 void AuGridWidget::ensureDragFloatWidget()

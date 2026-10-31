@@ -175,15 +175,23 @@ void PdfWriter::serializeInto(const PdfObject &obj, const QHash<int, int> &mappi
     case PdfObject::Stream: {
         *out += "<<";
         const QVector<QPair<QByteArray, PdfObject> > &dict = obj.dict();
+        bool lengthWritten = false;
         for (int i = 0; i < dict.size(); ++i) {
             *out += ' ';
             *out += '/';
             *out += escapeName(dict.at(i).first);
             *out += ' ';
-            if (obj.isStream() && dict.at(i).first == "Length")
+            if (obj.isStream() && dict.at(i).first == "Length") {
                 *out += QByteArray::number(obj.streamData().size()); // 长度写成直接整数
-            else
+                lengthWritten = true;
+            } else {
                 serializeInto(dict.at(i).second, mapping, out);
+            }
+        }
+        if (obj.isStream() && !lengthWritten) {
+            // /Length 为必填项：新建流（如插入的空白页内容流）可能没有该字段
+            *out += " /Length ";
+            *out += QByteArray::number(obj.streamData().size());
         }
         *out += " >>";
         if (obj.isStream()) {

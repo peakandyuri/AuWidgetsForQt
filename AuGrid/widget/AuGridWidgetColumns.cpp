@@ -1223,10 +1223,13 @@ void AuGridWidget::applyColumnReorderAnimation(qreal progress)
 
 void AuGridWidget::finishColumnReorderAnimation()
 {
+    // 同 finishColumnVisibilityAnimation：可能在自身 finished 槽内被调用，用 deleteLater
     if (m_columnDragOffsetAnimation) {
-        m_columnDragOffsetAnimation->stop();
-        delete m_columnDragOffsetAnimation;
+        QVariantAnimation *anim = m_columnDragOffsetAnimation;
         m_columnDragOffsetAnimation = nullptr;
+        QObject::disconnect(anim, nullptr, this, nullptr);
+        anim->stop();
+        anim->deleteLater();
     }
     m_columnDragAnimationEntries.clear();
     m_columnDragAnimationOldOrder.clear();

@@ -391,7 +391,7 @@ private:
 
     bool m_clearButtonEnabled;
     bool m_footerVisible;
-    QWidget *m_footerWidget;                ///< 完全自定义 footer（所有权归控件）
+    QPointer<QWidget> m_footerWidget;       ///< 完全自定义 footer（所有权归控件）
 
     bool m_areaHovered;                     ///< 鼠标悬停在控件本体（非行编辑框区域）
     bool m_lineHovered;                     ///< 鼠标悬停在行编辑框上

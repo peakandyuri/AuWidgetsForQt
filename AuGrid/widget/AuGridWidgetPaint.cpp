@@ -33,6 +33,11 @@ void AuGridWidget::paintEvent(QPaintEvent * /*event*/)
         painter.restore();
     }
 
+    // 无模型时只绘制背景与面板：下面的行号列 / 复选框列等分支会在
+    // m_showRowNumberColumn 等标志已开启的情况下直接解引用 m_model
+    if (!m_model)
+        return;
+
     // 3. 在面板区域内裁剪并绘制表格内容
     painter.save();
     if (radius > 0) {
