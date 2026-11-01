@@ -491,7 +491,7 @@ QRectF AuPlotCurve::computeBounds() const
         }
     }
     if (!boundsValid)
-        return QRectF();
+        return AuPlotInternal::nullDataBounds();   // 无有效点：NaN 边界，不参与自适应量程
 
     m_runningBounds = QRectF(minX, minY, maxX - minX, maxY - minY);
     m_runningBoundsValid = true;

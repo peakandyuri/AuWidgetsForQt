@@ -93,7 +93,7 @@ QRectF AuPlotPoints::computeBounds() const
         }
     }
     if (!boundsValid)
-        return QRectF();
+        return AuPlotInternal::nullDataBounds();   // 无有效点：NaN 边界，不参与自适应量程
     return QRectF(minX, minY, maxX - minX, maxY - minY);
 }
 
@@ -236,7 +236,7 @@ QRectF AuPlotLine::computeBounds() const
         }
     }
     if (!boundsValid)
-        return QRectF();
+        return AuPlotInternal::nullDataBounds();   // 无有效点：NaN 边界，不参与自适应量程
     return QRectF(minX, minY, maxX - minX, maxY - minY);
 }
 
@@ -408,7 +408,7 @@ QRectF AuPlotArea::computeBounds() const
         }
     }
     if (!boundsValid)
-        return QRectF();
+        return AuPlotInternal::nullDataBounds();   // 无有效点：NaN 边界，不参与自适应量程
     return QRectF(minX, minY, maxX - minX, maxY - minY);
 }
 
@@ -575,8 +575,8 @@ void AuPlotRefLine::setDashOffset(qreal offset)
 
 QRectF AuPlotRefLine::computeBounds() const
 {
-    // 参考线不参与自适应量程（见类注释）
-    return QRectF();
+    // 参考线不参与自适应量程（见类注释）：NaN 边界使 fitAutoRanges 跳过本图元
+    return AuPlotInternal::nullDataBounds();
 }
 
 void AuPlotRefLine::paint(QPainter *painter, const AuPlot *plot)

@@ -436,20 +436,23 @@ void AuDatePickerStyle::notifyGlobalStyleChanged(AuDatePickerStyle *oldStyle)
             widget->onGlobalStyleChanged();
     }
     // 独立内嵌面板：仍指向旧全局样式的（即跟随全局的）刷新为新样式；
-    // 显式 setStyle 过的面板保持自己的样式不动
+    // 显式 setStyle 过的面板保持自己的样式不动。
+    // 用 globalStyle() 而非裸 s_globalStyle：setGlobalStyle(nullptr) 时后者为空，
+    // 面板 setStyle 的判空早退会让 m_style 继续指向已删除的旧样式（悬空）
+    AuDatePickerStyle *nextStyle = globalStyle();
     const QVector<QPointer<QWidget> > panels = s_panelObservers;
     for (const QPointer<QWidget> &panel : panels) {
         if (!panel)
             continue;
         if (auto *p = qobject_cast<AuDatePickerPanel *>(panel)) {
             if (p->style() == oldStyle)
-                p->setStyle(s_globalStyle);
+                p->setStyle(nextStyle);
         } else if (auto *r = qobject_cast<AuDateRangePanel *>(panel)) {
             if (r->style() == oldStyle)
-                r->setStyle(s_globalStyle);
+                r->setStyle(nextStyle);
         } else if (auto *t = qobject_cast<AuTimePanel *>(panel)) {
             if (t->style() == oldStyle)
-                t->setStyle(s_globalStyle);
+                t->setStyle(nextStyle);
         }
     }
 }
