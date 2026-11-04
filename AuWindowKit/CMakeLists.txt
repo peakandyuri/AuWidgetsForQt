@@ -4,12 +4,14 @@ add_library(AuWindowKit SHARED
     widget/AuWindowX11.cpp
     widget/AuWindowFallback.cpp
     widget/AuTitleBar.cpp
+    widget/AuBorderShadow.cpp
     style/AuWindowStyle.cpp
     include/AuWindowKit_global.h
     include/AuWindow.h
     include/AuTitleBar.h
     include/AuWindowStyle.h
     widget/AuWindow_p.h
+    widget/AuBorderShadow.h
 )
 
 target_include_directories(AuWindowKit

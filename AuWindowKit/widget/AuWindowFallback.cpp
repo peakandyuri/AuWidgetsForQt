@@ -22,6 +22,9 @@ void AuWindow::platformInit()
     setMouseTracking(true);
     m_client = new QWidget(this);
     setupEdgeGrips();
+    // 其它平台默认关闭阴影（可经 setBorderShadowEnabled(true) 开启客户端
+    // 阴影环；混成环境下 ARGB alpha 呈现）
+    m_borderShadowEnabled = false;
 }
 
 void AuWindow::platformWinIdChanged() {}
@@ -88,6 +91,17 @@ bool AuWindow::platformClipsWindowShape() const
 {
     return false;
 }
+
+// ---- 边框阴影平台通道 ----
+
+// 其它平台无 WM 侧阴影通道，客户端阴影环经公共代码自绘（默认关闭，
+// 可经 setBorderShadowEnabled(true) 开启，混成环境下 ARGB alpha 呈现）
+bool AuWindow::platformShadowPaintedExternally() const
+{
+    return false;
+}
+
+void AuWindow::platformShadowUpdate() {}
 
 bool AuWindow::platformStartMaximizeRestoreDrag()
 {

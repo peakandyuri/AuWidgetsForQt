@@ -34,6 +34,7 @@ SOURCES += \
     widget/AuWindowX11.cpp \
     widget/AuWindowFallback.cpp \
     widget/AuTitleBar.cpp \
+    widget/AuBorderShadow.cpp \
     style/AuWindowStyle.cpp
 
 HEADERS += \
@@ -41,7 +42,8 @@ HEADERS += \
     include/AuWindow.h \
     include/AuTitleBar.h \
     include/AuWindowStyle.h \
-    widget/AuWindow_p.h
+    widget/AuWindow_p.h \
+    widget/AuBorderShadow.h
 
 # Default rules for deployment.
 unix {

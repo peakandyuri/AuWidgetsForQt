@@ -58,9 +58,16 @@ RECT auVisibleFrameBounds(HWND hwnd)
 // WS_CHILD 原生子窗口，其首次擦除恰逢窗口 A 上层弹窗，呈现为 A 的
 // 白色边框闪烁）。按窗体背景色填充后，擦除帧与后续绘制同色不可见；
 // GetClientRect 取设备像素矩形，缩放屏幕下同样铺满。
-void auEraseWithWindowBackground(const AuWindow *window, MSG *msg, AuNativeEventResult *result)
+void auEraseWithWindowBackground(const AuWindow *window, MSG *msg, AuNativeEventResult *result,
+                                 bool skipIfTranslucent = false)
 {
-    if (window && msg->wParam) {
+    // ARGB 透明窗体（客户端阴影环开启）：透明像素即窗体形状，顶层不能铺
+    // 不透明背景色（阴影环 / 圆角外像素会被实色覆盖），交由 Qt 透明管线。
+    // 内容区子窗口（覆盖标题栏下方内容矩形）在透明模式下仍按背景色擦除
+    // ——内容区本身不透明，skipIfTranslucent 由调用方区分。
+    const bool translucent = window && window->windowHandle()
+                             && window->windowHandle()->format().hasAlpha();
+    if (window && msg->wParam && !(skipIfTranslucent && translucent)) {
         const QColor bg = window->style()->windowBackgroundColor();
         const HDC hdc = reinterpret_cast<HDC>(msg->wParam);
         RECT rc;
@@ -71,6 +78,21 @@ void auEraseWithWindowBackground(const AuWindow *window, MSG *msg, AuNativeEvent
         }
     }
     *result = 1;   // 告知系统"已擦除"
+}
+
+// 客户端阴影环在 Windows 上是否真正可用：与桌面混合需要 ARGB 透明窗体。
+// 原生窗口创建前 platformShadowUpdate 已补设 WA_TranslucentBackground
+// （创建时生效）；窗口已建成且无 alpha 通道时不可用——回落 DWM 原生
+// 阴影（effectiveMargin 不留环、DWM 框架扩展恢复），避免在不透明窗体上
+// 画出实色环。
+bool auClientShadowCapable(const AuWindow *w)
+{
+    if (!w->isBorderShadowEnabled())
+        return false;
+    if (!w->testAttribute(Qt::WA_WState_Created))
+        return true;
+    QWindow *wh = w->windowHandle();
+    return wh && wh->format().hasAlpha();
 }
 
 /// Windows 内容区容器：Qt 在某些时序下（实测：显示带属主关系的子窗体后）
@@ -143,6 +165,10 @@ void AuWindow::platformInit()
     // 原生 Snap 处理，本模块的 setGeometry 贴靠会与系统最大化/还原状态
     // 互相污染（无法还原、边框热区失效）。
     m_edgeSnapEnabled = false;
+    // Windows 默认关闭客户端阴影：保留 DWM 原生框架阴影（更高质量的
+    // 系统阴影）。setBorderShadowEnabled(true) 时切换为 peony 式客户端
+    // 阴影环并停用 DWM 框架阴影（见 applyWindowStyles）。
+    m_borderShadowEnabled = false;
     m_client = new AuClientArea(this);   // 边框热区 HTTRANSPARENT（见类注释）
     // 让内容区容器自窗口创建起就是原生子窗口：否则显示带属主关系的子窗体
     // 时，Qt 会在此刻才把容器提升为原生（新建一块空白表面盖在已渲染的内
@@ -278,6 +304,35 @@ bool AuWindow::platformClipsWindowShape() const
     return true;
 }
 
+// ---- 边框阴影平台通道 ----
+
+// Windows 阴影默认由 DWM 在窗体外渲染；客户端阴影环可用（ARGB 透明窗体
+// 已就绪）时由客户端自绘，不可用（运行中开启、无法重建透明窗体）时回落
+// DWM 原生阴影、不留环
+bool AuWindow::platformShadowPaintedExternally() const
+{
+    return !auClientShadowCapable(this);
+}
+
+// 阴影开关变化：重新应用原生样式（DWM 框架扩展边距随开关与能力切换）。
+// 客户端阴影环与桌面混合需要 ARGB 透明窗体——Windows 默认不透明，须在
+// 原生窗口创建前补设 WA_TranslucentBackground（创建时生效）；已创建后
+// Qt 无法就地切换透明格式，警告并保持 DWM 阴影（见 auClientShadowCapable）。
+void AuWindow::platformShadowUpdate()
+{
+    if (m_borderShadowEnabled) {
+        if (!testAttribute(Qt::WA_WState_Created)) {
+            setAttribute(Qt::WA_TranslucentBackground);
+        } else if (windowHandle() && !windowHandle()->format().hasAlpha()) {
+            qWarning("AuWindow: 客户端阴影需在 show() 之前开启"
+                     "（ARGB 透明窗体需重建原生窗口），保持 DWM 原生阴影");
+        }
+    }
+    if (!testAttribute(Qt::WA_WState_Created))
+        return;
+    applyWindowStyles();
+}
+
 bool AuWindow::platformIsComposited() const
 {
     return true;
@@ -297,6 +352,23 @@ void AuWindow::applyWindowStyles()
     HWND hwnd = reinterpret_cast<HWND>(winId());
     if (!hwnd)
         return;
+    // 无 caption 的窗口 DWM 默认不绘制框架阴影；向客户区扩展 1px 边框
+    // 强制 DWM 恢复完整框架渲染（外阴影 + 系统细边框，Chromium 同款手法）。
+    // 客户端阴影环开启时传 0 边距停用 DWM 框架阴影（阴影改由 paintEvent
+    // 自绘，避免双重阴影），随开关切换即时生效。
+    typedef HRESULT(WINAPI * DwmExtendFrameIntoClientAreaPtr)(HWND, const MARGINS *);
+    static DwmExtendFrameIntoClientAreaPtr pExtend = []() {
+        HMODULE dwm = LoadLibraryW(L"dwmapi.dll");
+        return dwm ? reinterpret_cast<DwmExtendFrameIntoClientAreaPtr>(
+                         GetProcAddress(dwm, "DwmExtendFrameIntoClientArea"))
+                   : nullptr;
+    }();
+    if (pExtend) {
+        // 客户端阴影环可用时停用 DWM 框架阴影（避免双重阴影）；不可用
+        // （运行中开启且无 alpha 通道）或未开启时保持 DWM 阴影
+        const MARGINS margins = {0, 0, 0, auClientShadowCapable(this) ? 0 : 1};
+        pExtend(hwnd, &margins);
+    }
     LONG_PTR style = GetWindowLongPtrW(hwnd, GWL_STYLE);
     // 保留 WS_THICKFRAME（系统缩放热区 / DWM 阴影 / Aero Snap）等原生样式，
     // 剥离 WS_CAPTION：caption 框架走 DWM 合成路径绘制，WM_NCACTIVATE 的
@@ -320,19 +392,6 @@ void AuWindow::applyWindowStyles()
     SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
                  SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER
                      | SWP_NOACTIVATE);
-    // 无 caption 的窗口 DWM 默认不绘制框架阴影；向客户区扩展 1px 边框
-    // 强制 DWM 恢复完整框架渲染（外阴影 + 系统细边框，Chromium 同款手法）
-    typedef HRESULT(WINAPI * DwmExtendFrameIntoClientAreaPtr)(HWND, const MARGINS *);
-    static DwmExtendFrameIntoClientAreaPtr pExtend = []() {
-        HMODULE dwm = LoadLibraryW(L"dwmapi.dll");
-        return dwm ? reinterpret_cast<DwmExtendFrameIntoClientAreaPtr>(
-                         GetProcAddress(dwm, "DwmExtendFrameIntoClientArea"))
-                   : nullptr;
-    }();
-    if (pExtend) {
-        const MARGINS margins = {0, 0, 0, 1};
-        pExtend(hwnd, &margins);
-    }
 }
 
 void AuWindow::applyWindowRoundedCorners()
@@ -536,8 +595,9 @@ bool AuWindow::nativeEvent(const QByteArray &eventType, void *message, AuNativeE
     switch (msg->message) {
     case WM_ERASEBKGND:
         // 顶层窗口的背景擦除同样来自 Qt 窗口类的白色背景刷（创建 / 显示、
-        // 系统发起的重绘等时机），以主题背景色替代，消除首帧白闪
-        auEraseWithWindowBackground(this, msg, result);
+        // 系统发起的重绘等时机），以主题背景色替代，消除首帧白闪；
+        // ARGB 透明窗体（客户端阴影开启）跳过实色填充（见函数注释）
+        auEraseWithWindowBackground(this, msg, result, true);
         return true;
     case WM_NCACTIVATE:
         // 激活/失活统一传 lParam=-1：DefWindowProc 更新激活状态但跳过非

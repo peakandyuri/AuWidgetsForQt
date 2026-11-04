@@ -4,6 +4,8 @@
 #include "AuWindowKit_global.h"
 #include "AuTitleBar.h"
 
+#include <QColor>
+#include <QImage>
 #include <QPointer>
 #include <QWidget>
 
@@ -36,13 +38,16 @@ using AuNativeEventResult = long;
  *    圆角仅 Win11 生效（DWM 圆角偏好 + 阴影并存）；Win10 上为保留系统
  *    阴影降级为直角（SetWindowRgn 区域圆角会关掉 DWM 框架渲染，弃用）。
  *  - Linux/X11：Qt 无边框 + 透明背景，拖动与缩放通过 _NET_WM_MOVERESIZE
- *    交给窗口管理器（在支持的 WM 上同样具有边缘分屏）。阴影说明：X11 对
- *    无边框窗口没有窗口管理器侧的阴影通道（KWin 系的 _KDE_NET_WM_SHADOW
- *    协议要求客户端自制贴图供图，非 WM 主题原生阴影），按需求本模块不做
- *    任何客户端阴影，Linux 下窗体为纯内容矩形无阴影（Windows 的 DWM
- *    原生阴影不受影响）。圆角在混成下由 ARGB alpha 平滑呈现，无混成时
+ *    交给窗口管理器（在支持的 WM 上同样具有边缘分屏）。阴影：KWin 系
+ *    窗口管理器（ukui-kwin / KWin）经 _KDE_NET_WM_SHADOW 协议由客户端
+ *    提供阴影贴图、WM 在窗口外合成（peony / ukui 生态同款），窗体几何
+ *    不变、缩放零重绘；其它混成 WM 回退为客户端自绘阴影环（窗体四周
+ *    预留 shadowMargin 留白，最大化自动收起）。两条通道共用一套贴图
+ *    渲染，参数见 AuWindowStyle 的 shadow 系列字段；X11 默认开启
+ *    （无混成自动关闭）。圆角在混成下由 ARGB alpha 平滑呈现，无混成时
  *    区域裁剪；缩放尊重 WM_NORMAL_HINTS 中的最小尺寸。
- *  - 其它平台：退化为手动拖动 / 缩放（同样钳制最小宽高），无阴影。
+ *  - 其它平台：退化为手动拖动 / 缩放（同样钳制最小宽高），无阴影
+ *    （可经 setBorderShadowEnabled(true) 开启客户端阴影环）。
  *
  * 使用方式与 QMainWindow 贴合：
  *  - setWindowTitle() / setWindowIcon() 直接同步到自绘标题栏；
@@ -170,6 +175,25 @@ public:
     void setTaskbarVisible(bool visible);
     bool isTaskbarVisible() const;
 
+    // ---- 边框阴影 ----
+    /// 是否启用 peony / UKUI 同款边框阴影（参数取自样式：
+    /// AuWindowStyle::shadowColor / shadowBlurRadius / shadowMargin）。
+    /// 各平台呈现通道不同：
+    ///  - Linux/X11（ukui-kwin / KWin，WM 支持 _KDE_NET_WM_SHADOW）：
+    ///    阴影贴图交窗口管理器在窗口外合成（ukui/peony 生态同款），
+    ///    窗体几何不变、缩放零重绘开销；
+    ///  - Linux/X11 其它混成 WM：客户端自绘阴影环——窗体四周外扩
+    ///    shadowMargin 留白（resize()/setGeometry() 的尺寸含留白），
+    ///    最大化 / 全屏自动收起；
+    ///  - Windows：默认关闭（保留 DWM 原生阴影）；开启后切换为客户端
+    ///    阴影环并停用 DWM 框架阴影，避免双重阴影；
+    ///  - 无混成（ARGB 不可用）环境一律自动关闭。
+    /// 默认值：Linux 开启，其余平台关闭。
+    void setBorderShadowEnabled(bool enabled);
+    /// 当前是否启用边框阴影。注意无混成 / 最大化时阴影会自动收起
+    /// （见上），此处返回的是开关本身。
+    bool isBorderShadowEnabled() const;
+
     // ---- Dialog 方式展示 ----
     /// 切换 Dialog 形态（Qt::Dialog 标志：带父窗口时作为对话框、居中于父窗口）。
     /// 需在 show() 之前调用（切换会重建原生窗口）。
@@ -232,6 +256,13 @@ private:
     int effectiveMargin() const;
     void ensurePolishedFrame();
     void connectTitleBar();
+
+    // ---- 边框阴影（peony / ukui 同款实现，贴图渲染见 AuBorderShadow） ----
+    /// 在内容区四周绘制阴影环（客户端阴影通道；WM 合成通道不经此处）
+    void paintBorderShadow(QPainter *painter, const QRect &content);
+    /// 保证九宫格贴图缓存有效（键：颜色 / 模糊半径 / 四角半径 / dpr）
+    void ensureShadowTile();
+    void invalidateShadowTile();
     /// 首次显示前的默认摆放：用户未显式定位（未调用过 move()/setGeometry()，
     /// 同 QDialog 的判定）时居中——有可见父窗口居中于父窗口，否则居中于
     /// 光标所在屏幕的工作区。
@@ -305,6 +336,12 @@ private:
     bool platformIsComposited() const;
     /// 窗体形状是否由系统裁剪（Windows：DWM/窗口区域，客户端圆角浮层无用）
     bool platformClipsWindowShape() const;
+    /// 阴影开关 / 样式 / 圆角变化后刷新平台阴影通道（X11：上传或清除
+    /// _KDE_NET_WM_SHADOW 阴影贴图属性；Windows：DWM 框架扩展随开关切换）
+    void platformShadowUpdate();
+    /// 阴影是否由平台在窗体矩形外合成（X11：WM 支持 _KDE_NET_WM_SHADOW
+    /// 且混成时为真，窗体不留阴影环）；其余平台 false（客户端自绘阴影环）
+    bool platformShadowPaintedExternally() const;
 
     // Windows 原生辅助（仅在 AuWindowWin.cpp 中定义与调用）
     void applyWindowStyles();
@@ -335,6 +372,16 @@ private:
     bool m_dwmCornerOk;                 // Windows：DWM 圆角偏好是否可用（Win11+）
     bool m_x11Compositing;              // X11：透明是否实际生效（决定平滑圆角 / mask）
     bool m_x11CheckedTranslucency;      // X11：是否已在首显时检测过透明能力
+
+    // 边框阴影状态（贴图渲染见 AuBorderShadow；WM 合成通道的状态由平台
+    // 文件自持，此处仅存开关与客户端绘制的贴图缓存）
+    bool m_borderShadowEnabled;         ///< 阴影开关（platformInit 按平台设默认）
+    QImage m_shadowTile;                ///< 九宫格贴图缓存（一次模糊，反复绘制）
+    QColor m_shadowTileColor;           ///< 贴图缓存键：阴影色
+    int m_shadowTileBlur;               ///< 贴图缓存键：模糊半径
+    int m_shadowTileRadii[4];           ///< 贴图缓存键：四角半径
+    qreal m_shadowTileDpr;              ///< 贴图缓存键：设备像素比
+    bool m_shadowTileValid;             ///< 缓存是否与当前键匹配
 
     // 手动拖动 / 缩放状态（无系统 move-resize 能力时的兜底路径）
     bool m_manualResizing;

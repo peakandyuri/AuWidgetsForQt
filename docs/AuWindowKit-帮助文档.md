@@ -23,9 +23,9 @@ AuWindowKit/
 
 | 平台 | 边框 / 阴影 | 拖动与缩放 | 边缘分屏 | 圆角 |
 | --- | --- | --- | --- | --- |
-| **Windows** | 保留 `WS_THICKFRAME` 等原生样式，经 `WM_NCCALCSIZE` 去掉可见边框；阴影由 DWM 提供 | 系统非客户区（`WM_NCHITTEST`） | 原生 Aero Snap（拖到屏幕上/左/右边缘） | Win11 走 DWM 圆角偏好，Win10 用窗口区域 |
+| **Windows** | 保留 `WS_THICKFRAME` 等原生样式，经 `WM_NCCALCSIZE` 去掉可见边框；阴影由 DWM 提供（可经 `setBorderShadowEnabled(true)` 切换为 peony/UKUI 同款客户端阴影环，需在 show() 前开启） | 系统非客户区（`WM_NCHITTEST`） | 原生 Aero Snap（拖到屏幕上/左/右边缘） | Win11 走 DWM 圆角偏好，Win10 用窗口区域 |
 | **Linux/X11** | Qt 无边框 + 透明背景（ARGB）。KWin/UKUI 系 WM 上通过 `_KDE_NET_WM_SHADOW` 协议由混成器绘制**与原生窗口相同的主题阴影**（窗口即纯内容，无边距）；其他 WM 回退为自绘阴影 | 拖动 / 缩放经 `_NET_WM_MOVERESIZE` 交给 WM：**拖顶最大化预览、边缘半屏、snap-assist、拖出屏幕全部为系统原生行为**；WM 忽略时自动回退手动拖动（左右可出屏） | KWin 系原生边缘分屏（含贴边后 snap-assist） | 混成下靠 alpha 通道 + 抗锯齿平滑呈现；无混成时区域裁剪 |
-| **其它平台** | 自绘阴影 | 手动拖动 / 缩放（钳制最小宽高） | 无 | 区域裁剪 |
+| **其它平台** | 自绘阴影（默认关闭，`setBorderShadowEnabled(true)` 开启） | 手动拖动 / 缩放（钳制最小宽高） | 无 | 区域裁剪 |
 
 最小宽高的约束方式：Windows 经 `WM_GETMINMAXINFO` 对原生边框缩放生效；其它平台由手动缩放路径与布局 `minimumSize` 保证。
 
@@ -200,6 +200,7 @@ Windows 上 1~5 映射为系统小圆角（4px）、>5 映射为系统标准圆�
 | 圆角 | `setWindowRadius()` `windowRadius()` |
 | 关闭拦截 | `setCloseInterceptionEnabled()` `isCloseInterceptionEnabled()` `forceClose()` |
 | 任务栏 | `setTaskbarVisible()` `isTaskbarVisible()` |
+| 边框阴影 | `setBorderShadowEnabled()` `isBorderShadowEnabled()`（参数经 `AuWindowStyle` 的 shadow 系列） |
 | X11 系统移动 | `setSystemWindowMoveEnabled()` `isSystemWindowMoveEnabled()` |
 | 边缘吸附 | `setEdgeSnapEnabled()` `isEdgeSnapEnabled()` |
 | Dialog | `setDialogMode()` `setModality()` `exec()` `done()` `accept()` `reject()` `result()` `setResult()` |
@@ -222,9 +223,15 @@ Windows 上 1~5 映射为系统小圆角（4px）、>5 映射为系统标准圆�
    此时以窗口实际 visual（ARGB depth 32）兜底判断——透明生效即启用平滑圆角，
    未生效（无混成）则退化为直角。
 2. **X11 原生阴影**：KWin/UKUI 系窗口管理器支持 `_KDE_NET_WM_SHADOW` 协议，
-   库会自动设置该属性，由混成器绘制与原生窗口**完全相同的主题阴影**
-   （窗口本身即纯内容，无边距环）。非 KWin 系 WM 回退为自绘阴影
-   （圆角矩形 SDF + 高斯距离场，亮 / 暗背景均有柔和过渡）。
+   库会自动上传阴影贴图并设置该属性，由混成器在窗口外合成
+   （peony / qt5-ukui-platformtheme 同款机制，窗口本身即纯内容，无边距环，
+   缩放零重绘开销）。非 KWin 系 WM 回退为客户端自绘阴影环：窗体四周
+   外扩 `shadowMargin` 留白（resize/setGeometry 的尺寸含留白），最大化 /
+   全屏自动收起。两通道共用同一贴图渲染（圆角矩形填色 + `qt_blurImage`
+   高斯模糊 + 九宫格切图，与 KWin 贴图摆放精确对齐），参数取自样式的
+   `shadowColor` / `shadowBlurRadius` / `shadowMargin`；开关见
+   `setBorderShadowEnabled()`（Linux 默认开启，无混成自动关闭；
+   Windows 默认关闭以保留 DWM 原生阴影）。
 3. **X11 圆角平滑**：混成下窗口为 ARGB 透明背景，圆角靠 alpha 通道抗锯齿呈现，
    不使用 1-bit 区域裁剪（那是锯齿来源）。
 4. **X11 系统移动通道（可选）**：`setSystemWindowMoveEnabled(true)` 后拖动 /

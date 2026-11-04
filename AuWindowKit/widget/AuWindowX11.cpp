@@ -1,10 +1,12 @@
 #include "AuWindow.h"
+#include "AuBorderShadow.h"
 #include "AuWindow_p.h"
 
 #include <QCursor>
 #include <QDateTime>
 #include <QGuiApplication>
 #include <QMouseEvent>
+#include <QObject>
 #include <QTimer>
 #include <qpa/qwindowsysteminterface_p.h>
 
@@ -19,6 +21,7 @@
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
 #include <X11/Xutil.h>   // XImage / XPutImage（原生阴影贴图上传）
+#include <cstdlib>
 #include <cstring>
 
 // X11 头文件中的宏与 Qt / 标准类型冲突，按 Qt 源码惯例取消定义
@@ -60,6 +63,41 @@ inline bool translucencyAvailable(WId windowId)
     if (XGetWindowAttributes(d, static_cast<Window>(windowId), &attrs))
         return attrs.depth == 32;
     return false;
+}
+
+/// 窗口管理器是否支持 KDE 阴影协议（_KDE_NET_WM_SHADOW）：KWin / ukui-kwin
+/// 在根窗口的 _NET_SUPPORTED 中通告该原子。结果按连接缓存（WM 不中途更换
+/// 协议支持）。
+inline bool wmSupportsKdeShadow()
+{
+    static bool s_supported = []() {
+        Display *d = display();
+        if (!d)
+            return false;
+        Atom shadow = XInternAtom(d, "_KDE_NET_WM_SHADOW", True);
+        if (shadow == None)
+            return false;
+        Atom supported = XInternAtom(d, "_NET_SUPPORTED", True);
+        if (supported == None)
+            return false;
+        Atom actualType = None;
+        int actualFormat = 0;
+        unsigned long nitems = 0, bytesAfter = 0;
+        unsigned char *data = nullptr;
+        if (XGetWindowProperty(d, XDefaultRootWindow(d), supported, 0, 65536, False,
+                               XA_ATOM, &actualType, &actualFormat,
+                               &nitems, &bytesAfter, &data) != Success
+            || actualType != XA_ATOM || !data) {
+            return false;
+        }
+        const Atom *atoms = reinterpret_cast<const Atom *>(data);
+        bool found = false;
+        for (unsigned long i = 0; i < nitems && !found; ++i)
+            found = (atoms[i] == shadow);
+        XFree(data);
+        return found;
+    }();
+    return s_supported;
 }
 
 } // namespace AuX11
@@ -161,6 +199,172 @@ bool auSendNetMoveResizeWindow(WId windowId, const QPoint &pos)
 
 } // namespace
 
+// ============================================================================
+// KDE 阴影协议通道（_KDE_NET_WM_SHADOW）：ukui-kwin / KWin 系窗口管理器上
+// 无边框窗口阴影的标准来源——客户端提供 8 块阴影贴图（4 角 + 4 条 1px 边条，
+// 九宫格切法与 peony / qt5-ukui-platformtheme 的 ConfigShadowHelper 一致），
+// 写入窗口的 _KDE_NET_WM_SHADOW 属性后由 WM 在窗体矩形之外合成。窗体几何
+// 不变、缩放零重绘开销，规避了 peony 主窗口因 QGraphicsEffect 随 resize
+// 反复全图模糊造成的撕裂（peony 源码 main-window.cpp:1702 注释的问题）。
+// 贴图渲染与客户端阴影环共用 AuWindowDetail::auRenderBorderShadowTile；
+// 对齐推导（全部按设备像素）：属性边距 = 渐隐环 b，角贴图边长 = b + 圆角
+// 半径 r，KWin 将角贴图摆在窗体 ± b 的 outerRect 四角 → 贴图内 (b, b) 处
+// 的窗口矩形弧线恰好落在窗角，r 半径的挖空区由 ARGB 窗口的透明角像素
+// 透出阴影。最大化 / 全屏 WM 自动停用阴影（KWin wantsShadowToBeRendered），
+// 客户端无需处理。状态以 QObject 子对象挂在窗体上，随窗体析构自动释放。
+// 注：圆角半径 > 模糊环宽时角贴图弧外阴影略有裁剪（ukui 同样如此），
+// 样式默认值（blur 24~28 ≥ 常用半径）不受影响。
+// ============================================================================
+class AuX11KdeShadow : public QObject
+{
+public:
+    explicit AuX11KdeShadow(AuWindow *window)
+        : QObject(window), m_window(window)
+    {
+        setObjectName(QStringLiteral("auwindow_kde_shadow"));
+    }
+
+    ~AuX11KdeShadow() override { freeTiles(); }
+
+    /// tile：设备像素九宫格位图（AuWindow::ensureShadowTile 缓存产物）。
+    /// blur / radii：贴图的逻辑键值（与渲染参数一致），dpr：设备像素比。
+    void apply(const QImage &tile, int blur, const int radii[4], qreal dpr)
+    {
+        Display *d = AuX11::display();
+        if (!d || tile.isNull() || tile.format() != QImage::Format_ARGB32_Premultiplied)
+            return;
+        const Window win = static_cast<Window>(m_window->winId());
+        if (!win)
+            return;
+        if (m_win != win) {          // 原生窗口重建：旧贴图随旧窗口销毁
+            freeTiles();
+            m_win = win;
+        }
+
+        const int S = tile.width();
+        const int b = qRound(blur * dpr);              // 渐隐环（设备像素）
+        const int r[4] = {
+            qRound(radii[0] * dpr), qRound(radii[1] * dpr),
+            qRound(radii[2] * dpr), qRound(radii[3] * dpr)
+        };
+        const int R = qMax(qMax(r[0], r[1]), qMax(r[2], r[3]));
+        const int corner[4] = { b + r[0], b + r[1], b + r[2], b + r[3] };
+        const int center = b + R;                      // 内窗矩形中心条位置
+
+        // 九宫格切图（顺序即属性中的贴图顺序：上 / 右上 / 右 / 右下 /
+        // 下 / 左下 / 左 / 左上），角贴图原尺寸摆放、1px 边条由 WM 拉伸
+        QImage top      = tile.copy(center, 0, 1, b + R);
+        QImage topRight = tile.copy(S - corner[1], 0, corner[1], corner[1]);
+        QImage right    = tile.copy(S - corner[1], center, corner[1], 1);
+        QImage bottomRight = tile.copy(S - corner[3], S - corner[3], corner[3], corner[3]);
+        QImage bottom   = tile.copy(center, S - (b + R), 1, b + R);
+        QImage bottomLeft  = tile.copy(0, S - corner[2], corner[2], corner[2]);
+        QImage left     = tile.copy(0, center, corner[2], 1);
+        QImage topLeft  = tile.copy(0, 0, corner[0], corner[0]);
+
+        Pixmap newTiles[8] = { None, None, None, None, None, None, None, None };
+        const QImage *imgs[8] = { &top, &topRight, &right, &bottomRight,
+                                  &bottom, &bottomLeft, &left, &topLeft };
+        const ::Window root = XDefaultRootWindow(d);
+        bool ok = true;
+        for (int i = 0; i < 8 && ok; ++i) {
+            const QImage &img = *imgs[i];
+            if (img.isNull() || img.format() != QImage::Format_ARGB32_Premultiplied) {
+                ok = false;
+                break;
+            }
+            newTiles[i] = uploadPixmap(d, root, img);
+            if (newTiles[i] == None)
+                ok = false;
+        }
+        if (!ok) {
+            for (Pixmap px : newTiles)
+                if (px != None)
+                    XFreePixmap(d, px);
+            return;
+        }
+        freeTiles();
+        for (int i = 0; i < 8; ++i)
+            m_tiles[i] = newTiles[i];
+
+        // 属性：8 个贴图 XID + 4 个边距（上 / 右 / 下 / 左，设备像素），
+        // 类型 XA_CARDINAL / 格式 32 —— 与 KWin、kwindowsystem 的
+        // KWindowShadow X11 后端逐字段一致
+        CARD32 data[12] = {
+            CARD32(m_tiles[0]), CARD32(m_tiles[1]), CARD32(m_tiles[2]), CARD32(m_tiles[3]),
+            CARD32(m_tiles[4]), CARD32(m_tiles[5]), CARD32(m_tiles[6]), CARD32(m_tiles[7]),
+            CARD32(b), CARD32(b), CARD32(b), CARD32(b)
+        };
+        const Atom atom = XInternAtom(d, "_KDE_NET_WM_SHADOW", False);
+        XChangeProperty(d, m_win, atom, XA_CARDINAL, 32, PropModeReplace,
+                        reinterpret_cast<unsigned char *>(data), 12);
+        XFlush(d);
+        m_applied = true;
+    }
+
+    void clear()
+    {
+        if (m_applied && m_win) {
+            if (Display *d = AuX11::display()) {
+                XDeleteProperty(d, m_win,
+                                XInternAtom(d, "_KDE_NET_WM_SHADOW", False));
+                XFlush(d);
+            }
+        }
+        m_applied = false;
+        freeTiles();
+    }
+
+private:
+    /// 创建 32 位深 ARGB 贴图并上传位图。XDestroyImage 会 free 图像数据，
+    /// 因此位图先拷入 malloc 缓冲（析构时由 Xlib 释放），避免悬空指针。
+    static Pixmap uploadPixmap(Display *d, ::Window root, const QImage &img)
+    {
+        const int w = img.width(), h = img.height();
+        if (w <= 0 || h <= 0 || w > 4096 || h > 4096)
+            return None;
+        char *buf = static_cast<char *>(malloc(size_t(w) * 4 * size_t(h)));
+        if (!buf)
+            return None;
+        memcpy(buf, img.constBits(), size_t(img.bytesPerLine()) * size_t(h));
+        XImage *ximg = XCreateImage(d, nullptr, 32, ZPixmap, 0,
+                                    buf, w, h, 32, w * 4);
+        if (!ximg) {
+            free(buf);
+            return None;
+        }
+        const Pixmap px = XCreatePixmap(d, root, w, h, 32);
+        if (!px) {
+            XDestroyImage(ximg);
+            return None;
+        }
+        GC gc = XCreateGC(d, px, 0, nullptr);
+        XPutImage(d, px, gc, ximg, 0, 0, 0, 0, w, h);
+        XFreeGC(d, gc);
+        XDestroyImage(ximg);      // 释放 malloc 缓冲
+        return px;
+    }
+
+    void freeTiles()
+    {
+        if (Display *d = AuX11::display()) {
+            for (Pixmap &px : m_tiles) {
+                if (px != None)
+                    XFreePixmap(d, px);
+                px = None;
+            }
+        } else {
+            for (Pixmap &px : m_tiles)
+                px = None;
+        }
+    }
+
+    AuWindow *m_window;
+    ::Window m_win = None;
+    Pixmap m_tiles[8] = { None, None, None, None, None, None, None, None };
+    bool m_applied = false;
+};
+
 // ---- 平台钩子 ----
 
 void AuWindow::platformInit()
@@ -170,6 +374,9 @@ void AuWindow::platformInit()
     setMouseTracking(true);
     m_client = new QWidget(this);
     setupEdgeGrips();
+    // Linux 默认开启边框阴影（ukui-kwin / KWin 走 WM 合成，其它混成 WM
+    // 走客户端阴影环；无混成时经 effectiveMargin 自动收起）
+    m_borderShadowEnabled = true;
     // 系统通道（Qt 5.15+ startSystemMove/Resize）：拖动/缩放/贴靠全部由 WM
     // 原生完成，默认开启。实测接管后本进程仅 motion/enter 事件不再投递
     // （QTBUG-69716 族，表现为 hover 失效），ConfigureNotify 正常到达，
@@ -181,7 +388,13 @@ void AuWindow::platformInit()
 #endif
 }
 
-void AuWindow::platformWinIdChanged() {}
+void AuWindow::platformWinIdChanged()
+{
+    // 原生窗口重建（Dialog 模式切换等）：旧窗口的阴影属性随窗口销毁，
+    // 新窗口需重新上传贴图并写属性（首显前 m_x11Compositing 未检测，
+    // 此处先清空，platformFirstShow 再按能力应用）
+    platformShadowUpdate();
+}
 
 void AuWindow::platformFirstShow()
 {
@@ -202,6 +415,8 @@ void AuWindow::platformFirstShow()
         XFlush(display);
     }
     relayoutEdgeGrips();
+    // 混成能力已定：应用 / 清除 KDE 阴影协议贴图
+    platformShadowUpdate();
 }
 
 void AuWindow::platformResized() {}
@@ -298,6 +513,40 @@ void AuWindow::platformMouseMoveEvent(QMouseEvent *event)
 bool AuWindow::platformIsComposited() const
 {
     return !AuX11::isPlatformX11() || m_x11Compositing;
+}
+
+// ---- 边框阴影平台通道 ----
+
+// ukui-kwin / KWin 支持 KDE 阴影协议且混成运行时，阴影由 WM 在窗体矩形外
+// 合成（KWin wantsShadowToBeRendered 在最大化 / 全屏时自动停用），窗体不
+// 留阴影环；其余混成 WM（mutter / xfwm 等）回退为客户端自绘阴影环。
+bool AuWindow::platformShadowPaintedExternally() const
+{
+    return AuX11::isPlatformX11() && m_x11Compositing
+           && AuX11::wmSupportsKdeShadow();
+}
+
+void AuWindow::platformShadowUpdate()
+{
+    if (!AuX11::isPlatformX11())
+        return;   // Wayland 等无 KDE 阴影协议：客户端阴影环经公共代码生效
+    AuX11KdeShadow *state = findChild<AuX11KdeShadow *>();
+    if (!m_borderShadowEnabled || !m_x11Compositing
+        || !AuX11::wmSupportsKdeShadow()) {
+        if (state)
+            state->clear();
+        return;
+    }
+    // 与客户端绘制共用同一贴图缓存（键：样式阴影参数 / 生效四角半径 / dpr）
+    ensureShadowTile();
+    if (m_shadowTile.isNull()) {
+        if (state)
+            state->clear();
+        return;
+    }
+    if (!state)
+        state = new AuX11KdeShadow(this);
+    state->apply(m_shadowTile, m_shadowTileBlur, m_shadowTileRadii, m_shadowTileDpr);
 }
 
 bool AuWindow::platformClipsWindowShape() const

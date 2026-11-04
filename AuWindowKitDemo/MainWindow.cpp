@@ -164,6 +164,17 @@ QWidget *MainWindow::buildWindowControlPage()
     snapRow->addStretch(1);
     pageLayout->addLayout(snapRow);
 
+    // peony / UKUI 同款客户端边框阴影（AuWindowStyle 的 shadow 系列参数渲染）。
+    // Windows 默认关闭（保留 DWM 原生阴影），勾选后切换为客户端阴影环；
+    // X11 默认开启：ukui-kwin / KWin 上阴影由 WM 合成，其它混成 WM 为客户端环。
+    QHBoxLayout *shadowRow = new QHBoxLayout;
+    QCheckBox *shadowBox = new QCheckBox(QStringLiteral("客户端边框阴影（peony/UKUI 同款；开启后替代 Windows 的 DWM 阴影）"));
+    shadowBox->setChecked(isBorderShadowEnabled());
+    connect(shadowBox, &QCheckBox::toggled, this, &AuWindow::setBorderShadowEnabled);
+    shadowRow->addWidget(shadowBox);
+    shadowRow->addStretch(1);
+    pageLayout->addLayout(shadowRow);
+
     // 系统通道 = 把拖动/缩放交给窗口管理器（Qt 5.15 startSystemMove/Resize），
     // 吸附即 WM 原生 Quick Tiling；代价是接管后本进程鼠标事件管线依赖 WM 实现，
     // 实测 UKUI/KWin 系 WM 上存在几何脱节风险（见 setSystemWindowMoveEnabled 文档）。

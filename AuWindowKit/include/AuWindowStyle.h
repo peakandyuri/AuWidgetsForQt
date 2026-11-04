@@ -20,10 +20,13 @@ class AuWindow;
  *  3. 内置主题工厂：createLightStyle() / createDarkStyle()。
  *
  * 说明：
- *  - 窗体阴影：Windows 由系统 DWM 原生提供（无需也无法经此样式定制）；
- *    X11 对无边框窗口没有窗口管理器侧的阴影通道（_KDE_NET_WM_SHADOW
- *    需客户端供图，非原生主题阴影），按需求本模块不做客户端阴影，
- *    shadow 系列字段当前在所有平台均无视觉效果（保留字段，暂勿依赖）。
+ *  - 窗体阴影（shadow 系列字段）：peony / UKUI 同款边框阴影，经
+ *    AuWindow::setBorderShadowEnabled() 启用（Linux 默认开启）。KWin 系
+ *    WM（ukui-kwin / KWin）由 WM 经 _KDE_NET_WM_SHADOW 协议在窗体外合成
+ *    （窗体几何不变）；其余平台客户端自绘阴影环（Windows 默认关闭以
+ *    保留 DWM 原生阴影）。shadowMargin 为窗体四周的阴影留白宽度，同时
+ *    是模糊半径的上限（超出部分会被窗体边缘裁出硬边）；shadowColor
+ *    通常带 alpha（默认值按原生窗口装饰阴影标定）。
  *  - 颜色字段为无效 QColor 时表示不绘制对应元素（如关闭窗体描边）。
  */
 class AUWINDOWKIT_EXPORT AuWindowStyle
@@ -84,12 +87,12 @@ public:
     QColor closeButtonGlyphColor() const;               ///< 关闭按钮悬停 / 按下时图标色（默认白）
     void setCloseButtonGlyphColor(const QColor &color);
 
-    // ---- 阴影（当前无视觉效果：Windows 由 DWM 原生提供，其余平台不做客户端阴影） ----
-    int shadowMargin() const;                           ///< 阴影外扩留白（保留字段）
+    // ---- 阴影（peony / UKUI 同款边框阴影，经 AuWindow::setBorderShadowEnabled 启用） ----
+    int shadowMargin() const;                           ///< 阴影留白宽度（客户端阴影环时窗体四周外扩；同时为模糊上限）
     void setShadowMargin(int margin);
-    int shadowBlurRadius() const;                       ///< 阴影模糊半径（保留字段）
+    int shadowBlurRadius() const;                       ///< 阴影模糊半径（超过 shadowMargin 部分按 shadowMargin 渲染）
     void setShadowBlurRadius(int radius);
-    QColor shadowColor() const;                         ///< 阴影颜色（保留字段）
+    QColor shadowColor() const;                         ///< 阴影颜色（一般带 alpha；无效色 = 不绘制阴影）
     void setShadowColor(const QColor &color);
 
 private:

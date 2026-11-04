@@ -1,6 +1,7 @@
 #include "AuWindow.h"
 #include "AuTitleBar.h"
 #include "AuWindowStyle.h"
+#include "AuBorderShadow.h"
 #include "AuWindow_p.h"
 
 #include <QDateTime>
@@ -164,6 +165,12 @@ AuWindow::AuWindow(QWidget *parent, Qt::WindowFlags flags)
     , m_dwmCornerOk(false)
     , m_x11Compositing(false)
     , m_x11CheckedTranslucency(false)
+    , m_borderShadowEnabled(false)   // platformInit() 按平台能力设默认值
+    , m_shadowTileColor()
+    , m_shadowTileBlur(0)
+    , m_shadowTileRadii{0, 0, 0, 0}
+    , m_shadowTileDpr(1.0)
+    , m_shadowTileValid(false)
     , m_manualResizing(false)
     , m_manualMoving(false)
     , m_systemMoveEnabled(false)   // 系统通道在 platformInit() 中按平台能力开启
@@ -331,6 +338,8 @@ void AuWindow::setWindowRadius(int radius)
     for (int &r : m_cornerRadii)
         r = radius;
     platformRadiusChanged();
+    invalidateShadowTile();      // 贴图弧形跟随四角半径
+    platformShadowUpdate();      // X11：WM 合成贴图重传
     relayout(); // 四角裁剪浮层 / 标题栏圆弧跟随
     update();
 }
@@ -342,6 +351,8 @@ void AuWindow::setCornerRadius(Qt::Corner corner, int radius)
         return;
     m_cornerRadii[int(corner)] = radius;
     platformRadiusChanged();
+    invalidateShadowTile();
+    platformShadowUpdate();
     relayout();
     update();
 }
@@ -415,6 +426,28 @@ void AuWindow::setTaskbarVisible(bool visible)
 bool AuWindow::isTaskbarVisible() const
 {
     return m_taskbarVisible;
+}
+
+// ---- 边框阴影 ----
+
+void AuWindow::setBorderShadowEnabled(bool enabled)
+{
+    if (m_borderShadowEnabled == enabled)
+        return;
+    m_borderShadowEnabled = enabled;
+    platformShadowUpdate();
+    relayout();     // 阴影环宽变化 → 内容区 / 手柄 / 裁剪浮层跟随
+    update();
+}
+
+bool AuWindow::isBorderShadowEnabled() const
+{
+    return m_borderShadowEnabled;
+}
+
+void AuWindow::invalidateShadowTile()
+{
+    m_shadowTileValid = false;
 }
 
 // ---- Dialog / 模态 ----
@@ -513,6 +546,8 @@ void AuWindow::setStyle(AuWindowStyle *style)
         return;
     delete m_style;
     m_style = style;
+    invalidateShadowTile();      // 阴影色 / 模糊 / 留白可能变化
+    platformShadowUpdate();      // X11：刷新 WM 合成贴图；Windows：DWM 跟随
     relayout();
     platformStyleChanged();
     update();
@@ -527,6 +562,8 @@ void AuWindow::onGlobalStyleChanged()
 {
     if (m_style)
         return; // 独立样式不受全局影响
+    invalidateShadowTile();
+    platformShadowUpdate();
     relayout();
     platformStyleChanged();
     update();
@@ -753,10 +790,21 @@ void AuWindow::adoptLayout(QLayout *layout)
 
 int AuWindow::effectiveMargin() const
 {
-    // 阴影留白环：Windows 阴影由 DWM 在窗口外绘制；X11 对无边框窗口没有
-    // WM 侧阴影通道（_KDE_NET_WM_SHADOW 需客户端供图，按需求不做客户端
-    // 阴影），故所有平台窗口均为纯内容矩形。
-    return 0;
+    // 阴影留白环（peony BorderShadowEffect 同款窗口语义：窗体矩形含环，
+    // 内容区内缩）：仅客户端阴影通道生效。WM 合成通道（X11
+    // _KDE_NET_WM_SHADOW，ukui-kwin / KWin）阴影绘制在窗体矩形之外，
+    // 环宽保持 0、窗体几何不受影响。最大化 / 全屏收起；无混成（ARGB
+    // 不可用，阴影画不出来）同样收起。
+    const int margin = style()->shadowMargin();
+    if (margin <= 0 || !m_borderShadowEnabled)
+        return 0;
+    if (isMaximized() || isFullScreen())
+        return 0;
+    if (!platformIsComposited())
+        return 0;
+    if (platformShadowPaintedExternally())
+        return 0;
+    return margin;
 }
 
 void AuWindow::relayout()
@@ -827,6 +875,97 @@ void AuWindow::ensurePolishedFrame()
     platformWinIdChanged();
 }
 
+// ---- 边框阴影（客户端绘制通道） ----
+
+// 九宫格贴图缓存：一次模糊（qt_blurImage）反复绘制，缩放窗口零模糊开销
+// （ukui ConfigShadowHelper 同款策略）。键：颜色 / 模糊半径 / 生效四角
+// 半径 / 设备像素比。
+void AuWindow::ensureShadowTile()
+{
+    const AuWindowStyle *st = style();
+    const QColor color = st->shadowColor();
+    // 模糊半径即渐隐预算：超出 shadowMargin 留白的部分会被窗体边缘裁出
+    // 硬边，钳到留白宽度内（默认 blur 28 / margin 24 → 按 24 渲染）
+    const int blur = qMin(st->shadowBlurRadius(), st->shadowMargin());
+    const qreal dpr = devicePixelRatioF();
+    const int radii[4] = {
+        cornerRadius(Qt::TopLeftCorner), cornerRadius(Qt::TopRightCorner),
+        cornerRadius(Qt::BottomLeftCorner), cornerRadius(Qt::BottomRightCorner)
+    };
+    if (m_shadowTileValid && m_shadowTileColor == color && m_shadowTileBlur == blur
+        && m_shadowTileRadii[0] == radii[0] && m_shadowTileRadii[1] == radii[1]
+        && m_shadowTileRadii[2] == radii[2] && m_shadowTileRadii[3] == radii[3]
+        && m_shadowTileDpr == dpr) {
+        return;
+    }
+    m_shadowTile = AuWindowDetail::auRenderBorderShadowTile(
+        color, blur, radii[0], radii[1], radii[2], radii[3], dpr);
+    m_shadowTileColor = color;
+    m_shadowTileBlur = blur;
+    for (int i = 0; i < 4; ++i)
+        m_shadowTileRadii[i] = radii[i];
+    m_shadowTileDpr = dpr;
+    m_shadowTileValid = true;
+}
+
+// 围绕内容区 content 绘制阴影环（peony / ukui 九宫格摆法）：4 块角贴图
+// 原尺寸对齐窗角弧线，4 条 1px 边条拉伸填充直边段。角贴图会盖到内容区
+// 的圆角挖空区——贴图内部（弧线内）已在渲染时清除为透明，弧外的模糊
+// 阴影恰好从 ARGB 窗口的透明角像素透出，与 KWin 的 WM 侧合成行为一致。
+// 贴图为设备像素位图（未设 DPR 标志）：源矩形一律以逻辑像素给出、经
+// dpr 换算成设备像素源区域，目标矩形为 painter 逻辑坐标。
+void AuWindow::paintBorderShadow(QPainter *painter, const QRect &content)
+{
+    ensureShadowTile();
+    const QImage &tile = m_shadowTile;
+    if (tile.isNull())
+        return;
+
+    const int b = m_shadowTileBlur;
+    if (b <= 0 || content.isEmpty())
+        return;
+    const int rTL = m_shadowTileRadii[0], rTR = m_shadowTileRadii[1];
+    const int rBL = m_shadowTileRadii[2], rBR = m_shadowTileRadii[3];
+    const int R = qMax(qMax(rTL, rTR), qMax(rBL, rBR));
+    // 角贴图边长 = b + 对应角半径（1:1 摆放，不拉伸；直角窗即纯环段 b²）
+    const int cTL = b + rTL, cTR = b + rTR, cBL = b + rBL, cBR = b + rBR;
+    const int stripLen = b + R;          // 边条源条长（伸入内容区至最大弧深）
+    const qreal d = m_shadowTileDpr;     // 逻辑 → 设备像素换算
+    const int L = 2 * R + 2 * b + 1;     // 贴图逻辑边长（渲染时按 dpr 取整）
+
+    const int cl = content.left(), ct = content.top();
+    const int cr = content.right(), cb = content.bottom();
+    const int cw = content.width(), ch = content.height();
+
+    auto put = [&](const QRect &target, int sx, int sy, int sw, int sh) {
+        painter->drawImage(target, tile,
+                           QRect(qRound(sx * d), qRound(sy * d),
+                                 qRound(sw * d), qRound(sh * d)));
+    };
+
+    // 四角（弧线对齐：角贴图原点置于窗角 - 渐隐环宽 b，贴图内 (b, b) 处
+    // 的窗口矩形弧线恰好落在内容区角上）
+    put(QRect(cl - b, ct - b, cTL, cTL), 0, 0, cTL, cTL);
+    put(QRect(cr + 1 - rTR, ct - b, cTR, cTR), L - cTR, 0, cTR, cTR);
+    put(QRect(cl - b, cb + 1 - rBL, cBL, cBL), 0, L - cBL, cBL, cBL);
+    put(QRect(cr + 1 - rBR, cb + 1 - rBR, cBR, cBR), L - cBR, L - cBR, cBR, cBR);
+
+    // 边条：1px 源条拉伸填充直边段；跨度按对应角半径计算，窗口过小时
+    // 角贴图重叠（跨度 ≤ 0）则跳过该边条（KWin 同款处理）
+    const int hSpanTop = cw - rTL - rTR;
+    const int hSpanBottom = cw - rBL - rBR;
+    const int vSpanLeft = ch - rTL - rBL;
+    const int vSpanRight = ch - rTR - rBR;
+    if (hSpanTop > 0)
+        put(QRect(cl + rTL, ct - b, hSpanTop, stripLen), b + R, 0, 1, stripLen);
+    if (hSpanBottom > 0)
+        put(QRect(cl + rBL, cb + 1 - R, hSpanBottom, stripLen), b + R, L - stripLen, 1, stripLen);
+    if (vSpanLeft > 0)
+        put(QRect(cl - b, ct + rTL, stripLen, vSpanLeft), 0, b + R, stripLen, 1);
+    if (vSpanRight > 0)
+        put(QRect(cr + 1 - R, ct + rTR, stripLen, vSpanRight), L - stripLen, b + R, stripLen, 1);
+}
+
 // ---- 绘制 ----
 
 void AuWindow::paintEvent(QPaintEvent *event)
@@ -836,6 +975,12 @@ void AuWindow::paintEvent(QPaintEvent *event)
     const AuWindowStyle *st = style();
     const int margin = effectiveMargin();
     const QRect content = rect().adjusted(margin, margin, -margin, -margin);
+
+    // 阴影环先于内容区背景绘制（贴图与内容区重叠的部分在渲染时已按
+    // 窗口形状清除，弧外渐隐由 ARGB alpha 呈现）
+    if (margin > 0)
+        paintBorderShadow(&painter, content);
+
 
     const bool rounded = !isMaximized() && !isFullScreen()
                          && windowRadius() > 0;
