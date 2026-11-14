@@ -23,6 +23,7 @@ private:
     void buildContent();
     QWidget *buildWindowControlPage();   // 窗体自身特性
     QWidget *buildDialogPage();          // Dialog / 模态
+    QWidget *buildMessageBoxPage();      // AuMessageBox 消息框
     QWidget *buildInheritPage();         // 继承定制 + ui 文件
 
 private slots:
@@ -32,6 +33,7 @@ private slots:
 private:
     QWidget *m_center = nullptr;
     QPushButton *m_themeButton = nullptr;
+    bool m_englishButtonText = false;    // 消息框全局文案演示（中/英切换）
 };
 
 #endif // MAINWINDOW_H

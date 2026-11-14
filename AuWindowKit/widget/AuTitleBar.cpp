@@ -443,6 +443,9 @@ void AuTitleBar::drawButtonGlyph(QPainter &painter, Button button, const QRect &
 
 void AuTitleBar::mousePressEvent(QMouseEvent *event)
 {
+    // 用户重新按下标题栏 = 新手势意图：撤防最大化还原的断言保护窗，
+    // 否则保护窗内的拖动跟随会被 moveEvent 的重断言拽回纠正目标
+    m_window->m_normalRestoreAssert = QRect();
     m_systemDragPending = false;
     if (event->button() == Qt::LeftButton) {
         m_pressedButton = buttonAt(event->pos());

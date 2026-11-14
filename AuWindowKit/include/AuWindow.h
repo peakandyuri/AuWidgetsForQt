@@ -40,14 +40,13 @@ using AuNativeEventResult = long;
  *  - Linux/X11：Qt 无边框 + 透明背景，拖动与缩放通过 _NET_WM_MOVERESIZE
  *    交给窗口管理器（在支持的 WM 上同样具有边缘分屏）。阴影：KWin 系
  *    窗口管理器（ukui-kwin / KWin）经 _KDE_NET_WM_SHADOW 协议由客户端
- *    提供阴影贴图、WM 在窗口外合成（peony / ukui 生态同款），窗体几何
- *    不变、缩放零重绘；其它混成 WM 回退为客户端自绘阴影环（窗体四周
- *    预留 shadowMargin 留白，最大化自动收起）。两条通道共用一套贴图
- *    渲染，参数见 AuWindowStyle 的 shadow 系列字段；X11 默认开启
- *    （无混成自动关闭）。圆角在混成下由 ARGB alpha 平滑呈现，无混成时
- *    区域裁剪；缩放尊重 WM_NORMAL_HINTS 中的最小尺寸。
+ *    提供阴影贴图、WM 在窗口外合成（ukui 生态同款），窗体几何不变、
+ *    缩放零重绘。WM 不支持该协议 / 无混成时无阴影（不做客户端自绘
+ *    兜底）。贴图参数见 AuWindowStyle 的 shadow 系列字段；X11 默认
+ *    开启。圆角在混成下由 ARGB alpha 平滑呈现，无混成时区域裁剪；
+ *    缩放尊重 WM_NORMAL_HINTS 中的最小尺寸。
  *  - 其它平台：退化为手动拖动 / 缩放（同样钳制最小宽高），无阴影
- *    （可经 setBorderShadowEnabled(true) 开启客户端阴影环）。
+ *    （Windows 由 DWM 提供原生阴影）。
  *
  * 使用方式与 QMainWindow 贴合：
  *  - setWindowTitle() / setWindowIcon() 直接同步到自绘标题栏；
@@ -169,6 +168,18 @@ public:
     void setEdgeSnapEnabled(bool enable);
     bool isEdgeSnapEnabled() const;
 
+    // ---- 窗口间吸附（手动拖动路径） ----
+    /// 拖动窗口靠近其它顶层窗口（间距 ≤10px）时自动磁吸贴合边缘，同时
+    /// 对齐相邻边（无预览浮层，与麒麟原生行为一致）。吸附目标：X11 为
+    /// 全系统所有顶层窗口（_NET_CLIENT_LIST 枚举，过滤最小化与面板 /
+    /// 桌面等特殊类型）；其它平台为本进程的 AuWindow。仅手动拖动通道
+    /// 生效——启用后标题栏拖动改走手动通道（Qt 5.15+ 的 WM Quick Tiling /
+    /// Windows Aero Snap 在拖动时让位于本功能，关闭即恢复原生通道）。
+    /// 默认跟随手动通道的默认状态：Qt 5.12 X11 默认开启，Qt 5.15+ X11
+    /// 与 Windows 默认关闭。
+    void setWindowSnapEnabled(bool enable);
+    bool isWindowSnapEnabled() const;
+
     // ---- 任务栏 ----
     /// 是否在任务栏显示图标（显示时 Windows 自动带实时缩略图预览）。
     /// 隐藏后同时不出现在 Alt+Tab。需在 show() 前设置，运行中切换立即生效。
@@ -176,21 +187,18 @@ public:
     bool isTaskbarVisible() const;
 
     // ---- 边框阴影 ----
-    /// 是否启用 peony / UKUI 同款边框阴影（参数取自样式：
-    /// AuWindowStyle::shadowColor / shadowBlurRadius / shadowMargin）。
-    /// 各平台呈现通道不同：
-    ///  - Linux/X11（ukui-kwin / KWin，WM 支持 _KDE_NET_WM_SHADOW）：
-    ///    阴影贴图交窗口管理器在窗口外合成（ukui/peony 生态同款），
-    ///    窗体几何不变、缩放零重绘开销；
-    ///  - Linux/X11 其它混成 WM：客户端自绘阴影环——窗体四周外扩
-    ///    shadowMargin 留白（resize()/setGeometry() 的尺寸含留白），
-    ///    最大化 / 全屏自动收起；
-    ///  - Windows：默认关闭（保留 DWM 原生阴影）；开启后切换为客户端
-    ///    阴影环并停用 DWM 框架阴影，避免双重阴影；
-    ///  - 无混成（ARGB 不可用）环境一律自动关闭。
+    /// 是否启用边框阴影（参数取自样式：AuWindowStyle::shadowColor /
+    /// shadowBlurRadius / shadowMargin）。阴影一律经系统 API 在窗体矩形
+    /// 之外合成，窗体几何不受影响：
+    ///  - Linux/X11（ukui-kwin / KWin，WM 支持 _KDE_NET_WM_SHADOW 且混成）：
+    ///    阴影贴图交窗口管理器在窗口外合成（ukui 生态同款），窗体几何
+    ///    不变、缩放零重绘开销；
+    ///  - 其它平台 / 无混成 / WM 不支持该协议：无阴影（不做客户端自绘
+    ///    兜底——自绘的阴影占窗体几何，体验差）。Windows 保留 DWM 原生
+    ///    阴影，与本开关无关。
     /// 默认值：Linux 开启，其余平台关闭。
     void setBorderShadowEnabled(bool enabled);
-    /// 当前是否启用边框阴影。注意无混成 / 最大化时阴影会自动收起
+    /// 当前是否启用边框阴影。注意无混成 / WM 不支持时阴影不会呈现
     /// （见上），此处返回的是开关本身。
     bool isBorderShadowEnabled() const;
 
@@ -217,6 +225,9 @@ public:
 
     // ---- 样式 ----
     /// 设置独立样式（窗体接管所有权）；nullptr 表示恢复跟随全局样式。
+    /// 传入 AuWindowStyle::globalStyle() 返回的全局指针时直接跳过不处理：
+    /// 全局对象归 setGlobalStyle 管理（仅设置新全局样式时释放旧的），
+    /// 不可被窗体接管；恢复跟随全局请显式传 nullptr。
     void setStyle(AuWindowStyle *style);
     AuWindowStyle *style() const;
 
@@ -235,6 +246,7 @@ protected:
     void relayout();
     void setVisible(bool visible) override;
     void paintEvent(QPaintEvent *event) override;
+    void moveEvent(QMoveEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
     void showEvent(QShowEvent *event) override;
     void closeEvent(QCloseEvent *event) override;
@@ -257,12 +269,6 @@ private:
     void ensurePolishedFrame();
     void connectTitleBar();
 
-    // ---- 边框阴影（peony / ukui 同款实现，贴图渲染见 AuBorderShadow） ----
-    /// 在内容区四周绘制阴影环（客户端阴影通道；WM 合成通道不经此处）
-    void paintBorderShadow(QPainter *painter, const QRect &content);
-    /// 保证九宫格贴图缓存有效（键：颜色 / 模糊半径 / 四角半径 / dpr）
-    void ensureShadowTile();
-    void invalidateShadowTile();
     /// 首次显示前的默认摆放：用户未显式定位（未调用过 move()/setGeometry()，
     /// 同 QDialog 的判定）时居中——有可见父窗口居中于父窗口，否则居中于
     /// 光标所在屏幕的工作区。
@@ -275,6 +281,12 @@ private:
     /// （不经 X 输入管线，不影响 KWin 的 snap-assist 等交互辅助层）。
     void startGrabRecoveryPoll();
     void pollGrabRecovery();
+    /// 原生拖动收场（每拍 250ms、几何稳定或达到 retries 上限后定基准）：
+    /// 最大化 / 全屏收场保留拖动起点为浮动基准，常规收场（含原生贴靠）
+    /// 取终点；期间又开新拖动作废
+    void scheduleNativeDragSettle(int retries = 4);
+    /// 布防还原纠正断言保护（500ms 窗，moveEvent 重断言，按下失效）
+    void armNormalRestoreAssert(const QRect &target);
     /// 任意真实 MouseButtonRelease 到达时回调（清恢复标志）
     void noteMouseRelease();
 
@@ -287,6 +299,13 @@ private:
     void startManualMove(const QPoint &pressGlobal = QCursor::pos());
     void startManualResize(Qt::Edges edges, const QPoint &pressGlobal = QCursor::pos());
     void manualResizeStep(const QPoint &globalPos);
+    /// 最大化拖拽还原（手动通道）的落位收养：WM 取消最大化落定后（首个
+    /// Move / 首次拖拽运动），以其落点为 1:1 跟随基准并纠正过期记忆尺寸。
+    /// 返回是否已落地（未落地时调用方必须继续抑制几何输出）
+    bool adoptManualRestorePosition();
+    /// 最大化态拖标题栏还原的目标矩形：最大化前浮动几何 + 抓取点比例锚定；
+    /// 无已知几何时无效（收养 WM 落位兜底）
+    QRect maximizeRestoreTarget(const QPoint &pressGlobal) const;
     /// 发起边缘缩放：优先系统原生缩放，未接管时回退手动
     void performBorderResize(Qt::Edges edges, const QPoint &pressGlobal);
     bool m_systemResizePending;    ///< X11：已发系统缩放请求、等待确认 WM 是否接管
@@ -294,6 +313,10 @@ private:
     Qt::Edges m_pendingEdges;
     QPoint m_pressGlobal;          ///< 左键按下时刻的全局光标位置
     QSize m_normalSizeHint;        ///< 非最大化浮动尺寸，最大化还原后纠正 WM 过期记忆几何
+    QRect m_normalGeometry;        ///< 非最大化浮动几何（含位置）：最大化还原落位由 WM
+                                    ///< 记忆决定，实测 KWin 会把按钮还原位置丢到 (0,0)，
+                                    ///< changeEvent 的 max→normal 分支据此纠正几何；
+                                    ///< 亦作拖拽还原的光标锚定基准（startManualMove）
     /// 拖动跟随定位：X11 拖出屏幕左缘时经 _NET_MOVERESIZE_WINDOW（仅 x 字段）
     /// 绕过 WM 的边界钳制（可拖出屏幕左右，与原生一致）；其余平台为 move()。
     void applyPositionViaWM(const QPoint &pos);
@@ -307,6 +330,12 @@ private:
     void showSnapPreview(SnapEdge edge);
     void hideSnapPreview();
     void applyEdgeSnap(SnapEdge edge);
+    /// 手动拖动路径的窗口间磁吸：返回向最近候选窗口边缘修正后的位置
+    /// （X/Y 两轴独立判定，|偏移| ≤ 吸附带才触发）
+    QPoint applyWindowSnap(const QPoint &proposedPos) const;
+    /// 吸附目标矩形汇集：X11 全系统顶层窗口（platformWindowSnapCandidates，
+    /// 视觉外沿矩形）；为空回退本进程 AuWindow 注册表
+    QVector<QRect> windowSnapCandidateRects() const;
 
     // ---- 平台实现 ----
     // Win32/DWM 实现位于 AuWindowWin.cpp，Xlib/EWMH 实现位于 AuWindowX11.cpp，
@@ -314,6 +343,10 @@ private:
     void platformInit();                    ///< 构造：窗口标志/属性、内容区容器、缩放手柄、系统移动通道
     void platformWinIdChanged();            ///< 原生窗口句柄建立后（Windows：应用原生样式/圆角/任务栏）
     void platformFirstShow();               ///< 首次显示（X11：混成检测 + 窗口类型覆盖）
+    /// X11：模态无父窗对话框的 WM_TRANSIENT_FOR 规范化（指向打开模态时
+    /// 本应用的活动窗口；默认的 clientLeader 会让 ukui-kwin 模态拦截失效，
+    /// 点击被阻塞窗口时焦点弹跳闪烁）
+    void normalizeModalTransient();
     void platformResized();                 ///< 尺寸变化（Windows：DWM 圆角跟随）
     void platformStateChanged();            ///< 最大化状态切换后（Windows：清除残影的重绘）
     void platformRadiusChanged();           ///< 圆角设置变化（Windows：DWM 偏好；其余：mask 裁剪）
@@ -337,11 +370,12 @@ private:
     /// 窗体形状是否由系统裁剪（Windows：DWM/窗口区域，客户端圆角浮层无用）
     bool platformClipsWindowShape() const;
     /// 阴影开关 / 样式 / 圆角变化后刷新平台阴影通道（X11：上传或清除
-    /// _KDE_NET_WM_SHADOW 阴影贴图属性；Windows：DWM 框架扩展随开关切换）
+    /// _KDE_NET_WM_SHADOW 阴影贴图属性；其余平台无操作）
     void platformShadowUpdate();
-    /// 阴影是否由平台在窗体矩形外合成（X11：WM 支持 _KDE_NET_WM_SHADOW
-    /// 且混成时为真，窗体不留阴影环）；其余平台 false（客户端自绘阴影环）
-    bool platformShadowPaintedExternally() const;
+    /// 窗口间吸附的全系统候选窗口矩形（Qt 逻辑全局坐标，视觉外沿）：
+    /// X11 经 _NET_CLIENT_LIST 枚举（过滤自身/最小化/面板等）；其它平台
+    /// 返回空，调用方回退本进程 AuWindow 注册表
+    QVector<QRect> platformWindowSnapCandidates() const;
 
     // Windows 原生辅助（仅在 AuWindowWin.cpp 中定义与调用）
     void applyWindowStyles();
@@ -373,28 +407,47 @@ private:
     bool m_x11Compositing;              // X11：透明是否实际生效（决定平滑圆角 / mask）
     bool m_x11CheckedTranslucency;      // X11：是否已在首显时检测过透明能力
 
-    // 边框阴影状态（贴图渲染见 AuBorderShadow；WM 合成通道的状态由平台
-    // 文件自持，此处仅存开关与客户端绘制的贴图缓存）
+    // 边框阴影开关：Windows 上 DWM 阴影随开关切换（platformShadowUpdate）；
+    // X11 上阴影由 WM 的 border-only 装饰绘制（见 platformInit），开关仅留存语义
     bool m_borderShadowEnabled;         ///< 阴影开关（platformInit 按平台设默认）
-    QImage m_shadowTile;                ///< 九宫格贴图缓存（一次模糊，反复绘制）
-    QColor m_shadowTileColor;           ///< 贴图缓存键：阴影色
-    int m_shadowTileBlur;               ///< 贴图缓存键：模糊半径
-    int m_shadowTileRadii[4];           ///< 贴图缓存键：四角半径
-    qreal m_shadowTileDpr;              ///< 贴图缓存键：设备像素比
-    bool m_shadowTileValid;             ///< 缓存是否与当前键匹配
 
     // 手动拖动 / 缩放状态（无系统 move-resize 能力时的兜底路径）
     bool m_manualResizing;
     bool m_manualMoving;
+    bool m_manualRestorePending;   ///< 最大化拖拽还原（手动通道）：已 showNormal、
+                                    ///< 待 WM 落位后收养（changeEvent/状态翻转期
+                                    ///< 间不得插入任何几何请求——会闪帧；须先于
+                                    ///< showNormal 置位，changeEvent 同步触发）
+    QRect m_manualRestoreTargetRect;   ///< 吸附态拖拽还原的挂起目标矩形（吸附前浮动
+                                        ///< 几何按抓取点比例锚定）；收养时应用。
+                                        ///< 无效 = 非吸附还原，收养 KWin 实际落位
     QPoint m_manualStartGlobal;
     QPoint m_manualStartPos;
     QSize m_manualStartSize;
     Qt::Edges m_manualEdges;
     bool m_systemMoveEnabled;      ///< X11：是否使用 _NET_WM_MOVERESIZE 系统移动
     bool m_edgeSnapEnabled;        ///< 手动拖动路径：边缘吸附（拖顶最大化 / 左右半屏）
+    bool m_windowSnapEnabled;      ///< 手动拖动路径：窗口间磁吸（X11 全系统窗口）
     AuSnapPreview *m_snapPreview;  ///< 手动拖动的吸附预览浮层（懒创建）
     bool m_snapped;                ///< 当前处于边缘吸附状态（拖动标题栏时还原）
     QRect m_preSnapGeometry;       ///< 吸附前的浮动几何（还原跟随基准）
+    bool m_nativeDragActive;       ///< 系统原生拖动进行中：期间冻结 m_normalGeometry
+                                    ///< 记录（拖动途中位置是过渡态），收场时按终态
+                                    ///< 定基准——最大化收场保留拖动起点，常规收场
+                                    ///< （含原生贴靠）取终点
+    int m_nativeDragGen;           ///< 原生拖动代次：延迟收场定时器的归属判定
+                                    ///< （收场前用户又开始新拖动时旧定时器作废）
+    QRect m_normalRestoreAssert;   ///< 最大化还原纠正的断言保护：KWin 取消最大化
+                                    ///< 的两步落位（步骤b：首个 motion 移到其记忆
+                                    ///< 位置）会在我们纠正后几十毫秒到达并拽回过期
+                                    ///< 记忆位置——保护窗内 moveEvent 重新断言；
+                                    ///< 用户按下（新手势）立即失效
+    QRect m_snapRestoreTarget;     ///< 拖动还原吸附态时的锚定落位目标：WM 异步
+                                    ///< 还原的过期几何后到并覆盖时，由
+                                    ///< changeEvent 据此纠正回本目标
+    bool m_x11BorderDecorActive;   ///< X11：当前原生窗口是否已按 border-only
+                                    ///< 写入装饰属性（跟踪运行时开关/圆角切换，
+                                    ///< 窗口重建时强制重写）
     bool m_wmGeometryBroken;       ///< X11：_NET_MOVERESIZE_WINDOW 不可用（已回退）
     bool m_wmGeometryPending;      ///< X11：正在等待一次 WM 位置校验
     QVector<QWidget *> m_edgeGrips; ///< 边缘缩放手柄（透明子控件）

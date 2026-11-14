@@ -34,16 +34,20 @@ SOURCES += \
     widget/AuWindowX11.cpp \
     widget/AuWindowFallback.cpp \
     widget/AuTitleBar.cpp \
-    widget/AuBorderShadow.cpp \
-    style/AuWindowStyle.cpp
+    widget/AuPushButton.cpp \
+    widget/AuMessageBox.cpp \
+    style/AuWindowStyle.cpp \
+    style/AuMessageBoxStyle.cpp
 
 HEADERS += \
     include/AuWindowKit_global.h \
     include/AuWindow.h \
     include/AuTitleBar.h \
     include/AuWindowStyle.h \
+    include/AuPushButton.h \
+    include/AuMessageBox.h \
+    include/AuMessageBoxStyle.h \
     widget/AuWindow_p.h \
-    widget/AuBorderShadow.h
 
 # Default rules for deployment.
 unix {

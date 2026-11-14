@@ -1,9 +1,10 @@
 #include "AuWindow.h"
-#include "AuBorderShadow.h"
 #include "AuWindow_p.h"
 
+#include <QApplication>
 #include <QCursor>
 #include <QDateTime>
+#include <QElapsedTimer>
 #include <QGuiApplication>
 #include <QMouseEvent>
 #include <QObject>
@@ -21,16 +22,18 @@
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
 #include <X11/Xutil.h>   // XImage / XPutImage（原生阴影贴图上传）
+#include <X11/Xmd.h>     // CARD32 等：Kylin 的 X.h 未按惯例包含 Xmd.h，
+                         // 显式包含在标准 X11 上幂等
 #include <cstdlib>
 #include <cstring>
 
-// X11 头文件中的宏与 Qt / 标准类型冲突，按 Qt 源码惯例取消定义
+// X11 头文件中的宏与 Qt / 标准类型冲突，按 Qt 源码惯例取消定义。
+// None 保留：KDE 阴影协议代码按 Xlib 惯例使用（None == 0L）。
 #undef Bool
 #undef CursorShape
 #undef Expose
 #undef KeyPress
 #undef KeyRelease
-#undef None
 #undef Status
 #undef Unsorted
 
@@ -63,41 +66,6 @@ inline bool translucencyAvailable(WId windowId)
     if (XGetWindowAttributes(d, static_cast<Window>(windowId), &attrs))
         return attrs.depth == 32;
     return false;
-}
-
-/// 窗口管理器是否支持 KDE 阴影协议（_KDE_NET_WM_SHADOW）：KWin / ukui-kwin
-/// 在根窗口的 _NET_SUPPORTED 中通告该原子。结果按连接缓存（WM 不中途更换
-/// 协议支持）。
-inline bool wmSupportsKdeShadow()
-{
-    static bool s_supported = []() {
-        Display *d = display();
-        if (!d)
-            return false;
-        Atom shadow = XInternAtom(d, "_KDE_NET_WM_SHADOW", True);
-        if (shadow == None)
-            return false;
-        Atom supported = XInternAtom(d, "_NET_SUPPORTED", True);
-        if (supported == None)
-            return false;
-        Atom actualType = None;
-        int actualFormat = 0;
-        unsigned long nitems = 0, bytesAfter = 0;
-        unsigned char *data = nullptr;
-        if (XGetWindowProperty(d, XDefaultRootWindow(d), supported, 0, 65536, False,
-                               XA_ATOM, &actualType, &actualFormat,
-                               &nitems, &bytesAfter, &data) != Success
-            || actualType != XA_ATOM || !data) {
-            return false;
-        }
-        const Atom *atoms = reinterpret_cast<const Atom *>(data);
-        bool found = false;
-        for (unsigned long i = 0; i < nitems && !found; ++i)
-            found = (atoms[i] == shadow);
-        XFree(data);
-        return found;
-    }();
-    return s_supported;
 }
 
 } // namespace AuX11
@@ -197,185 +165,192 @@ bool auSendNetMoveResizeWindow(WId windowId, const QPoint &pos)
     return true;
 }
 
-} // namespace
+// ---- 窗口间吸附：全系统候选窗口枚举辅助 ----
 
-// ============================================================================
-// KDE 阴影协议通道（_KDE_NET_WM_SHADOW）：ukui-kwin / KWin 系窗口管理器上
-// 无边框窗口阴影的标准来源——客户端提供 8 块阴影贴图（4 角 + 4 条 1px 边条，
-// 九宫格切法与 peony / qt5-ukui-platformtheme 的 ConfigShadowHelper 一致），
-// 写入窗口的 _KDE_NET_WM_SHADOW 属性后由 WM 在窗体矩形之外合成。窗体几何
-// 不变、缩放零重绘开销，规避了 peony 主窗口因 QGraphicsEffect 随 resize
-// 反复全图模糊造成的撕裂（peony 源码 main-window.cpp:1702 注释的问题）。
-// 贴图渲染与客户端阴影环共用 AuWindowDetail::auRenderBorderShadowTile；
-// 对齐推导（全部按设备像素）：属性边距 = 渐隐环 b，角贴图边长 = b + 圆角
-// 半径 r，KWin 将角贴图摆在窗体 ± b 的 outerRect 四角 → 贴图内 (b, b) 处
-// 的窗口矩形弧线恰好落在窗角，r 半径的挖空区由 ARGB 窗口的透明角像素
-// 透出阴影。最大化 / 全屏 WM 自动停用阴影（KWin wantsShadowToBeRendered），
-// 客户端无需处理。状态以 QObject 子对象挂在窗体上，随窗体析构自动释放。
-// 注：圆角半径 > 模糊环宽时角贴图弧外阴影略有裁剪（ukui 同样如此），
-// 样式默认值（blur 24~28 ≥ 常用半径）不受影响。
-// ============================================================================
-class AuX11KdeShadow : public QObject
+// 忽略枚举期间的 BadWindow：目标窗口可能在 _NET_CLIENT_LIST 读取与逐个
+// 查询之间被销毁。X 协议错误异步送达，守卫析构时先 XSync 把挂起错误
+// 冲刷到本守卫的空处理器，再还原先前处理器（Qt 的）。
+struct AuX11ErrorGuard
 {
-public:
-    explicit AuX11KdeShadow(AuWindow *window)
-        : QObject(window), m_window(window)
+    explicit AuX11ErrorGuard(Display *d)
+        : display(d), previous(XSetErrorHandler(&AuX11ErrorGuard::ignore))
     {
-        setObjectName(QStringLiteral("auwindow_kde_shadow"));
     }
-
-    ~AuX11KdeShadow() override { freeTiles(); }
-
-    /// tile：设备像素九宫格位图（AuWindow::ensureShadowTile 缓存产物）。
-    /// blur / radii：贴图的逻辑键值（与渲染参数一致），dpr：设备像素比。
-    void apply(const QImage &tile, int blur, const int radii[4], qreal dpr)
+    ~AuX11ErrorGuard()
     {
-        Display *d = AuX11::display();
-        if (!d || tile.isNull() || tile.format() != QImage::Format_ARGB32_Premultiplied)
-            return;
-        const Window win = static_cast<Window>(m_window->winId());
-        if (!win)
-            return;
-        if (m_win != win) {          // 原生窗口重建：旧贴图随旧窗口销毁
-            freeTiles();
-            m_win = win;
-        }
-
-        const int S = tile.width();
-        const int b = qRound(blur * dpr);              // 渐隐环（设备像素）
-        const int r[4] = {
-            qRound(radii[0] * dpr), qRound(radii[1] * dpr),
-            qRound(radii[2] * dpr), qRound(radii[3] * dpr)
-        };
-        const int R = qMax(qMax(r[0], r[1]), qMax(r[2], r[3]));
-        const int corner[4] = { b + r[0], b + r[1], b + r[2], b + r[3] };
-        const int center = b + R;                      // 内窗矩形中心条位置
-
-        // 九宫格切图（顺序即属性中的贴图顺序：上 / 右上 / 右 / 右下 /
-        // 下 / 左下 / 左 / 左上），角贴图原尺寸摆放、1px 边条由 WM 拉伸
-        QImage top      = tile.copy(center, 0, 1, b + R);
-        QImage topRight = tile.copy(S - corner[1], 0, corner[1], corner[1]);
-        QImage right    = tile.copy(S - corner[1], center, corner[1], 1);
-        QImage bottomRight = tile.copy(S - corner[3], S - corner[3], corner[3], corner[3]);
-        QImage bottom   = tile.copy(center, S - (b + R), 1, b + R);
-        QImage bottomLeft  = tile.copy(0, S - corner[2], corner[2], corner[2]);
-        QImage left     = tile.copy(0, center, corner[2], 1);
-        QImage topLeft  = tile.copy(0, 0, corner[0], corner[0]);
-
-        Pixmap newTiles[8] = { None, None, None, None, None, None, None, None };
-        const QImage *imgs[8] = { &top, &topRight, &right, &bottomRight,
-                                  &bottom, &bottomLeft, &left, &topLeft };
-        const ::Window root = XDefaultRootWindow(d);
-        bool ok = true;
-        for (int i = 0; i < 8 && ok; ++i) {
-            const QImage &img = *imgs[i];
-            if (img.isNull() || img.format() != QImage::Format_ARGB32_Premultiplied) {
-                ok = false;
-                break;
-            }
-            newTiles[i] = uploadPixmap(d, root, img);
-            if (newTiles[i] == None)
-                ok = false;
-        }
-        if (!ok) {
-            for (Pixmap px : newTiles)
-                if (px != None)
-                    XFreePixmap(d, px);
-            return;
-        }
-        freeTiles();
-        for (int i = 0; i < 8; ++i)
-            m_tiles[i] = newTiles[i];
-
-        // 属性：8 个贴图 XID + 4 个边距（上 / 右 / 下 / 左，设备像素），
-        // 类型 XA_CARDINAL / 格式 32 —— 与 KWin、kwindowsystem 的
-        // KWindowShadow X11 后端逐字段一致
-        CARD32 data[12] = {
-            CARD32(m_tiles[0]), CARD32(m_tiles[1]), CARD32(m_tiles[2]), CARD32(m_tiles[3]),
-            CARD32(m_tiles[4]), CARD32(m_tiles[5]), CARD32(m_tiles[6]), CARD32(m_tiles[7]),
-            CARD32(b), CARD32(b), CARD32(b), CARD32(b)
-        };
-        const Atom atom = XInternAtom(d, "_KDE_NET_WM_SHADOW", False);
-        XChangeProperty(d, m_win, atom, XA_CARDINAL, 32, PropModeReplace,
-                        reinterpret_cast<unsigned char *>(data), 12);
-        XFlush(d);
-        m_applied = true;
+        if (display)
+            XSync(display, False);
+        XSetErrorHandler(previous);
     }
-
-    void clear()
-    {
-        if (m_applied && m_win) {
-            if (Display *d = AuX11::display()) {
-                XDeleteProperty(d, m_win,
-                                XInternAtom(d, "_KDE_NET_WM_SHADOW", False));
-                XFlush(d);
-            }
-        }
-        m_applied = false;
-        freeTiles();
-    }
+    AuX11ErrorGuard(const AuX11ErrorGuard &) = delete;
+    AuX11ErrorGuard &operator=(const AuX11ErrorGuard &) = delete;
+    static int ignore(Display *, XErrorEvent *) { return 0; }
 
 private:
-    /// 创建 32 位深 ARGB 贴图并上传位图。XDestroyImage 会 free 图像数据，
-    /// 因此位图先拷入 malloc 缓冲（析构时由 Xlib 释放），避免悬空指针。
-    static Pixmap uploadPixmap(Display *d, ::Window root, const QImage &img)
-    {
-        const int w = img.width(), h = img.height();
-        if (w <= 0 || h <= 0 || w > 4096 || h > 4096)
-            return None;
-        char *buf = static_cast<char *>(malloc(size_t(w) * 4 * size_t(h)));
-        if (!buf)
-            return None;
-        memcpy(buf, img.constBits(), size_t(img.bytesPerLine()) * size_t(h));
-        XImage *ximg = XCreateImage(d, nullptr, 32, ZPixmap, 0,
-                                    buf, w, h, 32, w * 4);
-        if (!ximg) {
-            free(buf);
-            return None;
-        }
-        const Pixmap px = XCreatePixmap(d, root, w, h, 32);
-        if (!px) {
-            XDestroyImage(ximg);
-            return None;
-        }
-        GC gc = XCreateGC(d, px, 0, nullptr);
-        XPutImage(d, px, gc, ximg, 0, 0, 0, 0, w, h);
-        XFreeGC(d, gc);
-        XDestroyImage(ximg);      // 释放 malloc 缓冲
-        return px;
-    }
-
-    void freeTiles()
-    {
-        if (Display *d = AuX11::display()) {
-            for (Pixmap &px : m_tiles) {
-                if (px != None)
-                    XFreePixmap(d, px);
-                px = None;
-            }
-        } else {
-            for (Pixmap &px : m_tiles)
-                px = None;
-        }
-    }
-
-    AuWindow *m_window;
-    ::Window m_win = None;
-    Pixmap m_tiles[8] = { None, None, None, None, None, None, None, None };
-    bool m_applied = false;
+    Display *display;
+    XErrorHandler previous;
 };
+
+// 读取窗口 32 位属性（XA_ATOM / XA_CARDINAL / XA_WINDOW 通用）。Xlib 对
+// format=32 的返回数据按 long（LP64 下 8 字节）对齐存放。
+QVector<long> auReadLongArray(Display *display, Window window, Atom property,
+                              Atom expectedType)
+{
+    QVector<long> values;
+    if (property == None || expectedType == None)
+        return values;
+    Atom actualType = None;
+    int actualFormat = 0;
+    unsigned long nitems = 0, bytesAfter = 0;
+    unsigned char *data = nullptr;
+    if (XGetWindowProperty(display, window, property, 0, 65536, False, expectedType,
+                           &actualType, &actualFormat, &nitems, &bytesAfter,
+                           &data) != Success
+        || actualType != expectedType || actualFormat != 32 || !data) {
+        if (data)
+            XFree(data);
+        return values;
+    }
+    const long *items = reinterpret_cast<const long *>(data);
+    values.reserve(int(nitems));
+    for (unsigned long i = 0; i < nitems; ++i)
+        values.append(items[i]);
+    XFree(data);
+    return values;
+}
+
+// 吸附枚举用原子（进程内单条 Display 连接，缓存一次查询往返）。特殊
+// 窗口类型无需逐个内省——收录规则为"仅 NORMAL / DIALOG"，其余类型天然
+// 被排除。
+struct AuSnapAtoms
+{
+    Atom clientList = None;
+    Atom windowType = None;
+    Atom wmState = None;
+    Atom frameExtents = None;
+    Atom hidden = None;
+    Atom typeNormal = None;
+    Atom typeDialog = None;
+};
+
+const AuSnapAtoms &auSnapAtoms(Display *display)
+{
+    static AuSnapAtoms atoms = [display]() {
+        AuSnapAtoms a;
+        a.clientList = XInternAtom(display, "_NET_CLIENT_LIST", False);
+        a.windowType = XInternAtom(display, "_NET_WM_WINDOW_TYPE", False);
+        a.wmState = XInternAtom(display, "_NET_WM_STATE", False);
+        a.frameExtents = XInternAtom(display, "_NET_FRAME_EXTENTS", False);
+        a.hidden = XInternAtom(display, "_NET_WM_STATE_HIDDEN", False);
+        a.typeNormal = XInternAtom(display, "_NET_WM_WINDOW_TYPE_NORMAL", False);
+        a.typeDialog = XInternAtom(display, "_NET_WM_WINDOW_TYPE_DIALOG", False);
+        return a;
+    }();
+    return atoms;
+}
+
+// 窗口是否可作为窗口间吸附目标：
+// - 可见（IsViewable，未映射即异虚拟桌面 / 已撤销）且未最小化
+//   （_NET_WM_STATE_HIDDEN）；
+// - 类型为常规顶层：_NET_WM_WINDOW_TYPE 缺省 / 含 NORMAL / 含 DIALOG。
+//   面板（DOCK）、桌面层、菜单、工具条、启动画面、通知、工具窗及各类
+//   弹出（TOOLTIP / COMBO / DND 等）排除——吸附到任务栏等会得到反直觉
+//   落点，且这些窗口不属于用户的摆放语义。
+bool auIsSnappableWindow(Display *display, Window window, const AuSnapAtoms &atoms)
+{
+    XWindowAttributes attrs;
+    if (!XGetWindowAttributes(display, window, &attrs)
+        || attrs.map_state != IsViewable)
+        return false;
+    if (atoms.wmState != None && atoms.hidden != None
+        && auReadLongArray(display, window, atoms.wmState, XA_ATOM).contains(atoms.hidden))
+        return false;
+    if (atoms.windowType == None)
+        return true;
+    const QVector<long> types = auReadLongArray(display, window, atoms.windowType, XA_ATOM);
+    if (types.isEmpty())
+        return true;   // 未通告类型：历史窗口按常规处理
+    for (long type : types) {
+        const Atom atom = static_cast<Atom>(type);
+        if (atom == atoms.typeNormal || atom == atoms.typeDialog)
+            return true;
+    }
+    return false;
+}
+
+// 按"当前是否圆角"同步装饰属性。必须在窗口 map 之前调用——WM 在首次
+// 管理窗口时分配装饰，管理后改 motif 不会重新分配。
+// 直角窗体：预写 peony 同款属性（落盘值逐字节一致），WM 分配 border-only
+// 装饰 = 窗外主题阴影环（ukui-decorationrc shadow_border=30 /
+// shadowcolor_alphaf=0.15），窗体几何零污染。
+// 圆角窗体：显式写 motif decorations=0（Qt FramelessWindowHint 同款落盘
+// 值 {2,1,0,0,0}，本 WM 实证不分配任何装饰）。**不能删除属性了事**——
+// 无属性窗口被 WM 按默认装饰管理（_NET_FRAME_EXTENTS top=38 原生标题栏，
+// 实测复现"双标题栏"）。WM 装饰恒为矩形、不跟随客户端圆角，混成下圆角
+// 由 ARGB alpha 呈现，透明角像素后面会露出矩形边线/阴影直角（呈现为
+// "矩形框包裹窗体"）——圆角窗体显式舍弃 WM 装饰保弧线平滑。
+// ⚠️ 实测（底缘像素剖面）：给窗口设 XShape shape 后 KWin 会停用整套
+// 装饰渲染（阴影完全消失，与 decorations=0 等效）——即"客户端圆角 +
+// WM 原生阴影"在本 WM 上不可兼得，XShape 方案无收益，勿再尝试。
+void auSyncBorderDecoration(WId windowId, bool borderOnly)
+{
+    Display *d = AuX11::display();
+    if (!d)
+        return;
+    const Window win = static_cast<Window>(windowId);
+    const Atom ukuiDecor = XInternAtom(d, "_KWIN_UKUI_DECORAION", False);
+    const Atom motif = XInternAtom(d, "_MOTIF_WM_HINTS", False);
+    if (!borderOnly) {
+        XDeleteProperty(d, win, ukuiDecor);
+        // flags=2（decorations 字段有效）+ decorations=0：无任何装饰
+        const CARD32 none[5] = {0x2, 0x1, 0x0, 0x0, 0x0};
+        XChangeProperty(d, win, motif, motif, 32, PropModeReplace,
+                        reinterpret_cast<const unsigned char *>(none), 5);
+        XFlush(d);
+        return;
+    }
+    // ① UKUI 装饰提示（peony XAtomHelper::setUKUIDecoraiontHint，
+    //    原子名拼写与上游一致）
+    const CARD32 on = 1;
+    XChangeProperty(d, win, ukuiDecor, ukuiDecor, 32, PropModeReplace,
+                    reinterpret_cast<const unsigned char *>(&on), 1);
+    // ② motif：请求 border-only 装饰。逐字节复刻 peony 的落盘值
+    //    {3,0,1,0,2}——其 XAtomHelper 在 64 位系统上按 40 字节
+    //    MotifWmHints 只拷前 20 字节（5 个 CARD32），源码里的
+    //    {flags=FUNC|DECOR, functions=ALL, decorations=BORDER}
+    //    实际落盘为 {3, 0, 1, 0, 2}，ukui-kwin 按此解析。
+    const CARD32 hints[5] = {0x3, 0x0, 0x1, 0x0, 0x2};
+    XChangeProperty(d, win, motif, motif, 32, PropModeReplace,
+                    reinterpret_cast<const unsigned char *>(hints), 5);
+    XFlush(d);
+}
+
+} // namespace
 
 // ---- 平台钩子 ----
 
 void AuWindow::platformInit()
 {
-    setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
+    // X11 上不设 Qt::FramelessWindowHint：那会让 Qt 在 map 时写
+    // _MOTIF_WM_HINTS decorations=0（并附加 _KDE_NET_WM_WINDOW_TYPE_OVERRIDE
+    // 类型），WM 因而完全不分配装饰、无阴影。改为 peony 同款机制——
+    // 预写两个属性请 WM 分配"仅边框"装饰：无标题栏、无边框、
+    // _NET_FRAME_EXTENTS 全 0（窗体几何零污染），由 WM 用主题绘制窗外
+    // 阴影环（ukui-decorationrc shadow_border=30 / shadowcolor_alphaf=0.15）。
+    // 必须在窗口首次 map 前写入（WM 在管理时分配装饰，管理后改 motif
+    // 不会重新分配）。两个属性的写法逐字节复刻 peony（其 XAtomHelper
+    // 在 64 位系统上按 40 字节 MotifWmHints 只拷前 20 字节，落盘为
+    // {3,0,1,0,2}，ukui-kwin 吃这一套）。属性预写统一在
+    // platformWinIdChanged 中进行：WinIdChange 随下方 winId() 的
+    // create() 同步派发，且原生窗口因 setWindowFlag 重建（Dialog 模式
+    // 切换、任务栏显隐等）时同样覆盖。
+    setWindowFlags(windowFlags() & ~Qt::FramelessWindowHint);
     setAttribute(Qt::WA_TranslucentBackground);
     setMouseTracking(true);
     m_client = new QWidget(this);
     setupEdgeGrips();
-    // Linux 默认开启边框阴影（ukui-kwin / KWin 走 WM 合成，其它混成 WM
-    // 走客户端阴影环；无混成时经 effectiveMargin 自动收起）
+    // Linux 默认开启边框阴影（WM 装饰通道，随 border-only 装饰自动
+    // 呈现；WM 不支持时退化为无阴影，不做客户端自绘兜底）
     m_borderShadowEnabled = true;
     // 系统通道（Qt 5.15+ startSystemMove/Resize）：拖动/缩放/贴靠全部由 WM
     // 原生完成，默认开启。实测接管后本进程仅 motion/enter 事件不再投递
@@ -385,14 +360,28 @@ void AuWindow::platformInit()
     // 两种通道均可经 setSystemWindowMoveEnabled 运行时切换。
 #if QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)
     m_systemMoveEnabled = true;
+    // 窗口间吸附跟随手动通道的默认状态：5.15+ 默认走系统通道（WM 原生
+    // Quick Tiling），窗口吸附默认关闭，避免默认抢占系统贴靠行为；
+    // setWindowSnapEnabled(true) 后拖动自动改走手动通道
+    m_windowSnapEnabled = false;
 #endif
 }
 
 void AuWindow::platformWinIdChanged()
 {
-    // 原生窗口重建（Dialog 模式切换等）：旧窗口的阴影属性随窗口销毁，
-    // 新窗口需重新上传贴图并写属性（首显前 m_x11Compositing 未检测，
-    // 此处先清空，platformFirstShow 再按能力应用）
+    // 原生窗口（重）建后无条件重写装饰属性并复位跟踪状态。窗口首次创建与
+    // setWindowFlag 重建（Dialog 模式切换、任务栏显隐等）都会走到这里：
+    // 装饰属性随旧窗口销毁，新窗口必须在 map 前重新预写——WinIdChange
+    // 在 create() 内、map 之前同步派发，正是写入时机。漏写（只在
+    // platformInit 写一次）则重建后的窗口被 WM 按默认装饰管理，
+    // 对话框呈现原生标题栏（实测复现过）。
+    if (AuX11::isPlatformX11()) {
+        auSyncBorderDecoration(winId(), m_borderShadowEnabled && windowRadius() <= 0);
+        m_x11BorderDecorActive = m_borderShadowEnabled && windowRadius() <= 0;
+    }
+    // 重建后的新窗口由 Qt 重写 transient（模态无父窗时又是 clientLeader），
+    // 重新规范化（见 normalizeModalTransient 注释）
+    normalizeModalTransient();
     platformShadowUpdate();
 }
 
@@ -403,20 +392,46 @@ void AuWindow::platformFirstShow()
     // 此时原生窗口已建立，透明是否生效以实际 visual 为准
     m_x11Compositing = AuX11::translucencyAvailable(winId());
     m_x11CheckedTranslucency = true;
-    // Qt 的 FramelessWindowHint 会附加 _KDE_NET_WM_WINDOW_TYPE_OVERRIDE，
-    // KWin 对该类型禁用拖动预览 / 边缘吸附；覆盖为普通 NORMAL 类型
-    Display *display = AuX11::display();
-    if (display) {
-        Atom normal = XInternAtom(display, "_NET_WM_WINDOW_TYPE_NORMAL", False);
-        XChangeProperty(display, static_cast<Window>(winId()),
-                        XInternAtom(display, "_NET_WM_WINDOW_TYPE", False),
-                        XA_ATOM, 32, PropModeReplace,
-                        reinterpret_cast<unsigned char *>(&normal), 1);
-        XFlush(display);
-    }
-    relayoutEdgeGrips();
-    // 混成能力已定：应用 / 清除 KDE 阴影协议贴图
+    normalizeModalTransient();
+    // 首次 map 前按最终圆角/阴影开关校正装饰取舍：WinIdChange（创建期）时
+    // m_cornerRadii 还是缺省直角，构造/show 之前才 setWindowRadius 的
+    // 圆角窗体（如各对话框）在此最终决定显式无装饰。本函数经 showEvent
+    // 在原生窗口 map 之前调用，仍是 WM 分配装饰的有效窗口期。
     platformShadowUpdate();
+    relayoutEdgeGrips();
+}
+
+// 模态窗口的 WM_TRANSIENT_FOR 规范化：无父窗口的模态对话框（应用级模态
+// 的常规创建方式），Qt 默认把 transient 写成 clientLeader（未映射的 1x1
+// 组长窗口）。ukui-kwin 的模态拦截依赖 transient 链解析，指向未管理窗口
+// 时拦截不可靠——模态打开后短时间内点击被阻塞窗口，焦点会先落被阻塞窗
+// 再弹回模态窗（实测焦点序列 模→主→模、含 _NET_ACTIVE_WINDOW=0x0 中间
+// 态，主窗边框阴影与模态窗双双闪烁；纯 QDialog 同条件亦复现，非本模块
+// 特有）。把 transient 指到打开模态时本应用的活动窗口（通常即被点击的
+// 主窗），拦截链具体化后闪烁消失（实测 6 轮 × 3 点击零弹跳）。
+// Qt 侧的模态输入阻塞不受影响（QGuiApplication 仍按 ApplicationModal
+// 全局拦截输入事件）；代价是 KWin 侧的焦点拦截变为该窗口链——多窗应用
+// 中点击链外窗口仍可能闪（Qt 输入阻塞兜底，事件不会送达）。
+// WindowModal / 有父窗口的情形 Qt 已写好正确 transient（指向父窗），
+// 不干预；活动窗口不属于本应用（程序化打开、无焦点）时保持 Qt 默认。
+void AuWindow::normalizeModalTransient()
+{
+    if (!AuX11::isPlatformX11())
+        return;
+    if (windowModality() == Qt::NonModal || parentWidget())
+        return;
+    if (!windowHandle())
+        return;
+    QWindow *active = QGuiApplication::focusWindow();
+    if (!active || active == windowHandle())
+        return;
+    for (QWidget *top : QApplication::topLevelWidgets()) {
+        if (top->windowHandle() == active) {
+            if (windowHandle()->transientParent() != active)
+                windowHandle()->setTransientParent(active);
+            return;
+        }
+    }
 }
 
 void AuWindow::platformResized() {}
@@ -425,6 +440,9 @@ void AuWindow::platformStateChanged() {}
 
 void AuWindow::platformRadiusChanged()
 {
+    // 运行时圆角切换同步装饰取舍（KWin 实测支持 post-map 重读 motif 撤除
+    // 装饰；由无装饰切回 border-only 需重映射，见 platformShadowUpdate）
+    platformShadowUpdate();
     updateMask();
 }
 
@@ -479,11 +497,11 @@ bool AuWindow::platformStartSystemResize(Qt::Edges edges)
 #endif
 }
 
-// 最大化窗体的拖动还原走 WM 原生交互移动：KWin 在最大化窗口上的交互移动
-// = 取消最大化 + 锚定光标一次到位，无手动路径的中间帧闪动与锚定脱离。
-// 手动通道默认关闭的 5.12 也走此捷径——接管后的事件冻结（motion/enter
-// 失效）由 grab-recovery 轮询兜底；还原尺寸偏差由 changeEvent 的
-// max→normal 分支按 m_normalSizeHint 纠正。
+// 最大化窗体拖动还原的 WM 原生交互移动通道（当前不再被调用，保留备用）：
+// 还原现统一走手动通道（startManualMove 最大化分支 + changeEvent 状态翻转
+// 后锚定落位，见 AuWindow::performTitleBarDrag / startManualMove 注释——
+// 原生通道的交互移动取消最大化时，"还原尺寸的小窗口"会在最大化位置
+// (0,0) 露帧，且锚定受 WM 记忆几何过期影响）。
 bool AuWindow::platformStartMaximizeRestoreDrag()
 {
     if (!AuX11::isPlatformX11())
@@ -492,6 +510,75 @@ bool AuWindow::platformStartMaximizeRestoreDrag()
         return false;
     startGrabRecoveryPoll();
     return true;
+}
+
+// ---- 窗口间吸附：全系统候选窗口枚举 ----
+
+// X11（xcb 会话）经根窗口 _NET_CLIENT_LIST 枚举所有受管顶层窗口，返回
+// 视觉外沿矩形（客户区几何按 _NET_FRAME_EXTENTS 外扩 WM 装饰 / 阴影环）
+// 换算成 Qt 逻辑全局坐标——与麒麟原生 WM 层吸附对齐视觉边缘的行为一致。
+// 过滤规则见 auIsSnappableWindow()；自身窗口不在候选中。
+// 坐标换算按拖动窗口所在屏幕的 devicePixelRatio 换算（混合 DPI 多屏下
+// 其它屏幕的候选为近似值；麒麟环境 DPR = 1 精确）。
+// 性能：全量枚举约每窗口 4~5 个 X 往返，逐 mouse-move 调用不可接受；
+// 拖动期间其它顶层窗口不会移动，故结果做 150ms 短时缓存。
+QVector<QRect> AuWindow::platformWindowSnapCandidates() const
+{
+    QVector<QRect> rects;
+    Display *display = AuX11::isPlatformX11() ? AuX11::display() : nullptr;
+    if (!display)
+        return rects;
+    static QElapsedTimer cacheTimer;
+    static QVector<QRect> cache;
+    static bool cacheValid = false;
+    if (cacheValid && cacheTimer.isValid() && !cacheTimer.hasExpired(150))
+        return cache;
+
+    const AuSnapAtoms &atoms = auSnapAtoms(display);
+    if (atoms.clientList == None)
+        return rects;
+    const AuX11ErrorGuard errorGuard(display);
+    const QVector<long> clients = auReadLongArray(display, XDefaultRootWindow(display),
+                                                  atoms.clientList, XA_WINDOW);
+    if (clients.isEmpty())
+        return rects;
+    const Window self = static_cast<Window>(winId());
+    const QScreen *screen = windowHandle() ? windowHandle()->screen() : nullptr;
+    const qreal dpr = screen ? screen->devicePixelRatio() : 1.0;
+    for (long clientId : clients) {
+        const Window window = static_cast<Window>(clientId);
+        if (window == self)
+            continue;
+        if (!auIsSnappableWindow(display, window, atoms))
+            continue;
+        // 客户区根坐标（属性 x/y 相对 WM 外框父窗口，不可直接用）
+        ::Window child = None;
+        int clientX = 0, clientY = 0;
+        if (!XTranslateCoordinates(display, window, XDefaultRootWindow(display),
+                                   0, 0, &clientX, &clientY, &child))
+            continue;
+        XWindowAttributes attrs;
+        if (!XGetWindowAttributes(display, window, &attrs))
+            continue;
+        // _NET_FRAME_EXTENTS：WM 在客户区四周（左 / 右 / 上 / 下）加的
+        // 装饰宽度，外扩后即用户视觉的窗口外沿
+        int extents[4] = { 0, 0, 0, 0 };
+        if (atoms.frameExtents != None) {
+            const QVector<long> frame = auReadLongArray(display, window,
+                                                        atoms.frameExtents, XA_CARDINAL);
+            for (int i = 0; i < qMin(4, frame.size()); ++i)
+                extents[i] = int(frame.at(i));
+        }
+        const QRectF logical(
+            (clientX - extents[0]) / dpr, (clientY - extents[2]) / dpr,
+            qreal(attrs.width + extents[0] + extents[1]) / dpr,
+            qreal(attrs.height + extents[2] + extents[3]) / dpr);
+        rects.append(logical.toRect());
+    }
+    cache = rects;
+    cacheTimer.start();
+    cacheValid = true;
+    return rects;
 }
 
 // 已发系统缩放请求却持续收到本进程事件（超出接管宽限期）：WM 未接管，
@@ -517,36 +604,35 @@ bool AuWindow::platformIsComposited() const
 
 // ---- 边框阴影平台通道 ----
 
-// ukui-kwin / KWin 支持 KDE 阴影协议且混成运行时，阴影由 WM 在窗体矩形外
-// 合成（KWin wantsShadowToBeRendered 在最大化 / 全屏时自动停用），窗体不
-// 留阴影环；其余混成 WM（mutter / xfwm 等）回退为客户端自绘阴影环。
-bool AuWindow::platformShadowPaintedExternally() const
-{
-    return AuX11::isPlatformX11() && m_x11Compositing
-           && AuX11::wmSupportsKdeShadow();
-}
-
+// X11：阴影由 WM 的 border-only 装饰在窗外合成（见 platformInit 的
+// _KWIN_UKUI_DECORAION + _MOTIF_WM_HINTS 预写），随窗口移动 / 缩放 /
+// 最大化自动呈现与停用（WM wantsShadowToBeRendered），运行时无需任何
+// 客户端动作。setBorderShadowEnabled 在本平台仅留存开关语义。
+// X11：阴影 = WM 的 border-only 装饰（ukui-decorationrc 主题阴影环，窗外
+// 合成），开关与圆角共同决定装饰取舍：直角 + 阴影开 → border-only；
+// 圆角窗（radius>0）或开关关 → 显式无装饰（motif decorations=0）。
+// KWin 实测支持 map 后重读 motif **撤除**装饰（即时生效）；**加回**装饰
+// 不生效，需 hide/show 重映射强制重新管理（有一次闪动，仅状态切换时发生）。
+// setBorderShadowEnabled / setWindowRadius 运行时切换均经此钩子生效。
 void AuWindow::platformShadowUpdate()
 {
     if (!AuX11::isPlatformX11())
-        return;   // Wayland 等无 KDE 阴影协议：客户端阴影环经公共代码生效
-    AuX11KdeShadow *state = findChild<AuX11KdeShadow *>();
-    if (!m_borderShadowEnabled || !m_x11Compositing
-        || !AuX11::wmSupportsKdeShadow()) {
-        if (state)
-            state->clear();
         return;
+    const bool want = m_borderShadowEnabled && windowRadius() <= 0;
+    if (want == m_x11BorderDecorActive)
+        return;   // 状态未变（窗口重建路径已在 WinIdChange 强制重写）
+    auSyncBorderDecoration(winId(), want);
+    m_x11BorderDecorActive = want;
+    if (want && isVisible()) {
+        // 由"无装饰"切回 border-only 且窗口已映射：延迟一拍重映射，
+        // 等当前创建/显示流程结束后 withdraw+map
+        QTimer::singleShot(0, this, [this] {
+            if (isVisible()) {
+                hide();
+                show();
+            }
+        });
     }
-    // 与客户端绘制共用同一贴图缓存（键：样式阴影参数 / 生效四角半径 / dpr）
-    ensureShadowTile();
-    if (m_shadowTile.isNull()) {
-        if (state)
-            state->clear();
-        return;
-    }
-    if (!state)
-        state = new AuX11KdeShadow(this);
-    state->apply(m_shadowTile, m_shadowTileBlur, m_shadowTileRadii, m_shadowTileDpr);
 }
 
 bool AuWindow::platformClipsWindowShape() const
@@ -565,9 +651,10 @@ void AuWindow::applyTaskbarVisibility() {}
 void AuWindow::updateMask()
 {
     const bool noMaskNeeded = windowRadius() <= 0 || isMaximized() || isFullScreen();
-    // 混成运行时窗口为 ARGB 透明背景：圆角与阴影由 alpha 通道平滑呈现，
-    // 区域裁剪（1bit 无抗锯齿）反而产生锯齿并破坏阴影，必须跳过。
-    // 仅无混成（透明不可用）时才用 mask 裁出圆角。
+    // 混成运行时窗口为 ARGB 透明背景：圆角由 alpha 通道平滑呈现，区域
+    // 裁剪（1bit 无抗锯齿）反而产生锯齿并破坏客户端绘制，必须跳过 mask。
+    // 圆角窗体的 WM 矩形装饰直角由显式无装饰解决（见 auSyncBorderDecoration
+    // 注释："客户端圆角 + WM 原生阴影"在本 WM 上不可兼得，勿再尝试 XShape）。
     // 注意：首显之前（m_x11Compositing 尚未检测）setWindowRadius 可能已
     // 按当时尺寸设置过 mask；检测到混成后必须清掉这份过期 mask——否则
     // 窗体的显示与输入区域被永久钳制在旧尺寸，缩放后新增区域不可见、
@@ -591,7 +678,8 @@ void AuWindow::updateMask()
         m_cornerRadii[2], m_cornerRadii[3]);
     const QRegion rounded(path.toFillPolygon().toPolygon());
     const QRegion outer(rect());
-    // 内容区圆角裁剪 + 阴影环保留（阴影自身带 alpha 渐隐）
+    // 无混成：内容区圆角 mask 裁剪（setMask 同时设置 X11 bounding/input
+    // shape，WM 装饰同样被裁）+ 阴影环保留（阴影自身带 alpha 渐隐）
     setMask(rounded | (outer - QRegion(content)));
 }
 
@@ -662,6 +750,7 @@ void AuWindow::pollGrabRecovery()
     m_systemResizePending = false;
     m_manualResizing = false;
     m_manualMoving = false;
+    scheduleNativeDragSettle();   // 原生拖动收场（release 被吞，由本轮询兜底）
     m_titleBar->resetDragState();
     // 直接向 Qt 补发 release：清除内部隐式抓取，触发 enter/leave 重算，
     // hover 与光标立即恢复。KWin 的 snap-assist 等浮层不受任何影响。

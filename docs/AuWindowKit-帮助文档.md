@@ -1,6 +1,6 @@
 # AuWindowKit 帮助文档
 
-AuWindowKit 是一套无边框窗体库，以**系统 API 为主、Qt 渲染为辅**，提供统一风格的窗体容器（`AuWindow`）、自绘标题栏（`AuTitleBar`）与样式系统（`AuWindowStyle`），用于替代 `QMainWindow` / `QDialog`。
+AuWindowKit 是一套无边框窗体库，以**系统 API 为主、Qt 渲染为辅**，提供统一风格的窗体容器（`AuWindow`）、自绘标题栏（`AuTitleBar`）、消息框（`AuMessageBox`）与样式系统（`AuWindowStyle` / `AuMessageBoxStyle`），用于替代 `QMainWindow` / `QDialog` / `QMessageBox`。
 
 ## 模块组成
 
@@ -11,12 +11,18 @@ AuWindowKit/
 │   ├── AuWindowKit_global.h  # 导出宏
 │   ├── AuWindow.h            # 窗体容器
 │   ├── AuTitleBar.h          # 自绘标题栏
-│   └── AuWindowStyle.h       # 样式（亮 / 暗主题工厂 + 全局样式）
+│   ├── AuWindowStyle.h       # 窗体样式（亮 / 暗主题工厂 + 全局样式）
+│   ├── AuMessageBox.h        # 消息框（QMessageBox 用法的统一风格版本）
+│   ├── AuMessageBoxStyle.h   # 消息框本体样式（亮 / 暗主题工厂 + 全局样式）
+│   └── AuPushButton.h        # 自绘命令按钮（消息框按钮行 / 可独立复用）
 ├── widget/
 │   ├── AuWindow.cpp
-│   └── AuTitleBar.cpp
+│   ├── AuTitleBar.cpp
+│   ├── AuPushButton.cpp
+│   └── AuMessageBox.cpp
 └── style/
-    └── AuWindowStyle.cpp
+    ├── AuWindowStyle.cpp
+    └── AuMessageBoxStyle.cpp
 ```
 
 ## 平台实现策略
@@ -24,7 +30,7 @@ AuWindowKit/
 | 平台 | 边框 / 阴影 | 拖动与缩放 | 边缘分屏 | 圆角 |
 | --- | --- | --- | --- | --- |
 | **Windows** | 保留 `WS_THICKFRAME` 等原生样式，经 `WM_NCCALCSIZE` 去掉可见边框；阴影由 DWM 提供（可经 `setBorderShadowEnabled(true)` 切换为 peony/UKUI 同款客户端阴影环，需在 show() 前开启） | 系统非客户区（`WM_NCHITTEST`） | 原生 Aero Snap（拖到屏幕上/左/右边缘） | Win11 走 DWM 圆角偏好，Win10 用窗口区域 |
-| **Linux/X11** | Qt 无边框 + 透明背景（ARGB）。KWin/UKUI 系 WM 上通过 `_KDE_NET_WM_SHADOW` 协议由混成器绘制**与原生窗口相同的主题阴影**（窗口即纯内容，无边距）；其他 WM 回退为自绘阴影 | 拖动 / 缩放经 `_NET_WM_MOVERESIZE` 交给 WM：**拖顶最大化预览、边缘半屏、snap-assist、拖出屏幕全部为系统原生行为**；WM 忽略时自动回退手动拖动（左右可出屏） | KWin 系原生边缘分屏（含贴边后 snap-assist） | 混成下靠 alpha 通道 + 抗锯齿平滑呈现；无混成时区域裁剪 |
+| **Linux/X11** | 无 `Qt::FramelessWindowHint`；预写 `_KWIN_UKUI_DECORAION` + `_MOTIF_WM_HINTS` 请 WM 分配 border-only 装饰，由混成器用主题在窗外绘制阴影（peony 同款机制，窗体几何零污染；WM 不支持时无阴影） | 拖动 / 缩放经 `_NET_WM_MOVERESIZE` 交给 WM：**拖顶最大化预览、边缘半屏、snap-assist、拖出屏幕全部为系统原生行为**；WM 忽略时自动回退手动拖动（左右可出屏） | KWin 系原生边缘分屏（含贴边后 snap-assist） | 混成下靠 alpha 通道 + 抗锯齿平滑呈现；无混成时区域裁剪 |
 | **其它平台** | 自绘阴影（默认关闭，`setBorderShadowEnabled(true)` 开启） | 手动拖动 / 缩放（钳制最小宽高） | 无 | 区域裁剪 |
 
 最小宽高的约束方式：Windows 经 `WM_GETMINMAXINFO` 对原生边框缩放生效；其它平台由手动缩放路径与布局 `minimumSize` 保证。
@@ -190,6 +196,58 @@ win->setWindowRadius(8);   // 默认 0（直角）
 Windows 上 1~5 映射为系统小圆角（4px）、>5 映射为系统标准圆角（8px），
 配套阴影由系统提供；其它平台按像素裁剪实现。
 
+### 10. 消息框（AuMessageBox）
+
+`QMessageBox` 用法的统一风格版本：图标 / 正文 / 按钮全部自绘，不落平台原生
+对话框，跨平台观感一致；窗体骨架（无边框标题栏、圆角、阴影、模态 `exec`）
+直接继承 `AuWindow`。尺寸按内容自适应并固定（不支持用户拖拽缩放），自动
+居中于父窗口，最小化 / 最大化按钮默认隐藏。
+
+```cpp
+// 静态便捷函数（模态执行，返回被点击的标准按钮）
+if (AuMessageBox::question(this, QStringLiteral("删除确认"),
+        QStringLiteral("确定要删除选中的 3 个文件吗？")) == AuMessageBox::Yes) {
+    doDelete();
+}
+// information / warning / critical / question 同构；返回值恒为 StandardButton
+```
+
+```cpp
+// 实例用法：补充文本、实例级改文案、自定义内容
+AuMessageBox box(this);
+box.setWindowTitle(QStringLiteral("软件更新"));
+box.setIcon(AuMessageBox::Question);
+box.setText(QStringLiteral("发现新版本 2.3.1，是否立即更新？"));
+box.setInformativeText(QStringLiteral("更新大小 45 MB，更新过程需要重启应用。"));
+box.setStandardButtons(AuMessageBox::Ok | AuMessageBox::Cancel);
+box.setButtonText(AuMessageBox::Ok, QStringLiteral("立即更新"));    // 实例级文案
+box.setCustomContent(new QCheckBox(QStringLiteral("不再提示")));     // 文本与按钮行之间
+box.exec();
+```
+
+**按钮文案（改中文零配置）**：内置文案即为中文（确定 / 是 / 否 / 取消 / 关闭），
+无需翻译文件。两级覆盖按优先级生效：
+
+| 覆盖层级 | API | 生效范围 |
+| --- | --- | --- |
+| 全局覆盖 | `AuMessageBox::setDefaultButtonText(按钮, 文案)`（空串恢复默认） | 所有消息框，即时生效 |
+| 实例覆盖 | `box.setButtonText(按钮, 文案)`（空串恢复全局值） | 单个消息框 |
+
+**自定义按钮**：`addButton(文案, 角色)` 返回 `AuPushButton*`（排在标准按钮
+之后）；点击后按角色给出结果码（AcceptRole → Accepted，其余 → Rejected），
+用 `clickedButton()` / `buttonClicked()` 信号区分具体按钮。
+
+**样式**：本体（正文 / 图标 / 按钮）经 `AuMessageBoxStyle`（全局 / 实例 /
+亮暗工厂三分法，字段含字体颜色、图标尺寸、按钮宽高圆角与全套状态色、
+内容区留白与换行宽度上限）；窗体骨架继续跟随 `AuWindowStyle::globalStyle()`。
+两套全局样式需分别设置（见注意事项）。
+
+**与 QMessageBox 的差异**：模态范围跟随 `AuWindow::exec()`（有父窗口
+WindowModal）；Esc / 标题栏关闭 / 关闭按钮等价于"取消"——返回值取集合内
+的取消类按钮（Cancel 优先于 Close、No，不存在时回退 Ok）；按钮排布固定
+一套（主按钮靠左、取消靠最右），不随平台主题切换；`setDetailedText()`
+折叠区暂未提供（后续版本补充）。
+
 ## API 一览（AuWindow）
 
 | 分类 | API |
@@ -203,9 +261,24 @@ Windows 上 1~5 映射为系统小圆角（4px）、>5 映射为系统标准圆�
 | 边框阴影 | `setBorderShadowEnabled()` `isBorderShadowEnabled()`（参数经 `AuWindowStyle` 的 shadow 系列） |
 | X11 系统移动 | `setSystemWindowMoveEnabled()` `isSystemWindowMoveEnabled()` |
 | 边缘吸附 | `setEdgeSnapEnabled()` `isEdgeSnapEnabled()` |
+| 窗口间吸附 | `setWindowSnapEnabled()` `isWindowSnapEnabled()` |
 | Dialog | `setDialogMode()` `setModality()` `exec()` `done()` `accept()` `reject()` `result()` `setResult()` |
 | 样式 | `setStyle()` `style()` |
 | 信号 | `closeIntercepted()` `finished(int)` `accepted()` `rejected()` `maximizeStateChanged(bool)` |
+
+## API 一览（AuMessageBox）
+
+| 分类 | API |
+| --- | --- |
+| 静态便捷函数 | `information()` `warning()` `critical()` `question()`（均返回 `StandardButton`） |
+| 文本 | `setText()` `text()` `setInformativeText()` `informativeText()` |
+| 图标 | `setIcon()`（NoIcon/Information/Warning/Critical/Question） `setIconPixmap()`（自定义贴图优先） |
+| 标准按钮 | `setStandardButtons()` `standardButtons()` `button()` `setDefaultButton()` |
+| 自定义按钮 | `addButton(文案, 角色)` `clickedButton()` |
+| 按钮文案 | 全局 `setDefaultButtonText()` / `standardButtonText()`；实例 `setButtonText()` |
+| 自定义内容 | `setCustomContent()` `customContent()` |
+| 样式 | `setStyle(AuMessageBoxStyle*)` `style()`（本体）；`windowStyle()`（窗体骨架） |
+| 信号 | `buttonClicked(StandardButton)`；另继承 `AuWindow` 的 `finished()/accepted()/rejected()` |
 
 ## 与 QMainWindow 的对应关系
 
@@ -222,16 +295,28 @@ Windows 上 1~5 映射为系统小圆角（4px）、>5 映射为系统标准圆�
 1. **X11 混成检测**：优先读取 EWMH 混成选择；ukui-kwin 等定制混成器不注册该选择，
    此时以窗口实际 visual（ARGB depth 32）兜底判断——透明生效即启用平滑圆角，
    未生效（无混成）则退化为直角。
-2. **X11 原生阴影**：KWin/UKUI 系窗口管理器支持 `_KDE_NET_WM_SHADOW` 协议，
-   库会自动上传阴影贴图并设置该属性，由混成器在窗口外合成
-   （peony / qt5-ukui-platformtheme 同款机制，窗口本身即纯内容，无边距环，
-   缩放零重绘开销）。非 KWin 系 WM 回退为客户端自绘阴影环：窗体四周
-   外扩 `shadowMargin` 留白（resize/setGeometry 的尺寸含留白），最大化 /
-   全屏自动收起。两通道共用同一贴图渲染（圆角矩形填色 + `qt_blurImage`
-   高斯模糊 + 九宫格切图，与 KWin 贴图摆放精确对齐），参数取自样式的
-   `shadowColor` / `shadowBlurRadius` / `shadowMargin`；开关见
-   `setBorderShadowEnabled()`（Linux 默认开启，无混成自动关闭；
-   Windows 默认关闭以保留 DWM 原生阴影）。
+2. **X11 原生阴影**：采用 peony（麒麟文件管理器）同款机制——窗口首次
+   map 前预写两个属性，请 WM 分配"仅边框"（border-only）装饰：
+   `_KWIN_UKUI_DECORAION = 1` + `_MOTIF_WM_HINTS = {3,0,1,0,2}`
+   （peony 的 `XAtomHelper` 在 64 位系统上按 40 字节 `MotifWmHints` 只拷
+   前 20 字节的落盘值，逐字节复刻）。ukui-kwin / KWin 系 WM 据此用主题
+   绘制窗外阴影环（`ukui-decorationrc` 的 `shadow_border=30` /
+   `shadowcolor_alphaf=0.15`），且 `_NET_FRAME_EXTENTS` 全 0——**窗体几何
+   零污染**，拖动 / 缩放 / 贴靠 / 最大化路径不受影响，阴影随 WM 原生
+   呈现与停用（最大化 / 全屏自动隐藏）。**圆角窗体（windowRadius > 0）
+   显式声明无装饰（motif decorations=0）**——WM 装饰恒为矩形、不跟随
+   客户端圆角，透明角像素后会露出矩形边线 / 阴影直角（呈"矩形框包裹
+   窗体"）；且实测给窗口设置 XShape 后 KWin 会停用整套装饰渲染（阴影
+   完全消失），即本 WM 上"客户端圆角 + WM 原生阴影"不可兼得，圆角
+   窗体舍弃阴影保弧线平滑。装饰属性随原生窗口创建 / 重建（WinIdChange）
+   与首次 map 前（platformFirstShow）同步；圆角应在 show() 前设置。
+   因此 X11 上不设
+   `Qt::FramelessWindowHint`（那会让 Qt 在 map 时写 motif decorations=0
+   并附加 OVERRIDE 窗口类型，WM 因而不分配装饰）。WM 不支持该机制时
+   退化为无阴影（不做客户端自绘兜底）。`setBorderShadowEnabled()` 在
+   X11 运行时生效：关闭即时撤除装饰（阴影与矩形边线消失）；开启时写回
+   border-only 属性并重映射窗口一次（有闪动）。`shadowColor` /
+   `shadowBlurRadius` / `shadowMargin` 在 Linux 不生效（阴影外观由主题决定）。
 3. **X11 圆角平滑**：混成下窗口为 ARGB 透明背景，圆角靠 alpha 通道抗锯齿呈现，
    不使用 1-bit 区域裁剪（那是锯齿来源）。
 4. **X11 系统移动通道（可选）**：`setSystemWindowMoveEnabled(true)` 后拖动 /
@@ -243,18 +328,37 @@ Windows 上 1~5 映射为系统小圆角（4px）、>5 映射为系统标准圆�
    吸附带（约 10px）时显示半透明铺屏预览，松开按光标位置吸附——拖到顶部 →
    最大化（仅当标题栏显示最大化按钮），左 / 右边缘 → 贴边半屏（按阴影环
    补偿外扩）。贴靠后再拖标题栏自动还原吸附前尺寸并跟随（保持抓取点相对
-   位置）；手动缩放会使还原基准失效。可用 `setEdgeSnapEnabled(false)` 关闭。
-6. **X11 缩放手柄**：窗口边缘布置了透明手柄子控件（厚度 = 阴影边距或 6px），
+   位置）；吸附态下经还原按钮 / 双击标题栏还原时，位置回到吸附前的原始
+   位置（而非拖动末位置）；手动缩放会使还原基准失效。可用
+   `setEdgeSnapEnabled(false)` 关闭。
+6. **窗口间吸附（手动路径，麒麟原生同款磁吸）**：拖动窗口靠近其它顶层
+   窗口（间距 ≤10px）时自动磁吸贴合边缘，同时对齐相邻边（无预览浮层，
+   与麒麟原生行为一致）。吸附目标：X11（xcb 会话）为全系统所有常规顶层
+   窗口（`_NET_CLIENT_LIST` 枚举，按 `_NET_FRAME_EXTENTS` 对齐视觉外沿；
+   过滤最小化与面板 / 桌面 / 菜单等特殊类型，150ms 短时缓存）；其它平台
+   为本进程的 AuWindow 窗口。仅手动拖动通道生效——启用后标题栏拖动自动
+   改走手动通道（含最大化窗口还原），Qt 5.15+ 的 WM Quick Tiling /
+   Windows Aero Snap 在拖动时让位，关闭即恢复原生通道。默认跟随手动通道
+   默认状态：Qt 5.12 X11 默认开启，Qt 5.15+ X11 与 Windows 默认关闭。
+   可用 `setWindowSnapEnabled(false)` 关闭。与边缘吸附（第 5 条）互相
+   独立、可并存。注意 Windows 侧改走手动通道后的行为待真机验证。
+7. **X11 缩放手柄**：窗口边缘布置了透明手柄子控件（厚度 = 阴影边距或 6px），
    光标由 Qt 自动切换为对应方向的缩放形状，按下即进入缩放；
    最大化 / 全屏时手柄自动隐藏。
-7. **Windows 最小化动画**：保留了原生窗口样式，最小化 / 最大化动画、
+8. **Windows 最小化动画**：保留了原生窗口样式，最小化 / 最大化动画、
    任务栏缩略图、Aero Snap、Alt+Space 系统菜单均为系统原生行为。
-8. **子类化标题栏**：可继承 `AuTitleBar` 重写 `paintEvent` 定制绘制，
+9. **子类化标题栏**：可继承 `AuTitleBar` 重写 `paintEvent` 定制绘制，
    通过 `AuWindow::setTitleBar()` 替换（构造时需传入窗体指针 `new MyBar(this)`）。
-9. **整窗皮肤**：AuWindow 只负责窗体框架（标题栏 / 背景 / 阴影），
+10. **整窗皮肤**：AuWindow 只负责窗体框架（标题栏 / 背景 / 阴影），
    内容区控件配色建议搭配 QSS 或调色板（Demo 的主题切换有示例）。
-10. **默认居中摆放**：窗体首次显示（`show()` / `exec()`）时自动居中——
+11. **默认居中摆放**：窗体首次显示（`show()` / `exec()`）时自动居中——
    有可见父窗口的居中于父窗口，否则居中于光标所在屏幕的工作区（避开
    任务栏，多显示器下不越界）。与 `QDialog` 相同，调用过 `move()` /
    `setGeometry()` 显式定位（如恢复上次位置）的窗体不再干预；首次显示
    后再次 `show()` 沿用上次位置。
+12. **消息框的双全局样式**：AuMessageBox 的窗体骨架跟随
+   `AuWindowStyle::globalStyle()`，本体（正文 / 图标 / 按钮）跟随
+   `AuMessageBoxStyle::globalStyle()`——两套全局样式需分别设置（亮暗
+   主题切换时同步调用两组 `setGlobalStyle()`，Demo 的主题切换有示例）。
+   消息框尺寸按内容自适应并固定；`setCustomContent()` 的自定义控件宽度
+   参与换行宽度上限（`maxContentWidth`）计算。

@@ -1,4 +1,6 @@
 #include "MainWindow.h"
+#include "AuMessageBox.h"
+#include "AuMessageBoxStyle.h"
 #include "AuWindowStyle.h"
 #include "demos/DialogWindows.h"
 #include "demos/MyWin.h"
@@ -6,7 +8,6 @@
 #include <QCheckBox>
 #include <QHBoxLayout>
 #include <QLabel>
-#include <QMessageBox>
 #include <QPushButton>
 #include <QSpinBox>
 #include <QTabWidget>
@@ -61,8 +62,8 @@ MainWindow::MainWindow(QWidget *parent)
         "  padding:2px 10px; font-size:12px; }"
         "QPushButton:hover { background:#3d8ceb; }"));
     feedbackButton->connect(feedbackButton, &QPushButton::clicked, this, []() {
-        QMessageBox::information(nullptr, QStringLiteral("反馈"),
-                                 QStringLiteral("抢占鼠标的标题栏按钮：点击不受拖动影响"));
+        AuMessageBox::information(nullptr, QStringLiteral("反馈"),
+                                  QStringLiteral("抢占鼠标的标题栏按钮：点击不受拖动影响"));
     });
     addTitleBarWidget(feedbackButton, AuTitleBar::SlotBeforeButtons);  // 靠右：可交互组件，抢占鼠标
 
@@ -75,6 +76,7 @@ void MainWindow::buildContent()
     QTabWidget *tabs = new QTabWidget;
     tabs->addTab(buildWindowControlPage(), QStringLiteral("窗体特性"));
     tabs->addTab(buildDialogPage(), QStringLiteral("Dialog 模态"));
+    tabs->addTab(buildMessageBoxPage(), QStringLiteral("消息框"));
     tabs->addTab(buildInheritPage(), QStringLiteral("继承与 ui 文件"));
     setCentralWidget(tabs);
 }
@@ -164,11 +166,21 @@ QWidget *MainWindow::buildWindowControlPage()
     snapRow->addStretch(1);
     pageLayout->addLayout(snapRow);
 
-    // peony / UKUI 同款客户端边框阴影（AuWindowStyle 的 shadow 系列参数渲染）。
-    // Windows 默认关闭（保留 DWM 原生阴影），勾选后切换为客户端阴影环；
-    // X11 默认开启：ukui-kwin / KWin 上阴影由 WM 合成，其它混成 WM 为客户端环。
+    // 窗口间磁吸：拖近其它顶层窗口（X11 含全系统窗口）时自动贴合边缘。
+    // 仅手动拖动通道生效，开启后拖动自动改走手动通道。
+    QHBoxLayout *winSnapRow = new QHBoxLayout;
+    QCheckBox *winSnapBox = new QCheckBox(QStringLiteral("窗口间吸附（拖动中靠近其它窗口自动磁吸贴合边缘）"));
+    winSnapBox->setChecked(isWindowSnapEnabled());
+    connect(winSnapBox, &QCheckBox::toggled, this, &AuWindow::setWindowSnapEnabled);
+    winSnapRow->addWidget(winSnapBox);
+    winSnapRow->addStretch(1);
+    pageLayout->addLayout(winSnapRow);
+
+    // 边框阴影：X11 上由 WM 的 border-only 装饰在窗外合成（运行时开关即时
+    // 生效，由无装饰切回会重映射一次）；Windows 由 DWM 原生提供（本开关不
+    // 影响）；圆角窗体（radius>0）在 X11 上无 WM 阴影（矩形装饰会破坏圆角）。
     QHBoxLayout *shadowRow = new QHBoxLayout;
-    QCheckBox *shadowBox = new QCheckBox(QStringLiteral("客户端边框阴影（peony/UKUI 同款；开启后替代 Windows 的 DWM 阴影）"));
+    QCheckBox *shadowBox = new QCheckBox(QStringLiteral("边框阴影（X11 由 WM 合成，运行时开关生效；圆角窗体无 WM 阴影）"));
     shadowBox->setChecked(isBorderShadowEnabled());
     connect(shadowBox, &QCheckBox::toggled, this, &AuWindow::setBorderShadowEnabled);
     shadowRow->addWidget(shadowBox);
@@ -214,10 +226,10 @@ QWidget *MainWindow::buildDialogPage()
     connect(windowModal, &QPushButton::clicked, this, [this]() {
         DialogWindow dialog(AuWindow::Modality::WindowModal, this);
         const int code = dialog.exec();
-        QMessageBox::information(this, QStringLiteral("exec 返回"),
-                                 code == AuWindow::Accepted
-                                     ? QStringLiteral("返回：Accepted（确定）")
-                                     : QStringLiteral("返回：Rejected（取消/Esc/点X）"));
+        AuMessageBox::information(this, QStringLiteral("exec 返回"),
+                                  code == AuWindow::Accepted
+                                      ? QStringLiteral("返回：Accepted（确定）")
+                                      : QStringLiteral("返回：Rejected（取消/Esc/点X）"));
     });
     pageLayout->addWidget(windowModal);
 
@@ -300,6 +312,108 @@ QWidget *MainWindow::buildDialogPage()
     return page;
 }
 
+QWidget *MainWindow::buildMessageBoxPage()
+{
+    QWidget *page = new QWidget(this);
+    QVBoxLayout *pageLayout = makePageLayout(page);
+
+    pageLayout->addWidget(makeHint(
+        QStringLiteral("AuMessageBox：QMessageBox 用法的统一风格版本。图标、正文、"
+                       "按钮全部自绘，跨平台观感一致；窗体骨架（标题栏/圆角/阴影/模态）"
+                       "继承 AuWindow。本体样式随 AuMessageBoxStyle 全局样式联动，"
+                       "可切到暗黑主题查看整体效果。"), this));
+
+    QPushButton *infoButton = new QPushButton(QStringLiteral("information（信息，仅确定）"));
+    connect(infoButton, &QPushButton::clicked, this, [this]() {
+        AuMessageBox::information(this, QStringLiteral("操作完成"),
+                                  QStringLiteral("文件已成功导出到指定目录。"));
+    });
+    pageLayout->addWidget(infoButton);
+
+    QPushButton *warnButton = new QPushButton(QStringLiteral("warning（警告，是/否，读返回值）"));
+    connect(warnButton, &QPushButton::clicked, this, [this]() {
+        const AuMessageBox::StandardButton choice =
+            AuMessageBox::warning(this, QStringLiteral("覆盖确认"),
+                                  QStringLiteral("目标文件已存在，是否覆盖？"),
+                                  AuMessageBox::Yes | AuMessageBox::No);
+        AuMessageBox::information(this, QStringLiteral("返回值"),
+                                  choice == AuMessageBox::Yes
+                                      ? QStringLiteral("返回值：Yes（是）")
+                                      : QStringLiteral("返回值：No（否 / Esc / 点X）"));
+    });
+    pageLayout->addWidget(warnButton);
+
+    QPushButton *criticalButton = new QPushButton(QStringLiteral("critical（错误，关闭）"));
+    connect(criticalButton, &QPushButton::clicked, this, [this]() {
+        AuMessageBox::critical(this, QStringLiteral("保存失败"),
+                               QStringLiteral("磁盘空间不足，写入已中断。"),
+                               AuMessageBox::Close);
+    });
+    pageLayout->addWidget(criticalButton);
+
+    QPushButton *questionButton = new QPushButton(QStringLiteral("question（询问，是/否/取消，默认按钮=是）"));
+    connect(questionButton, &QPushButton::clicked, this, [this]() {
+        const AuMessageBox::StandardButton choice =
+            AuMessageBox::question(this, QStringLiteral("删除确认"),
+                                   QStringLiteral("确定要删除选中的 3 个文件吗？"),
+                                   AuMessageBox::Yes | AuMessageBox::No | AuMessageBox::Cancel,
+                                   AuMessageBox::Yes);
+        AuMessageBox::information(this, QStringLiteral("返回值"),
+                                  choice == AuMessageBox::Yes ? QStringLiteral("是")
+                                  : choice == AuMessageBox::No ? QStringLiteral("否")
+                                  : QStringLiteral("取消"));
+    });
+    pageLayout->addWidget(questionButton);
+
+    QPushButton *instanceButton = new QPushButton(QStringLiteral("实例用法（补充文本 + 实例级改按钮文案）"));
+    connect(instanceButton, &QPushButton::clicked, this, [this]() {
+        AuMessageBox box(this);
+        box.setWindowTitle(QStringLiteral("软件更新"));
+        box.setIcon(AuMessageBox::Question);
+        box.setText(QStringLiteral("发现新版本 2.3.1，是否立即更新？"));
+        box.setInformativeText(QStringLiteral("更新大小 45 MB，更新过程需要重启应用。"));
+        box.setStandardButtons(AuMessageBox::Ok | AuMessageBox::Cancel);
+        box.setButtonText(AuMessageBox::Ok, QStringLiteral("立即更新"));
+        box.setButtonText(AuMessageBox::Cancel, QStringLiteral("下次再说"));
+        box.exec();
+    });
+    pageLayout->addWidget(instanceButton);
+
+    QPushButton *customButton = new QPushButton(QStringLiteral("自定义内容（“不再提示”勾选框）"));
+    connect(customButton, &QPushButton::clicked, this, [this]() {
+        AuMessageBox box(this);
+        box.setWindowTitle(QStringLiteral("打开链接"));
+        box.setIcon(AuMessageBox::Information);
+        box.setText(QStringLiteral("检测到剪贴板中有链接，是否直接打开？"));
+        QCheckBox *noPrompt = new QCheckBox(QStringLiteral("不再提示"));
+        box.setCustomContent(noPrompt);
+        box.setStandardButtons(AuMessageBox::Ok | AuMessageBox::Cancel);
+        box.exec();
+        if (noPrompt->isChecked())
+            AuMessageBox::information(this, QStringLiteral("勾选状态"),
+                                      QStringLiteral("“不再提示”已勾选（业务可据此持久化）。"));
+    });
+    pageLayout->addWidget(customButton);
+
+    QPushButton *globalTextButton = new QPushButton(QStringLiteral("全局改按钮文案（setDefaultButtonText 切换中/英）"));
+    connect(globalTextButton, &QPushButton::clicked, this, [this]() {
+        m_englishButtonText = !m_englishButtonText;
+        // 空字符串 = 恢复内置中文默认；全局覆盖对所有消息框即时生效
+        AuMessageBox::setDefaultButtonText(AuMessageBox::Ok,
+                                           m_englishButtonText ? QStringLiteral("OK") : QString());
+        AuMessageBox::setDefaultButtonText(AuMessageBox::Cancel,
+                                           m_englishButtonText ? QStringLiteral("Cancel") : QString());
+        AuMessageBox::information(this, QStringLiteral("全局文案"),
+                                  m_englishButtonText
+                                      ? QStringLiteral("全部消息框的 确定/取消 已切换为英文。")
+                                      : QStringLiteral("已恢复内置中文默认文案。"));
+    });
+    pageLayout->addWidget(globalTextButton);
+
+    pageLayout->addStretch(1);
+    return page;
+}
+
 QWidget *MainWindow::buildInheritPage()
 {
     QWidget *page = new QWidget(this);
@@ -347,18 +461,21 @@ void MainWindow::switchGlobalTheme()
 {
     const bool toDark = (m_themeButton->text() == QStringLiteral("切换暗黑主题"));
     // 全局样式只负责窗体自绘部分（标题栏 / 窗体背景 / 边框色 / 阴影色）；
-    // 内容区控件配色由业务自行控制（QSS / QPalette），库与演示均不代管
+    // 内容区控件配色由业务自行控制（QSS / QPalette），库与演示均不代管。
+    // AuMessageBox 本体（正文 / 图标 / 按钮）另有一套全局样式，需同步切换。
     AuWindowStyle::setGlobalStyle(toDark ? AuWindowStyle::createDarkStyle()
                                          : AuWindowStyle::createLightStyle());
+    AuMessageBoxStyle::setGlobalStyle(toDark ? AuMessageBoxStyle::createDarkStyle()
+                                             : AuMessageBoxStyle::createLightStyle());
     m_themeButton->setText(toDark ? QStringLiteral("切换明亮主题")
                                   : QStringLiteral("切换暗黑主题"));
 }
 
 void MainWindow::onCloseIntercepted()
 {
-    const QMessageBox::StandardButton answer =
-        QMessageBox::question(this, QStringLiteral("确认退出"),
-                              QStringLiteral("关闭已被拦截，确定要退出吗？"));
-    if (answer == QMessageBox::Yes)
+    const AuMessageBox::StandardButton answer =
+        AuMessageBox::question(this, QStringLiteral("确认退出"),
+                               QStringLiteral("关闭已被拦截，确定要退出吗？"));
+    if (answer == AuMessageBox::Yes)
         forceClose();
 }

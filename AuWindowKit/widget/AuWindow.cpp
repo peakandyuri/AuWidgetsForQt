@@ -1,7 +1,6 @@
 #include "AuWindow.h"
 #include "AuTitleBar.h"
 #include "AuWindowStyle.h"
-#include "AuBorderShadow.h"
 #include "AuWindow_p.h"
 
 #include <QDateTime>
@@ -23,6 +22,14 @@
 // 位于 AuWindowWin.cpp 与 AuWindowX11.cpp，其它平台见 AuWindowFallback.cpp；
 // 本文件不含任何平台条件编译，平台差异经 platformXxx() 钩子进入各平台文件。
 // ============================================================================
+
+/// 本进程 AuWindow 注册表：窗口间吸附在非 X11 平台（无法枚举系统窗口）的
+/// 候选来源。单线程 UI 使用，无需加锁。
+static QVector<AuWindow *> &auWindowRegistry()
+{
+    static QVector<AuWindow *> registry;
+    return registry;
+}
 
 /// 吸附预览浮层：手动拖动光标进入边缘吸附带时铺出目标区域（半透明主题
 /// 高亮），松手应用吸附并隐藏。独立 bypass 顶层窗口：不进任务栏 / Alt+Tab，
@@ -151,6 +158,13 @@ private:
 AuWindow::AuWindow(QWidget *parent, Qt::WindowFlags flags)
     : QWidget(parent, flags)
     , m_style(nullptr)
+    // m_titleBar / m_client 必须在初始化列表置空：platformInit() 内的
+    // winId() 会同步创建原生窗口并派发 WindowIconChange / WinIdChange /
+    // Resize 事件，event() 与 relayout() 在此期间解引用这两个指针——构造
+    // 函数体里才赋值的话，读到的是栈残留垃圾（栈上构造的窗体必现崩溃
+    // 风险，是否触发取决于栈残留，core 已实证：this 落在栈区）
+    , m_titleBar(nullptr)
+    , m_client(nullptr)
     , m_clientLayout(nullptr)
     , m_adoptedLayout(nullptr)
     , m_centralWidget(nullptr)
@@ -166,23 +180,26 @@ AuWindow::AuWindow(QWidget *parent, Qt::WindowFlags flags)
     , m_x11Compositing(false)
     , m_x11CheckedTranslucency(false)
     , m_borderShadowEnabled(false)   // platformInit() 按平台能力设默认值
-    , m_shadowTileColor()
-    , m_shadowTileBlur(0)
-    , m_shadowTileRadii{0, 0, 0, 0}
-    , m_shadowTileDpr(1.0)
-    , m_shadowTileValid(false)
     , m_manualResizing(false)
     , m_manualMoving(false)
+    , m_manualRestorePending(false)
+    , m_manualRestoreTargetRect()
     , m_systemMoveEnabled(false)   // 系统通道在 platformInit() 中按平台能力开启
     , m_edgeSnapEnabled(true)
+    , m_windowSnapEnabled(true)    // platformInit() 按平台/Qt 版本设默认值
     , m_snapPreview(nullptr)
     , m_snapped(false)
+    , m_nativeDragActive(false)
+    , m_nativeDragGen(0)
+    , m_normalRestoreAssert()
+    , m_x11BorderDecorActive(false)
     , m_wmGeometryBroken(false)
     , m_wmGeometryPending(false)
     , m_systemResizePending(false)
     , m_systemResizeSentMs(0)
     , m_pressGlobal(0, 0)
     , m_normalSizeHint(0, 0)
+    , m_normalGeometry()
     , m_cornerClips{nullptr, nullptr, nullptr, nullptr}
     , m_grabRecoveryTimer(nullptr)
     , m_awaitingRelease(false)
@@ -190,6 +207,9 @@ AuWindow::AuWindow(QWidget *parent, Qt::WindowFlags flags)
 {
     // 平台差异（窗口标志 / 属性、内容区容器、边缘缩放手柄、系统移动通道）
     platformInit();
+
+    // 进入窗口间吸附的候选注册表（非 X11 平台的吸附目标来源）
+    auWindowRegistry().append(this);
 
     m_titleBar = new AuTitleBar(this);
     m_client->setFocusPolicy(Qt::NoFocus);
@@ -206,6 +226,7 @@ AuWindow::AuWindow(QWidget *parent, Qt::WindowFlags flags)
 
 AuWindow::~AuWindow()
 {
+    auWindowRegistry().removeOne(this);
     AuWindowStyle::unregisterGlobalObserver(this);
     // deleteLater 而非直接 delete：预览浮层显示过即被 Qt 无障碍桥
     // （QAccessibleCache）缓存接口，直接删除会在应用退出时留下悬空
@@ -338,8 +359,6 @@ void AuWindow::setWindowRadius(int radius)
     for (int &r : m_cornerRadii)
         r = radius;
     platformRadiusChanged();
-    invalidateShadowTile();      // 贴图弧形跟随四角半径
-    platformShadowUpdate();      // X11：WM 合成贴图重传
     relayout(); // 四角裁剪浮层 / 标题栏圆弧跟随
     update();
 }
@@ -351,8 +370,6 @@ void AuWindow::setCornerRadius(Qt::Corner corner, int radius)
         return;
     m_cornerRadii[int(corner)] = radius;
     platformRadiusChanged();
-    invalidateShadowTile();
-    platformShadowUpdate();
     relayout();
     update();
 }
@@ -436,18 +453,11 @@ void AuWindow::setBorderShadowEnabled(bool enabled)
         return;
     m_borderShadowEnabled = enabled;
     platformShadowUpdate();
-    relayout();     // 阴影环宽变化 → 内容区 / 手柄 / 裁剪浮层跟随
-    update();
 }
 
 bool AuWindow::isBorderShadowEnabled() const
 {
     return m_borderShadowEnabled;
-}
-
-void AuWindow::invalidateShadowTile()
-{
-    m_shadowTileValid = false;
 }
 
 // ---- Dialog / 模态 ----
@@ -542,12 +552,15 @@ void AuWindow::setResult(int result)
 
 void AuWindow::setStyle(AuWindowStyle *style)
 {
+    // 全局样式指针归 setGlobalStyle 管理（仅在设置新全局样式时释放旧的）：
+    // setStyle 传入它时直接跳过——不接管所有权、不改变当前样式状态；
+    // 恢复跟随全局请显式传 nullptr
+    if (style && style == AuWindowStyle::globalStyle())
+        return;
     if (m_style == style)
         return;
     delete m_style;
     m_style = style;
-    invalidateShadowTile();      // 阴影色 / 模糊 / 留白可能变化
-    platformShadowUpdate();      // X11：刷新 WM 合成贴图；Windows：DWM 跟随
     relayout();
     platformStyleChanged();
     update();
@@ -562,8 +575,6 @@ void AuWindow::onGlobalStyleChanged()
 {
     if (m_style)
         return; // 独立样式不受全局影响
-    invalidateShadowTile();
-    platformShadowUpdate();
     relayout();
     platformStyleChanged();
     update();
@@ -659,13 +670,43 @@ void AuWindow::showEvent(QShowEvent *event)
     relayout();
 }
 
+void AuWindow::moveEvent(QMoveEvent *event)
+{
+    QWidget::moveEvent(event);
+    // 还原纠正断言保护窗：KWin 取消最大化的两步落位（步骤 b：首个 motion
+    // 把窗口移到它记忆的位置）会在我们纠正后几十毫秒到达并拽回过期记忆
+    // 位置——窗内收到不匹配的 Move 重新断言（自身 setGeometry 的回声几何
+    // 相等，不会递归；用户按下时 AuTitleBar/startManualMove 等已撤防）
+    if (m_normalRestoreAssert.isValid() && geometry() != m_normalRestoreAssert)
+        setGeometry(m_normalRestoreAssert);
+    // 最大化拖拽还原（手动通道）：WM 取消最大化落位后首个 Move 到达时
+    // 收养为跟随基准（见 adoptManualRestorePosition；未落地时它自行拒绝）
+    if (m_manualRestorePending && !isMaximized())
+        adoptManualRestorePosition();
+    // 记录非最大化浮动几何（与 resizeEvent 的记录配套，含位置）：最大化
+    // 还原的落位由 WM 的记忆几何决定，实测 KWin 会把按钮还原位置丢到
+    // (0,0)，changeEvent 的 max→normal 分支据此纠正。
+    // 还原过渡期内跳过：WM 落地帧的几何可能是其过期记忆，若收入基准会
+    // 把下一次还原也拽到错误位置（过渡期由 adoptManualRestorePosition
+    // 的目标矩形接管，不需要本记录）。
+    // 原生拖动进行中跳过：拖动途中的位置是过渡态，基准由
+    // scheduleNativeDragSettle 在收场时按终态决定
+    if (!isMaximized() && !isFullScreen() && !m_snapped
+        && !m_manualRestorePending && !m_nativeDragActive)
+        m_normalGeometry = geometry();
+}
+
 void AuWindow::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
-    // 记录非最大化浮动尺寸：供最大化还原（系统通道 / 按钮均经 WM 记忆几何）
-    // 后纠正 KWin 的过期记忆尺寸
-    if (!isMaximized() && !isFullScreen() && !m_snapped)
+    // 记录非最大化浮动尺寸与几何：供最大化还原（系统通道 / 按钮均经 WM
+    // 记忆几何）后纠正 KWin 的过期记忆尺寸与位置。
+    // 还原过渡期 / 原生拖动进行中跳过（同 moveEvent）
+    if (!isMaximized() && !isFullScreen() && !m_snapped
+        && !m_manualRestorePending && !m_nativeDragActive) {
         m_normalSizeHint = size();
+        m_normalGeometry = geometry();
+    }
     platformResized();
     relayout();
 }
@@ -677,11 +718,54 @@ void AuWindow::changeEvent(QEvent *event)
     case QEvent::WindowStateChange: {
         const bool max = isMaximized();
         m_titleBar->updateMaximizeState(max);
-        if (!max && m_normalSizeHint.isValid() && size() != m_normalSizeHint) {
-            // 最大化还原的几何由 WM 的记忆决定，记忆可能过期（KWin 按
-            // WM_CLASS 记忆历史尺寸），纠正回进入最大化前的浮动尺寸
-            resize(m_normalSizeHint);
+        // 仅处理"从最大化还原到正常态"：WindowStateChange 在最小化 / 全屏
+        // 切换时同样到达（那些状态下 isMaximized() 同为 false），不判定的话
+        // 最大化态进入全屏的瞬间会被 resize / setGeometry 回正常几何，打断
+        // 全屏；最小化也不动几何（还原交给 un-minimize 时 WM 的记忆几何）
+        const bool wasMax = static_cast<QWindowStateChangeEvent *>(event)->oldState()
+                            & Qt::WindowMaximized;
+        if (wasMax && !max && !isMinimized() && !isFullScreen()) {
+            if (m_snapped && m_preSnapGeometry.isValid()) {
+                // 吸附态（拖顶最大化 / 贴边半屏）经还原按钮 / 双击还原：
+                // 位置应回到吸附前的浮动几何（= 进入最大化前按下处的原始
+                // 位置），而非 WM 记忆的（拖动末位置）还原几何
+                m_snapped = false;
+                m_normalSizeHint = m_preSnapGeometry.size();
+                setGeometry(m_preSnapGeometry);
+                armNormalRestoreAssert(m_preSnapGeometry);
+            } else if (m_normalGeometry.isValid() && geometry() != m_normalGeometry
+                       && !m_manualMoving && !m_snapRestoreTarget.isValid()
+                       && !m_nativeDragActive) {
+                // 最大化还原的落位与尺寸均由 WM 的记忆决定，记忆可能过期
+                // （KWin 按 WM_CLASS 记忆历史几何，实测按钮还原位置被丢到
+                // (0,0)），纠正回进入最大化前的浮动几何。仅按钮 / 双击还原
+                // 路径应用——拖拽还原的位置由下方 m_snapRestoreTarget 锚定
+                // （纠正位置会把窗口拉回原位打断拖拽）
+                setGeometry(m_normalGeometry);
+                armNormalRestoreAssert(m_normalGeometry);
+            } else if (m_normalSizeHint.isValid() && size() != m_normalSizeHint
+                       && !m_snapRestoreTarget.isValid() && !m_manualRestorePending) {
+                // m_normalGeometry 尚未记录（首显前即最大化等极端时序）时的
+                // 尺寸兜底
+                resize(m_normalSizeHint);
+            }
+            if (!m_manualMoving && !m_manualRestorePending && !m_nativeDragActive
+                && m_snapRestoreTarget.isValid()
+                && geometry() != m_snapRestoreTarget) {
+                // 拖动还原（最大化态）的光标锚定落位：状态翻转后窗口已脱离
+                // 最大化态，此刻的 ConfigureRequest 必被 WM 受理，锚定位置
+                // 单帧到位。⭐ 此前两次闪帧回归的教训：showNormal 后立即
+                // setGeometry / 状态翻转时 resize——请求落在尚未脱离最大化
+                // 态的窗口上（仍在最大化位置如 (0,0)），把"还原尺寸的小
+                // 窗口"闪现在屏幕角。锚定必须也只能在这里发。本目标随本
+                // 状态变化清空，一次性。
+                setGeometry(m_snapRestoreTarget);
+                armNormalRestoreAssert(m_snapRestoreTarget);
+            }
         }
+        // 锚点保护在任何状态变化时作废（含最大化 / 最小化 / 全屏切换），
+        // 防止过期目标在后续无关还原中被套用
+        m_snapRestoreTarget = QRect();
         emit maximizeStateChanged(max);
         relayout(); // 最大化时收起 / 恢复阴影留白（Windows 另由平台钩子清除残影）
         platformStateChanged();
@@ -790,21 +874,11 @@ void AuWindow::adoptLayout(QLayout *layout)
 
 int AuWindow::effectiveMargin() const
 {
-    // 阴影留白环（peony BorderShadowEffect 同款窗口语义：窗体矩形含环，
-    // 内容区内缩）：仅客户端阴影通道生效。WM 合成通道（X11
-    // _KDE_NET_WM_SHADOW，ukui-kwin / KWin）阴影绘制在窗体矩形之外，
-    // 环宽保持 0、窗体几何不受影响。最大化 / 全屏收起；无混成（ARGB
-    // 不可用，阴影画不出来）同样收起。
-    const int margin = style()->shadowMargin();
-    if (margin <= 0 || !m_borderShadowEnabled)
-        return 0;
-    if (isMaximized() || isFullScreen())
-        return 0;
-    if (!platformIsComposited())
-        return 0;
-    if (platformShadowPaintedExternally())
-        return 0;
-    return margin;
+    // 阴影仅经 WM 在窗体矩形外合成（X11 _KDE_NET_WM_SHADOW），窗体几何
+    // 即内容区，客户端自绘阴影环（窗体矩形含留白环的 peony 同款语义）
+    // 已按需求移除——自绘时阴影占窗体几何、参与缩放命中与点击判定，
+    // 体验差。留白恒为 0；函数保留供缩放手柄厚度 / 吸附补偿等取值点。
+    return 0;
 }
 
 void AuWindow::relayout()
@@ -875,96 +949,8 @@ void AuWindow::ensurePolishedFrame()
     platformWinIdChanged();
 }
 
-// ---- 边框阴影（客户端绘制通道） ----
-
-// 九宫格贴图缓存：一次模糊（qt_blurImage）反复绘制，缩放窗口零模糊开销
-// （ukui ConfigShadowHelper 同款策略）。键：颜色 / 模糊半径 / 生效四角
-// 半径 / 设备像素比。
-void AuWindow::ensureShadowTile()
-{
-    const AuWindowStyle *st = style();
-    const QColor color = st->shadowColor();
-    // 模糊半径即渐隐预算：超出 shadowMargin 留白的部分会被窗体边缘裁出
-    // 硬边，钳到留白宽度内（默认 blur 28 / margin 24 → 按 24 渲染）
-    const int blur = qMin(st->shadowBlurRadius(), st->shadowMargin());
-    const qreal dpr = devicePixelRatioF();
-    const int radii[4] = {
-        cornerRadius(Qt::TopLeftCorner), cornerRadius(Qt::TopRightCorner),
-        cornerRadius(Qt::BottomLeftCorner), cornerRadius(Qt::BottomRightCorner)
-    };
-    if (m_shadowTileValid && m_shadowTileColor == color && m_shadowTileBlur == blur
-        && m_shadowTileRadii[0] == radii[0] && m_shadowTileRadii[1] == radii[1]
-        && m_shadowTileRadii[2] == radii[2] && m_shadowTileRadii[3] == radii[3]
-        && m_shadowTileDpr == dpr) {
-        return;
-    }
-    m_shadowTile = AuWindowDetail::auRenderBorderShadowTile(
-        color, blur, radii[0], radii[1], radii[2], radii[3], dpr);
-    m_shadowTileColor = color;
-    m_shadowTileBlur = blur;
-    for (int i = 0; i < 4; ++i)
-        m_shadowTileRadii[i] = radii[i];
-    m_shadowTileDpr = dpr;
-    m_shadowTileValid = true;
-}
-
-// 围绕内容区 content 绘制阴影环（peony / ukui 九宫格摆法）：4 块角贴图
-// 原尺寸对齐窗角弧线，4 条 1px 边条拉伸填充直边段。角贴图会盖到内容区
-// 的圆角挖空区——贴图内部（弧线内）已在渲染时清除为透明，弧外的模糊
-// 阴影恰好从 ARGB 窗口的透明角像素透出，与 KWin 的 WM 侧合成行为一致。
-// 贴图为设备像素位图（未设 DPR 标志）：源矩形一律以逻辑像素给出、经
-// dpr 换算成设备像素源区域，目标矩形为 painter 逻辑坐标。
-void AuWindow::paintBorderShadow(QPainter *painter, const QRect &content)
-{
-    ensureShadowTile();
-    const QImage &tile = m_shadowTile;
-    if (tile.isNull())
-        return;
-
-    const int b = m_shadowTileBlur;
-    if (b <= 0 || content.isEmpty())
-        return;
-    const int rTL = m_shadowTileRadii[0], rTR = m_shadowTileRadii[1];
-    const int rBL = m_shadowTileRadii[2], rBR = m_shadowTileRadii[3];
-    const int R = qMax(qMax(rTL, rTR), qMax(rBL, rBR));
-    // 角贴图边长 = b + 对应角半径（1:1 摆放，不拉伸；直角窗即纯环段 b²）
-    const int cTL = b + rTL, cTR = b + rTR, cBL = b + rBL, cBR = b + rBR;
-    const int stripLen = b + R;          // 边条源条长（伸入内容区至最大弧深）
-    const qreal d = m_shadowTileDpr;     // 逻辑 → 设备像素换算
-    const int L = 2 * R + 2 * b + 1;     // 贴图逻辑边长（渲染时按 dpr 取整）
-
-    const int cl = content.left(), ct = content.top();
-    const int cr = content.right(), cb = content.bottom();
-    const int cw = content.width(), ch = content.height();
-
-    auto put = [&](const QRect &target, int sx, int sy, int sw, int sh) {
-        painter->drawImage(target, tile,
-                           QRect(qRound(sx * d), qRound(sy * d),
-                                 qRound(sw * d), qRound(sh * d)));
-    };
-
-    // 四角（弧线对齐：角贴图原点置于窗角 - 渐隐环宽 b，贴图内 (b, b) 处
-    // 的窗口矩形弧线恰好落在内容区角上）
-    put(QRect(cl - b, ct - b, cTL, cTL), 0, 0, cTL, cTL);
-    put(QRect(cr + 1 - rTR, ct - b, cTR, cTR), L - cTR, 0, cTR, cTR);
-    put(QRect(cl - b, cb + 1 - rBL, cBL, cBL), 0, L - cBL, cBL, cBL);
-    put(QRect(cr + 1 - rBR, cb + 1 - rBR, cBR, cBR), L - cBR, L - cBR, cBR, cBR);
-
-    // 边条：1px 源条拉伸填充直边段；跨度按对应角半径计算，窗口过小时
-    // 角贴图重叠（跨度 ≤ 0）则跳过该边条（KWin 同款处理）
-    const int hSpanTop = cw - rTL - rTR;
-    const int hSpanBottom = cw - rBL - rBR;
-    const int vSpanLeft = ch - rTL - rBL;
-    const int vSpanRight = ch - rTR - rBR;
-    if (hSpanTop > 0)
-        put(QRect(cl + rTL, ct - b, hSpanTop, stripLen), b + R, 0, 1, stripLen);
-    if (hSpanBottom > 0)
-        put(QRect(cl + rBL, cb + 1 - R, hSpanBottom, stripLen), b + R, L - stripLen, 1, stripLen);
-    if (vSpanLeft > 0)
-        put(QRect(cl - b, ct + rTL, stripLen, vSpanLeft), 0, b + R, stripLen, 1);
-    if (vSpanRight > 0)
-        put(QRect(cr + 1 - R, ct + rTR, stripLen, vSpanRight), L - stripLen, b + R, stripLen, 1);
-}
+// ---- 边框阴影（X11 由 WM 的 border-only 装饰绘制，见 platformInit；
+//      Windows 由 DWM 提供；此处无客户端通道） ----
 
 // ---- 绘制 ----
 
@@ -973,14 +959,7 @@ void AuWindow::paintEvent(QPaintEvent *event)
     Q_UNUSED(event)
     QPainter painter(this);
     const AuWindowStyle *st = style();
-    const int margin = effectiveMargin();
-    const QRect content = rect().adjusted(margin, margin, -margin, -margin);
-
-    // 阴影环先于内容区背景绘制（贴图与内容区重叠的部分在渲染时已按
-    // 窗口形状清除，弧外渐隐由 ARGB alpha 呈现）
-    if (margin > 0)
-        paintBorderShadow(&painter, content);
-
+    const QRect content = rect();   // 阴影经 WM 在窗体矩形外合成，窗体即内容区
 
     const bool rounded = !isMaximized() && !isFullScreen()
                          && windowRadius() > 0;
@@ -1062,74 +1041,187 @@ private:
 // 管时回退为手动拖动。
 void AuWindow::performTitleBarDrag(const QPoint &pressGlobal)
 {
-    // 最大化状态下拖标题栏 = 还原：无条件优先走 WM 原生通道（即便手动通道
-    // 默认的 5.12）。KWin 的交互移动在最大化窗口上 = 取消最大化 + 锚定光标
-    // 一次到位；手动路径的"showNormal + setGeometry"做不到单帧落位——普通
-    // ConfigureRequest 对最大化窗口被 WM 忽略，而"showNormal 先落 WM 记忆
-    // 几何、再重定位"会产生 A→B 位置闪动。接管后的事件冻结由 grab-recovery
-    // 轮询兜底；还原尺寸偏差（KWin 记忆过期）由 changeEvent 的 max→normal
-    // 分支按 m_normalSizeHint 纠正。WM 不接管时回退手动还原。
-    if (isMaximized() && platformStartMaximizeRestoreDrag())
+    // 窗口间磁吸只能拦截手动拖动路径（系统原生通道的拖动循环对本进程
+    // 不可见，无法逐帧修正位置）：启用时无条件改走手动拖动，含最大化
+    // 还原（startManualMove 的最大化分支手动 showNormal + 挂起目标矩形，
+    // 此前该分支在 Windows 上不可达，现于窗口吸附开启时同样服务）。
+    // 最大化状态下拖标题栏 = 还原：走手动通道（startManualMove 的最大化
+    // 分支：showNormal + 比例锚定目标挂起，WM 落地后单帧应用并 1:1 跟随；
+    // 原生交互移动通道 platformStartMaximizeRestoreDrag 已验证在 ukui-kwin
+    // 上还原尺寸小窗会在最大化位置 (0,0) 露帧，不再使用）。
+    // ⚠️ m_snapped 必须路由回手动通道：边缘吸附态（拖顶最大化 / 半屏贴靠）
+    // 的还原靠 startManualMove 的 m_snapped 分支（回到吸附前浮动几何），
+    // 走系统通道的话 WM 只会按当前（贴靠）尺寸原生平移——窗口拖不出吸附
+    // 尺寸（实测 Qt 5.15.2：贴靠态拖动 960x932 平移，800x600 永不恢复）。
+    // ⚠️ 还原全程客户端不得插入几何请求：showNormal 后 Qt 侧状态立即翻转
+    // 但 X 侧仍是最大化几何，过渡期的 move/resize 要么被 WM 忽略、要么污
+    // 染其还原记忆（实测 Qt 5.15.2 + ukui-kwin）。落位由 WM 异步完成，
+    // 客户端只在 adoptManualRestorePosition 的落地判据满足后单帧介入。
+    if (m_windowSnapEnabled || m_snapped) {
+        startManualMove(pressGlobal);
         return;
+    }
+    if (isMaximized()) {
+        // 最大化态拖标题栏 = 还原：交 WM 原生交互移动（取消最大化 + 比例
+        // 锚定跟随一体完成），拖回屏幕顶部松手即得 WM 原生贴顶——系统自带
+        // 预览与最大化效果，而非模块自绘吸附（用户实测要求原生观感）。
+        // 期间冻结浮动几何记录、撤防还原断言、屏蔽 changeEvent 纠正：
+        // 几何归 WM，客户端任何插手都会与拖动循环逐帧互搏（实测窗口在
+        // 锚定位与过期记忆位之间高频翻转）。WM 未接管（AuTitleBar 150ms
+        // 宽限期判定）回退手动还原；手动通道（m_systemMoveEnabled=false）
+        // 维持原有手动还原语义（Qt 5.12 默认，回归基线）。
+        if (m_systemMoveEnabled) {
+            m_nativeDragActive = true;
+            ++m_nativeDragGen;
+            m_normalRestoreAssert = QRect();
+            if (platformStartMaximizeRestoreDrag())
+                return;
+            m_nativeDragActive = false;
+        }
+        startManualMove(pressGlobal);
+        return;
+    }
+    // 系统原生拖动开始：冻结浮动几何记录（拖动途中的位置是过渡态，不得
+    // 成为还原基准），收场时按终态定基准（见 scheduleNativeDragSettle）
+    m_nativeDragActive = true;
+    ++m_nativeDragGen;
     if (platformStartSystemMove())
         return;
+    m_nativeDragActive = false;
     startManualMove(pressGlobal);
 }
 
 void AuWindow::startManualMove(const QPoint &pressGlobal)
 {
+    m_normalRestoreAssert = QRect();   // 新拖动手势：撤防还原断言保护窗
     m_manualMoving = true;
     m_manualStartGlobal = pressGlobal;
     m_manualStartPos = pos();
     m_manualStartSize = size();
     // 拖出贴靠状态：先还原吸附前尺寸再跟随（Windows 同款行为）。Windows
-    // 手动路径不可达（拖动一律原生转发），本分支仅服务 X11 / 其它平台。
+    // 手动路径仅在窗口间吸附开启时可达（默认拖动一律原生转发），其余
+    // 服务 X11 / 其它平台。
     // 时序注意：showNormal() 后 Qt 侧窗口状态同步清零，但 WM 侧还原异步，
-    // isMaximized() 不能用作"还原已落地"的守卫——还原尺寸必须由我们
-    // 显式 setGeometry 兜住，否则 KWin 会套用它按 WM_CLASS 记忆的过期
-    // 还原几何（表现为还原后尺寸不对）。
+    // isMaximized() 不能用作"还原已落地"的守卫——还原几何（KWin 按
+    // WM_CLASS 的过期记忆）由挂起的目标矩形在落地收养时显式 setGeometry
+    // 兜住（见 maximizeRestoreTarget / adoptManualRestorePosition），
+    // 过渡期内绝不插请求。
     if (m_snapped) {
         m_snapped = false;
-        if (isMaximized()) {
-            // 顶部吸附走的是最大化状态：尽力还原（ukui-kwin 在按住期间
-            // 可能忽略 showNormal，未落地则该次保持最大化拖动无效）
-            showNormal();
-        }
+        m_snapRestoreTarget = QRect();   // 旧还原目标作废（下面按需重设）
         const QRect pre = m_preSnapGeometry;
         if (pre.isValid()) {
-            // 保持抓取点在标题栏内的相对水平位置，垂直偏移不变
-            const qreal ratio = m_manualStartSize.width() > 0
+            // 保持抓取点在窗口内的相对位置（X/Y 两轴同一比例算法）：还原
+            // 后光标仍落在标题栏上，随后 1:1 跟随。Y 轴若取最大化态的 y
+            // （≈0，即 m_manualStartPos.y()）会先落屏幕顶再被拖动拉回，
+            // 呈现"先还原到 0,0 再跳回"的漂移闪烁
+            const qreal ratioX = m_manualStartSize.width() > 0
                     ? qreal(pressGlobal.x() - m_manualStartPos.x()) / m_manualStartSize.width()
                     : 0.0;
-            const QPoint newPos(pressGlobal.x() - int(qreal(pre.width()) * ratio),
-                                m_manualStartPos.y());
-            setGeometry(QRect(newPos, pre.size()));
-            m_manualStartPos = newPos;
-            m_manualStartSize = pre.size();
+            const qreal ratioY = m_manualStartSize.height() > 0
+                    ? qreal(pressGlobal.y() - m_manualStartPos.y()) / m_manualStartSize.height()
+                    : 0.0;
+            const QPoint newPos(pressGlobal.x() - int(qreal(pre.width()) * ratioX),
+                                pressGlobal.y() - int(qreal(pre.height()) * ratioY));
+            if (isMaximized()) {
+                // 拖顶最大化：状态翻转期插入几何请求会闪帧 / 被 WM 忽略
+                // （与最大化分支同理，且 changeEvent 在 showNormal 内同步
+                // 触发）。目标矩形挂起，showNormal 后由收养机制在 WM 落位
+                // 后应用（adoptManualRestorePosition，此时请求必被受理）
+                m_manualRestoreTargetRect = QRect(newPos, pre.size());
+                m_manualRestorePending = true;   // 必须先于 showNormal
+                showNormal();
+            } else {
+                // 半屏贴边：窗口未进最大化态，直接落位（无竞态）
+                setGeometry(QRect(newPos, pre.size()));
+                m_manualStartPos = newPos;
+                m_manualStartSize = pre.size();
+            }
+        } else if (isMaximized()) {
+            // 拖顶最大化走的是最大化状态：尽力还原（ukui-kwin 在按住期间
+            // 可能忽略 showNormal，未落地则该次保持最大化拖动无效）
+            m_manualRestoreTargetRect = QRect();
+            m_manualRestorePending = true;
+            showNormal();
         }
     } else if (isMaximized()) {
-        // 按钮 / 双击进入的最大化（非贴靠态）：手动路径下拖标题栏还原。
-        // 此前无该分支——拖动被当作普通移动发给 WM，而 WM 会忽略最大化
-        // 窗口的移动请求，表现为"最大化后拖标题栏无法还原"。系统通道
-        // （5.15 默认）由 WM 原生还原，不经此处。
+        // 按钮 / 双击 / WM 拖顶进入的最大化（非贴靠态）：拖标题栏还原。
         //
-        // 还原位置取进入最大化前的原位（= WM 取消最大化时将应用的还原
-        // 几何）：我们的 setGeometry 与 WM 的还原落点重合，避免"WM 先落
-        // A、我们再跳到光标处 B"的单帧位置闪动；窗口从原位起按 1:1 位移
-        // 跟随本次拖动。
-        // normalGeometry() 必须在 showNormal() 之前取：最大化态下它返回
-        // 进入最大化前保存的还原几何；showNormal 之后 Qt 侧状态同步清零，
-        // 再取就落到通用分支（返回当前几何 = 最大化尺寸），还原尺寸即错。
-        const QRect normalGeo = normalGeometry();
+        // ⚠️ 落位时序（三次闪帧回归 + 5.15 还原位置错误的定案）：
+        // showNormal() 后 Qt 侧 isMaximized() 立即清零，但 X 侧几何仍是
+        // 最大化值，WM 取消最大化是异步落地的。此过渡期内【不得】输出任何
+        // 几何请求——实测（Qt 5.15.2 + ukui-kwin）：
+        //  ① 过渡期的 move() 被 WM 忽略、resize() 会被 WM 当作还原尺寸记
+        //     忆（污染其后所有还原落位）；
+        //  ② 过渡期读 pos()/size() 得到的仍是最大化值，拿去当跟随基准会把
+        //     窗口锚定在最大化位置 (0,0)（"还原后标题栏落在鼠标处"）。
+        // 因此按下时刻只把目标挂起（最大化前浮动几何 + 抓取点比例锚定，
+        // 与吸附态还原同算法），一律等 WM 落地后由 adoptManualRestorePosition
+        // 单帧应用；落地前的跟随帧一律抑制（既不输出几何，也不改基准）。
+        // ⚠️ pending 必须先于 showNormal 置位——changeEvent 在 showNormal
+        // 内同步触发，后置位则状态翻转瞬间的尺寸兜底会闪帧。
+        m_manualRestoreTargetRect = maximizeRestoreTarget(pressGlobal);
+        m_manualRestorePending = true;
         showNormal();
-        if (normalGeo.isValid()) {
-            const QPoint newPos = normalGeo.topLeft();
-            setGeometry(QRect(newPos, normalGeo.size()));
-            m_manualStartPos = newPos;
-            m_manualStartSize = normalGeo.size();
-        }
     }
     grabMouse();
+}
+
+// 最大化态拖标题栏还原的目标矩形：以进入最大化前的浮动几何
+// （m_normalGeometry，缺省回退 QWidget::normalGeometry()）为基准，保持抓取
+// 点在窗口内的相对位置（X/Y 两轴同一比例算法）——还原后光标仍落在标题栏
+// 上，随后 1:1 跟随。无任何已知几何时返回无效矩形（收养 WM 落位兜底）。
+QRect AuWindow::maximizeRestoreTarget(const QPoint &pressGlobal) const
+{
+    const QRect base = m_normalGeometry.isValid() ? m_normalGeometry
+                                                  : normalGeometry();
+    if (!base.isValid())
+        return QRect();
+    const qreal ratioX = m_manualStartSize.width() > 0
+            ? qreal(pressGlobal.x() - m_manualStartPos.x()) / m_manualStartSize.width()
+            : 0.0;
+    const qreal ratioY = m_manualStartSize.height() > 0
+            ? qreal(pressGlobal.y() - m_manualStartPos.y()) / m_manualStartSize.height()
+            : 0.0;
+    return QRect(QPoint(pressGlobal.x() - int(qreal(base.width()) * ratioX),
+                        pressGlobal.y() - int(qreal(base.height()) * ratioY)),
+                 base.size());
+}
+
+bool AuWindow::adoptManualRestorePosition()
+{
+    // 落地守卫：showNormal() 后 Qt 侧状态立即翻转，但 X 侧几何仍是最大化
+    // 值、WM 还原异步落地。未落地时收养会把最大化位置 / 尺寸当成跟随基准
+    // （"还原后标题栏落在鼠标处"的根因），此时严禁输出任何几何请求。
+    if (isMaximized())
+        return false;
+    if (pos() == m_manualStartPos && size() == m_manualStartSize)
+        return false;   // 几何仍是最大化快照：WM 尚未落位
+    m_manualRestorePending = false;
+    m_snapRestoreTarget = QRect();
+    if (m_manualRestoreTargetRect.isValid()) {
+        // 已知还原目标（吸附态 / 最大化态拖拽还原）：落到比例锚定目标。
+        // 此刻已脱离最大化态，请求必被 WM 受理，单帧到位；位移基准保持
+        // 按下点（原始语义：newPos + (cursor - press)，已发生的拖动位移
+        // 从锚定位 1:1 延续）
+        const QRect target = m_manualRestoreTargetRect;
+        m_manualRestoreTargetRect = QRect();
+        setGeometry(target);
+        m_manualStartPos = target.topLeft();
+        m_manualStartSize = target.size();
+        // m_manualStartGlobal 保持 startManualMove 置位的按下点
+    } else {
+        // 无预知目标的兜底：以 WM 实际落点为跟随基准（此刻必已落地）。
+        // 不得以预判位置为基准——那会造成"从落点跳向预判点"的二次闪动
+        m_manualStartPos = pos();
+        m_manualStartSize = size();
+        m_manualStartGlobal = QCursor::pos();   // 从当前光标起 1:1 位移跟随
+        // KWin 记忆尺寸过期时对齐回浮动尺寸：此刻已落地，resize 不可见
+        // （对比状态翻转瞬间的 resize = 最大化位置闪帧）
+        if (m_normalGeometry.isValid() && size() != m_normalGeometry.size())
+            resize(m_normalGeometry.size());
+    }
+    return true;
 }
 
 void AuWindow::startManualResize(Qt::Edges edges, const QPoint &pressGlobal)
@@ -1147,6 +1239,7 @@ void AuWindow::startManualResize(Qt::Edges edges, const QPoint &pressGlobal)
 // 未接管时（仍收到本进程事件）回退手动缩放。
 void AuWindow::performBorderResize(Qt::Edges edges, const QPoint &pressGlobal)
 {
+    m_normalRestoreAssert = QRect();   // 新缩放手势：撤防还原断言保护窗
     m_pressGlobal = pressGlobal;
     if (platformStartSystemResize(edges)) {
         m_systemResizePending = true;
@@ -1243,6 +1336,7 @@ void AuWindow::applyEdgeSnap(SnapEdge edge)
     if (!isMaximized())
         m_preSnapGeometry = QRect(m_manualStartPos, m_manualStartSize);
     m_snapped = true;
+    m_snapRestoreTarget = QRect();   // 新的吸附使旧还原目标作废
     switch (edge) {
     case SnapEdge::Top:
         showMaximized();
@@ -1259,6 +1353,85 @@ void AuWindow::applyEdgeSnap(SnapEdge edge)
     default:
         break;
     }
+}
+
+// ---- 窗口间吸附（手动拖动路径） ----
+
+void AuWindow::setWindowSnapEnabled(bool enable)
+{
+    m_windowSnapEnabled = enable;
+}
+
+bool AuWindow::isWindowSnapEnabled() const
+{
+    return m_windowSnapEnabled;
+}
+
+// 吸附目标矩形汇集：优先平台全系统枚举（X11：_NET_CLIENT_LIST，返回的
+// 是视觉外沿矩形，与麒麟原生对齐视觉边缘一致）；枚举不可用（其它平台 /
+// 非 xcb 会话）回退本进程 AuWindow 注册表（内容区几何，无边框窗体无
+// WM 外框，视觉边即窗口边）。
+QVector<QRect> AuWindow::windowSnapCandidateRects() const
+{
+    QVector<QRect> rects = platformWindowSnapCandidates();
+    if (!rects.isEmpty())
+        return rects;
+    const QVector<AuWindow *> &registry = auWindowRegistry();
+    rects.reserve(registry.size());
+    for (AuWindow *w : registry) {
+        if (w == this || !w->isVisible() || w->isMinimized())
+            continue;
+        rects.append(w->geometry());
+    }
+    return rects;
+}
+
+// 磁吸修正：X/Y 两轴独立判定，各取 |偏移| 最小且落在吸附带内的候选。
+// 双轴独立 ⇒ 水平贴合的同时自动对齐相邻边（顶边对齐等），与麒麟原生
+// 行为一致；允许负偏移（已越过对方边缘时拉回贴合）。吸附带边界天然
+// 形成磁吸粘滞：贴合后继续拖动，原始位置超出吸附带即释放（窗口跳出
+// 吸附带距离，与常见磁吸实现一致）。手动拖动中尺寸不变，me 用 size()。
+QPoint AuWindow::applyWindowSnap(const QPoint &proposedPos) const
+{
+    const QVector<QRect> candidates = windowSnapCandidateRects();
+    if (candidates.isEmpty())
+        return proposedPos;
+    const int zone = 10;   // 吸附带宽度，与 edgeSnapTarget() 一致
+    const QRect me(proposedPos, size());
+    int bestDx = zone + 1;   // 哨兵：吸附带外（0 也是合法修正值，不可作初值）
+    int bestDy = zone + 1;
+    for (const QRect &c : candidates) {
+        // x 轴：左缘贴对方右缘（从左侧靠近）/ 右缘贴对方左缘（从右侧
+        // 靠近）/ 左右缘分别与对方同侧缘对齐（并肩摆放）
+        const int candsX[4] = {
+            c.right() + 1 - me.left(),   // me.left  → c.right+1（边缘相接）
+            c.left() - me.right() - 1,   // me.right → c.left-1
+            c.left() - me.left(),        // me.left  → c.left（左缘对齐）
+            c.right() - me.right()       // me.right → c.right（右缘对齐）
+        };
+        for (int d : candsX) {
+            const int ad = qAbs(d);
+            if (ad <= zone && ad < qAbs(bestDx))
+                bestDx = d;
+        }
+        const int candsY[4] = {
+            c.bottom() + 1 - me.top(),   // me.top    → c.bottom+1
+            c.top() - me.bottom() - 1,   // me.bottom → c.top-1
+            c.top() - me.top(),          // me.top    → c.top（顶缘对齐）
+            c.bottom() - me.bottom()     // me.bottom → c.bottom（底缘对齐）
+        };
+        for (int d : candsY) {
+            const int ad = qAbs(d);
+            if (ad <= zone && ad < qAbs(bestDy))
+                bestDy = d;
+        }
+    }
+    QPoint result = proposedPos;
+    if (qAbs(bestDx) <= zone)
+        result.rx() += bestDx;
+    if (qAbs(bestDy) <= zone)
+        result.ry() += bestDy;
+    return result;
 }
 
 void AuWindow::manualResizeStep(const QPoint &globalPos)
@@ -1354,7 +1527,18 @@ void AuWindow::mouseMoveEvent(QMouseEvent *event)
         return;
     }
     if (m_manualMoving) {
-        const QPoint newPos = m_manualStartPos + (QCursor::pos() - m_manualStartGlobal);
+        // 最大化拖拽还原：WM 落地前抑制跟随帧（不输出任何几何请求、不改
+        // 跟随基准——基准仍是按下时刻快照，落地后从目标矩形起算全程位移）；
+        // 落地当帧应用目标矩形并从目标起 1:1 跟随
+        if (m_manualRestorePending && !adoptManualRestorePosition())
+            return;
+        // 跟随帧接管落位：锚点保护期结束，其后 WM 异步还原的过期几何由
+        // 逐帧绝对定位自然覆盖，changeEvent 不再纠正（否则会把已拖动的
+        // 位移拽回锚点）
+        m_snapRestoreTarget = QRect();
+        QPoint newPos = m_manualStartPos + (QCursor::pos() - m_manualStartGlobal);
+        if (m_windowSnapEnabled)
+            newPos = applyWindowSnap(newPos);   // 窗口间磁吸：贴近其它窗口时修正落点
         applyPositionViaWM(newPos);
         const SnapEdge snap = edgeSnapTarget(QCursor::pos());
         if (snap != SnapEdge::None)
@@ -1372,10 +1556,19 @@ void AuWindow::mouseReleaseEvent(QMouseEvent *event)
     noteMouseRelease();
     m_systemResizePending = false;
     if (m_manualResizing || m_manualMoving) {
-        if (m_manualMoving)
-            applyEdgeSnap(edgeSnapTarget(event->globalPos()));
-        else
+        if (m_manualMoving) {
+            if (m_manualRestorePending) {
+                // 还原过渡期内松手：收养尚未发生，放弃挂起目标——窗口交给
+                // WM 自行落位（其后的 max→normal changeEvent 纠正会按
+                // m_normalGeometry 兜底），不得把最大化快照误当吸附前几何
+                m_manualRestorePending = false;
+                m_manualRestoreTargetRect = QRect();
+            } else {
+                applyEdgeSnap(edgeSnapTarget(event->globalPos()));
+            }
+        } else {
             hideSnapPreview();
+        }
         m_manualResizing = false;
         m_manualMoving = false;
         releaseMouse();
@@ -1388,4 +1581,60 @@ void AuWindow::noteMouseRelease()
     m_awaitingRelease = false;
     if (m_grabRecoveryTimer)
         m_grabRecoveryTimer->stop();
+    scheduleNativeDragSettle();
+    // 无条件松抓：真实 release 被 WM 吞掉、由其它路径（抓取恢复轮询 / 标题
+    // 栏 / 手柄的 release 槽）先清掉拖动态时，若只在 mouseReleaseEvent 的
+    // 拖动态分支里 releaseMouse，抓取会永久滞留——后续所有鼠标事件都被
+    // 路由到本窗体，标题栏再也收不到按下，表现为"还原后窗口无法拖动、
+    // 必须再点一次标题栏"（Qt 5.15.2 实测症状2）
+    if (QWidget::mouseGrabber() == this)
+        releaseMouse();
+}
+
+// 还原纠正断言保护（500ms 窗）：纠正后 KWin 的两步落位步骤 b（移到其
+// 记忆位置）会迟到几十毫秒，窗内 moveEvent 据此重新断言；到期自动撤防，
+// 用户按下 / 发起新手势时由调用点提前撤防。
+void AuWindow::armNormalRestoreAssert(const QRect &target)
+{
+    m_normalRestoreAssert = target;
+    QTimer::singleShot(500, this, [this, target] {
+        if (m_normalRestoreAssert == target)
+            m_normalRestoreAssert = QRect();
+    });
+}
+
+// 原生拖动收场：延迟定基准——release 与 WM 的收场动作存在竞态（实测
+// ukui-kwin：release 先 ~13ms 到达、最大化 StateChange 后到；原生贴靠的
+// 落地 ConfigureNotify 也可能晚于首个 250ms 拍），立即判定会误判收场态。
+// 每拍 250ms，至多 retries 拍：
+//  - 几何仍在变（WM 摆放中）→ 再等一拍；
+//  - 以最大化 / 全屏收场 → 不记录：基准保持拖动起点（期间记录已冻结），
+//    还原 / 按钮还原回到拖动前位置，而非顶缘附近的拖动终点（"位置漂移"）；
+//  - 常规收场且尺寸未变 → 终点即用户摆放，照常记录；
+//  - 常规收场但尺寸被 WM 改变（拖缘触发原生贴靠）→ 保留拖动起点基准
+//    （贴靠前的浮动几何）：贴靠态的后续最大化还原据此回到原始浮动尺寸，
+//    而非贴靠尺寸（用户报告"原生半贴→最大化→拖拽还原变成半贴"）；
+//    反向的贴靠拖出还原（WM 恢复贴靠前尺寸 = 冻结基准尺寸）则照常记录。
+// 期间用户又开始新拖动 → 代次不符，本定时器作废（新拖动重新冻结记录）。
+void AuWindow::scheduleNativeDragSettle(int retries)
+{
+    if (!m_nativeDragActive)
+        return;
+    const int gen = m_nativeDragGen;
+    const QRect expect = geometry();
+    QTimer::singleShot(250, this, [this, gen, expect, retries] {
+        if (!m_nativeDragActive || m_nativeDragGen != gen)
+            return;
+        if (isMaximized() || isFullScreen()) {
+            m_nativeDragActive = false;   // 最大化 / 全屏收场：基准保持拖动起点
+            return;
+        }
+        if (retries > 0 && geometry() != expect) {
+            scheduleNativeDragSettle(retries - 1);   // WM 仍在摆放，再等一拍
+            return;
+        }
+        m_nativeDragActive = false;
+        if (!m_snapped && size() == m_normalGeometry.size())
+            m_normalGeometry = geometry();
+    });
 }

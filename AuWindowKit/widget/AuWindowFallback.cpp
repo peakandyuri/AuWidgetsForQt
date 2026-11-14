@@ -94,18 +94,18 @@ bool AuWindow::platformClipsWindowShape() const
 
 // ---- 边框阴影平台通道 ----
 
-// 其它平台无 WM 侧阴影通道，客户端阴影环经公共代码自绘（默认关闭，
-// 可经 setBorderShadowEnabled(true) 开启，混成环境下 ARGB alpha 呈现）
-bool AuWindow::platformShadowPaintedExternally() const
-{
-    return false;
-}
-
+// 其它平台无 WM 侧阴影通道：不呈现阴影（不做客户端自绘兜底）
 void AuWindow::platformShadowUpdate() {}
 
 bool AuWindow::platformStartMaximizeRestoreDrag()
 {
     return false;
+}
+
+// 无系统级窗口枚举，窗口间吸附回退核心的本进程 AuWindow 注册表
+QVector<QRect> AuWindow::platformWindowSnapCandidates() const
+{
+    return {};
 }
 
 // ---- Windows 专属接口的空实现 ----

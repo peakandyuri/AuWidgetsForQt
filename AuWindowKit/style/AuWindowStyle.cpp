@@ -34,8 +34,10 @@ AuWindowStyle::AuWindowStyle()
     m_closeButtonPressBackgroundColor = QColor(0xB3, 0x2A, 0x21);
     m_closeButtonGlyphColor = QColor(0xFF, 0xFF, 0xFF);
 
-    // 阴影参数按原生窗口装饰阴影标定：贴边约 15% 压暗，sigma≈14px 柔和衰减
-    m_shadowColor = QColor(0, 0, 0, 38);
+    // 阴影参数：Windows DWM 通道使用（shadowColor 取 RGB，alpha 不参与）；
+    // X11 上阴影由 WM 主题经 border-only 装饰绘制（见 AuWindowX11
+    // platformInit），本组参数在 Linux 不生效（外观由主题决定）
+    m_shadowColor = QColor(0, 0, 0, 255);
 }
 
 AuWindowStyle::~AuWindowStyle()
