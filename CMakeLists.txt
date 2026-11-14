@@ -26,6 +26,9 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
+# 测试总开关（AuJson 模块挂 ctest）
+enable_testing()
+
 # MSVC：源码为 UTF-8 无 BOM，显式指定避免按本地代码页解析中文字符串
 if(MSVC)
     add_compile_options(/utf-8)
@@ -55,11 +58,13 @@ endfunction()
 
 add_subdirectory(AuCommon)
 add_subdirectory(AuGrid)
+add_subdirectory(AuJson)
 add_subdirectory(AuSelect)
 add_subdirectory(AuDatePicker)
 add_subdirectory(AuPlot)
 add_subdirectory(AuWindowKit)
-add_subdirectory(AuPortableDocEditor)
-add_subdirectory(Example)
-add_subdirectory(FeatureDemo)
-add_subdirectory(AuWindowKitDemo)
+add_subdirectory(Tools/AuPortableDocEditor)
+add_subdirectory(Examples/Example)
+add_subdirectory(Examples/FeatureDemo)
+add_subdirectory(Examples/JsonDemo)
+add_subdirectory(Examples/AuWindowKitDemo)
