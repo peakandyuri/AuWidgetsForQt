@@ -9,6 +9,7 @@
 | 模块 | 说明 |
 | --- | --- |
 | **AuCommon** | 公共基础库：极简风格自绘滚动条 `AuScrollBar`、带投影的通用弹层容器 `AuPopupPanel` |
+| **AuJson** | 高性能 JSON 库：原生 C++ 核心（零 Qt 依赖）+ Qt 适配层（`aujson::qt`），用于替换 `QJsonDocument` 系 API |
 | **AuGrid** | 核心控件：基于 QPainter 自绘的高性能数据表格 `AuGridWidget` |
 | **AuSelect** | 下拉选择控件 `AuSelect`（替代 QComboBox） |
 | **AuDatePicker** | 日期选择控件 `AuDatePicker`（替代 QCalendarWidget） |
@@ -17,7 +18,7 @@
 | **Example** | 示例程序：按功能拆分的多个演示窗口，覆盖各控件的主要特性 |
 | **FeatureDemo** | 功能细化演示程序：左侧互斥切换控件，右侧按“一个功能一个 Tab”拆分演示，每页配套实现代码（PlainText），上手最直观 |
 
-依赖关系：AuGrid、AuSelect、AuDatePicker 依赖 AuCommon；AuPlot 独立无依赖；AuWindowKit 独立无依赖；Example、FeatureDemo 依赖以上全部库；AuWindowKitDemo 依赖 AuWindowKit。
+依赖关系：AuGrid、AuSelect、AuDatePicker 依赖 AuCommon；AuPlot 独立无依赖；AuWindowKit 独立无依赖；AuJson 独立无依赖；Example、FeatureDemo 依赖以上全部库；AuWindowKitDemo 依赖 AuWindowKit。
 
 ## 主要特性
 
@@ -106,9 +107,13 @@ AuWidgetsForQt/
 ├── AuDatePicker/        # 日期选择控件
 ├── AuPlot/              # 曲线绘制控件（坐标轴 / 曲线 / 点线面图元 / 样式）
 ├── AuWindowKit/         # 无边框窗体库（窗体容器 / 标题栏 / 样式）
-├── AuWindowKitDemo/     # AuWindowKit 演示程序（特性 / Dialog / 继承与 ui 文件）
-├── Example/             # 示例程序（demos / CustomAuGrid 自定义扩展示例）
-├── FeatureDemo/         # 功能细化演示（一个功能一个 Tab + 实现代码）
+├── AuJson/              # JSON 解析库
+├── Tools/               # 工具程序（AuPortableDocEditor 等）
+├── Examples/            # 示例程序（Examples.pro 聚合）
+│   ├── Example/         # 示例程序（demos / CustomAuGrid 自定义扩展示例）
+│   ├── FeatureDemo/     # 功能细化演示（一个功能一个 Tab + 实现代码）
+│   ├── JsonDemo/        # AuJson 速度测试示例
+│   └── AuWindowKitDemo/ # AuWindowKit 演示程序（特性 / Dialog / 继承与 ui 文件）
 └── docs/                # 帮助文档
 ```
 
