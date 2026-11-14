@@ -60,3 +60,16 @@ qtHaveModule(pdf) {
     QT += pdf
     DEFINES += AUPDE_WITH_PREVIEW
 }
+
+# 内置 pdfium 动态库（third_party/pdfium，来源与许可见该目录 README）：
+# 无 QtPdf 时用于渲染缩略图，随构建拷贝到程序目录
+win32: PDFIUM_DLL = $$PWD/third_party/pdfium/pdfium.dll
+win32: exists($$PDFIUM_DLL) {
+    debug_and_release {
+        CONFIG(release, debug|release): PDFIUM_DEST = $$OUT_PWD/release
+        else: PDFIUM_DEST = $$OUT_PWD/debug
+    } else {
+        PDFIUM_DEST = $$OUT_PWD
+    }
+    QMAKE_POST_LINK += $$QMAKE_COPY $$shell_path($$PDFIUM_DLL) $$shell_path($$PDFIUM_DEST) $$escape_expand(\n\t)
+}

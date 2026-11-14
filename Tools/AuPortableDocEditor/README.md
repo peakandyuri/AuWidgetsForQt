@@ -53,10 +53,10 @@ make        # Windows/MinGW: mingw32-make；MSVC: nmake 或 jom
 
 1. **QtPdf 模块**（Qt6 且安装了 QtPdf 时编译启用）
 2. **pdfium 动态库**（运行时经 `QLibrary` 加载，无链接期依赖）：
-   把 `pdfium.dll`（Windows）/ `libpdfium.so`（Linux）放到程序目录即可，
-   来源可用 [pdfium-binaries](https://github.com/bblanchon/pdfium-binaries/releases)
-   等官方构建；缺失时状态栏会提示，缩略图退回绘制的占位页图标
-   （页号与功能不受影响）
+   Windows 下使用仓库内自带的 `third_party/pdfium/pdfium.dll`（构建脚本
+   自动拷贝到程序目录，来源与许可见 `third_party/pdfium/README.md`）；
+   Linux 需自备 `libpdfium.so` 放到程序目录。缺失时状态栏会提示，
+   缩略图退回绘制的占位页图标（页号与功能不受影响）
 
 pdfium 与 Chrome 使用同一渲染引擎，矢量、文字、图像均可真实呈现，
 且两种后端都不修改被预览的文件。

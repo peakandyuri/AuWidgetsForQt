@@ -80,5 +80,16 @@ if(TARGET Qt${QT_VERSION_MAJOR}::Pdf)
     target_compile_definitions(AuPortableDocEditor PRIVATE AUPDE_WITH_PREVIEW)
     message(STATUS "AuPortableDocEditor: QtPdf enabled（页面缩略图真实渲染）")
 else()
-    message(STATUS "AuPortableDocEditor: QtPdf not found（缩略图使用占位图）")
+    message(STATUS "AuPortableDocEditor: QtPdf not found（缩略图使用内置 pdfium 渲染）")
+endif()
+
+# 内置 pdfium 动态库（third_party/pdfium，来源与许可见该目录 README）：
+# 无 QtPdf 时用于渲染缩略图，随构建拷贝到可执行文件目录
+if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/pdfium/pdfium.dll")
+    add_custom_command(TARGET AuPortableDocEditor POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/third_party/pdfium/pdfium.dll"
+                "$<TARGET_FILE_DIR:AuPortableDocEditor>"
+        VERBATIM)
+    message(STATUS "AuPortableDocEditor: pdfium.dll 已内置（third_party/pdfium）")
 endif()
