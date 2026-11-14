@@ -435,6 +435,13 @@ private:
                                     ///< 记录（拖动途中位置是过渡态），收场时按终态
                                     ///< 定基准——最大化收场保留拖动起点，常规收场
                                     ///< （含原生贴靠）取终点
+    bool m_inNativeMoveLoop;       ///< Windows：系统原生移动循环（WM_ENTERSIZEMOVE
+                                    ///< 到 WM_EXITSIZEMOVE 之间）进行中：期间
+                                    ///< changeEvent 的还原几何纠正不得输出
+                                    ///< setGeometry——与移动循环逐帧互搏会把窗口
+                                    ///< 拽离光标、并在松手最大化瞬间把窗口拖回
+                                    ///< 最大化前位置（实测表现为拖拽还原后不松手
+                                    ///< 再拖顶无法最大化）
     int m_nativeDragGen;           ///< 原生拖动代次：延迟收场定时器的归属判定
                                     ///< （收场前用户又开始新拖动时旧定时器作废）
     QRect m_normalRestoreAssert;   ///< 最大化还原纠正的断言保护：KWin 取消最大化

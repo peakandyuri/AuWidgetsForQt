@@ -9,6 +9,11 @@
 #include <QPainter>
 #include <QPainterPath>
 
+#ifdef Q_OS_WIN
+#include <qt_windows.h>
+#include <windowsx.h>
+#endif
+
 // 拖动阈值：按下后移动超过该距离才真正发起系统移动，
 // 之前的短暂按住留给双击最大化判定。
 static const int kDragStartThreshold = 4;
@@ -438,6 +443,46 @@ void AuTitleBar::drawButtonGlyph(QPainter &painter, Button button, const QRect &
     }
     painter.setRenderHint(QPainter::Antialiasing, false);
 }
+
+// ---- Windows 原生消息 ----
+
+#ifdef Q_OS_WIN
+// 标题栏在 Windows 上通常被 Qt 提升为原生子窗口（与原生内容区容器
+// AuClientArea 并存时，Qt 为保持层叠顺序会给同级控件创建原生窗口）。
+// 空白区点击于是直接进入本控件的原生窗口并作为客户区事件到达 Qt，
+// 顶层窗体的 WM_NCHITTEST（AuWindow::handleNcHitTest 的 HTCAPTION 判定）
+// 被完全绕过——标题栏拖动只能经 Qt 侧 performTitleBarDrag 合成重发。
+// 该合成路径对最大化窗口有硬伤：拖动落入手动还原通道（showNormal +
+// 比例锚定 + 1:1 跟随），而 Windows 的拖顶 / 贴边吸附由系统 Snap 负责
+// （m_edgeSnapEnabled = false），松手时无任何贴靠动作——表现为
+// "拖拽还原后不松手拖回屏幕顶部，松手无法最大化"。
+//
+// 此处对空白可拖动区（hitTestCaption = true，与顶层判定同一谓词）返回
+// HTTRANSPARENT，让系统穿透本控件继续命中父窗体（顶层）：顶层的
+// WM_NCHITTEST 判成 HTCAPTION 后，按下即进入 DefWindowProc 的原生移动
+// 循环——拖顶 / 贴边最大化（含还原后不松手再拖顶的再次贴靠）、拖拽
+// 还原、双击最大化全部由系统完成，与原生窗口行为一致。按钮与交互
+// 组件处 hitTestCaption 为 false，不穿透，点击照常到达本控件。
+bool AuTitleBar::nativeEvent(const QByteArray &eventType, void *message,
+                             AuNativeEventResult *result)
+{
+    if (eventType == QByteArrayLiteral("windows_generic_MSG")) {
+        MSG *msg = static_cast<MSG *>(message);
+        if (msg->message == WM_NCHITTEST) {
+            // lParam 为物理屏幕像素，mapFromGlobal 期望 Qt 逻辑全局坐标
+            // （换算约定与 AuWindow::handleNcHitTest 一致）
+            const qreal dpr = devicePixelRatioF();
+            const QPoint global(GET_X_LPARAM(msg->lParam), GET_Y_LPARAM(msg->lParam));
+            const QPoint logical(qRound(global.x() / dpr), qRound(global.y() / dpr));
+            if (hitTestCaption(mapFromGlobal(logical))) {
+                *result = HTTRANSPARENT;
+                return true;
+            }
+        }
+    }
+    return QWidget::nativeEvent(eventType, message, result);
+}
+#endif // Q_OS_WIN
 
 // ---- 鼠标交互 ----
 

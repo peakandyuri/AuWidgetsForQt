@@ -302,11 +302,16 @@ bool AuWindow::platformIsComposited() const
     return true;
 }
 
-// Windows 上拖动一律原生转发（WM_NCHITTEST），最大化还原由系统完成，
-// 不经此钩子
+// 最大化窗体拖标题栏还原：Windows 交给 DefWindowProc 的原生移动循环。
+// 重放一次 HTCAPTION 非客户区按下即可——取消最大化、光标比例锚定跟随、
+// 拖回屏幕顶部松手的再次贴靠（预览 + 最大化）全部由系统原生完成。
+// 此前返回 false 使最大化拖动落入手动通道（showNormal + 1:1 跟随），
+// 而手动通道的松手吸附在 Windows 上是关闭的（m_edgeSnapEnabled = false，
+// 拖顶/贴边由系统 Snap 负责），表现为"拖拽还原后不松手拖回顶部松手
+// 无法最大化"（经 performTitleBarDrag 进入本函数时同样修复）。
 bool AuWindow::platformStartMaximizeRestoreDrag()
 {
-    return false;
+    return platformStartSystemMove();
 }
 
 // 未做系统级窗口枚举（EnumWindows + 跨进程矩形 / DPI 折算），窗口间吸附
@@ -594,11 +599,43 @@ bool AuWindow::nativeEvent(const QByteArray &eventType, void *message, AuNativeE
     case WM_GETMINMAXINFO:
         return handleMinMaxInfo(message, result);
     case WM_NCLBUTTONDOWN:
-    case WM_NCLBUTTONDBLCLK:
-    case WM_NCRBUTTONDOWN:
-        // 直接交系统处理：原生标题栏拖动 / Snap 布局 / 双击最大化 / 边框缩放
+        if (msg->wParam == HTCAPTION) {
+            // 非客户区按下 = 新手势意图：撤防最大化还原的断言保护窗（与
+            // AuTitleBar::mousePressEvent 的撤防对应——标题栏 HTTRANSPARENT
+            // 后空白区按下以本消息到达，不再经过 Qt 客户区按下路径）
+            m_normalRestoreAssert = QRect();
+        }
+        // 直接交系统处理：原生标题栏拖动 / Snap 布局 / 边框缩放
         *result = DefWindowProcW(msg->hwnd, msg->message, msg->wParam, msg->lParam);
         return true;
+    case WM_NCLBUTTONDBLCLK:
+        if (msg->wParam == HTCAPTION && m_titleBar) {
+            // 标题栏空白区 HTTRANSPARENT 后双击以非客户区双击到达（此前是
+            // 客户区双击 → AuTitleBar::mouseDoubleClickEvent）。不交系统
+            // （否则系统切换最大化与信号处理叠加成两次翻转），改发标题栏
+            // 双击信号，由 connectTitleBar 的既有逻辑切换（尊重最大化按钮
+            // 可见性 / 自定义 titleDoubleClicked 处理，语义与旧路径一致）
+            emit m_titleBar->titleDoubleClicked();
+            *result = 0;
+            return true;
+        }
+        *result = DefWindowProcW(msg->hwnd, msg->message, msg->wParam, msg->lParam);
+        return true;
+    case WM_NCRBUTTONDOWN:
+        // 直接交系统处理：标题栏右键系统菜单 / 边框右键
+        *result = DefWindowProcW(msg->hwnd, msg->message, msg->wParam, msg->lParam);
+        return true;
+    case WM_ENTERSIZEMOVE:
+        // 系统原生移动 / 缩放循环开始（拖动标题栏 / 边框、菜单"移动"）：
+        // 标记循环进行中——期间 changeEvent 的还原几何纠正不得输出
+        // setGeometry（与移动循环逐帧互搏；并会在松手贴靠最大化瞬间把
+        // 窗口拖回最大化前位置）。同时撤防还原断言（新手势意图）。
+        m_inNativeMoveLoop = true;
+        m_normalRestoreAssert = QRect();
+        break;
+    case WM_EXITSIZEMOVE:
+        m_inNativeMoveLoop = false;
+        break;
     default:
         break;
     }

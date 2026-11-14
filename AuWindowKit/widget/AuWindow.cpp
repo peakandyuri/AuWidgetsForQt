@@ -190,6 +190,7 @@ AuWindow::AuWindow(QWidget *parent, Qt::WindowFlags flags)
     , m_snapPreview(nullptr)
     , m_snapped(false)
     , m_nativeDragActive(false)
+    , m_inNativeMoveLoop(false)
     , m_nativeDragGen(0)
     , m_normalRestoreAssert()
     , m_x11BorderDecorActive(false)
@@ -735,21 +736,26 @@ void AuWindow::changeEvent(QEvent *event)
                 armNormalRestoreAssert(m_preSnapGeometry);
             } else if (m_normalGeometry.isValid() && geometry() != m_normalGeometry
                        && !m_manualMoving && !m_snapRestoreTarget.isValid()
-                       && !m_nativeDragActive) {
+                       && !m_nativeDragActive && !m_inNativeMoveLoop) {
                 // 最大化还原的落位与尺寸均由 WM 的记忆决定，记忆可能过期
                 // （KWin 按 WM_CLASS 记忆历史几何，实测按钮还原位置被丢到
                 // (0,0)），纠正回进入最大化前的浮动几何。仅按钮 / 双击还原
                 // 路径应用——拖拽还原的位置由下方 m_snapRestoreTarget 锚定
-                // （纠正位置会把窗口拉回原位打断拖拽）
+                // （纠正位置会把窗口拉回原位打断拖拽）。
+                // Windows：系统原生移动循环（拖拽还原）进行中不得纠正——
+                // setGeometry 会与移动循环逐帧互搏，且布防的断言保护窗会在
+                // 松手贴靠最大化瞬间把窗口拖回最大化前位置
                 setGeometry(m_normalGeometry);
                 armNormalRestoreAssert(m_normalGeometry);
             } else if (m_normalSizeHint.isValid() && size() != m_normalSizeHint
-                       && !m_snapRestoreTarget.isValid() && !m_manualRestorePending) {
+                       && !m_snapRestoreTarget.isValid() && !m_manualRestorePending
+                       && !m_inNativeMoveLoop) {
                 // m_normalGeometry 尚未记录（首显前即最大化等极端时序）时的
                 // 尺寸兜底
                 resize(m_normalSizeHint);
             }
             if (!m_manualMoving && !m_manualRestorePending && !m_nativeDragActive
+                && !m_inNativeMoveLoop
                 && m_snapRestoreTarget.isValid()
                 && geometry() != m_snapRestoreTarget) {
                 // 拖动还原（最大化态）的光标锚定落位：状态翻转后窗口已脱离
@@ -1070,6 +1076,21 @@ void AuWindow::performTitleBarDrag(const QPoint &pressGlobal)
         // 锚定位与过期记忆位之间高频翻转）。WM 未接管（AuTitleBar 150ms
         // 宽限期判定）回退手动还原；手动通道（m_systemMoveEnabled=false）
         // 维持原有手动还原语义（Qt 5.12 默认，回归基线）。
+        //
+        // Windows：与 X11 不同，手动通道的松手吸附是关闭的（m_edgeSnapEnabled
+        // = false，拖顶/贴边由系统 Snap 负责）——最大化拖拽还原走手动通道时
+        // "还原后不松手拖回顶部松手"不会有任何贴靠动作（实测复现 bug）。
+        // 故 Windows 上不再受 m_systemMoveEnabled 闸门限制，一律尝试原生
+        // 通道（platformStartMaximizeRestoreDrag 重发 HTCAPTION 按下，
+        // DefWindowProc 移动循环原生完成还原 + 再次贴靠）。
+#ifdef Q_OS_WIN
+        m_nativeDragActive = true;
+        ++m_nativeDragGen;
+        m_normalRestoreAssert = QRect();
+        if (platformStartMaximizeRestoreDrag())
+            return;
+        m_nativeDragActive = false;
+#else
         if (m_systemMoveEnabled) {
             m_nativeDragActive = true;
             ++m_nativeDragGen;
@@ -1078,6 +1099,7 @@ void AuWindow::performTitleBarDrag(const QPoint &pressGlobal)
                 return;
             m_nativeDragActive = false;
         }
+#endif
         startManualMove(pressGlobal);
         return;
     }

@@ -110,6 +110,17 @@ protected:
     void leaveEvent(QEvent *event) override;
     void changeEvent(QEvent *event) override;
     bool eventFilter(QObject *watched, QEvent *event) override;
+#ifdef Q_OS_WIN
+    // Windows：WM_NCHITTEST 空白区返回 HTTRANSPARENT（实现见 AuTitleBar.cpp）。
+    // nativeEvent 的 result 参数类型在 Qt6 由 long 改为 qintptr，与
+    // AuWindow.h 的 AuNativeEventResult 别名保持一致（本头文件无法包含
+    // AuWindow.h——AuWindow.h 反向包含本头文件）。
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    bool nativeEvent(const QByteArray &eventType, void *message, qintptr *result) override;
+#else
+    bool nativeEvent(const QByteArray &eventType, void *message, long *result) override;
+#endif
+#endif
 
 private:
     friend class AuWindow;
